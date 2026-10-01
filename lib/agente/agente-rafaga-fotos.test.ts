@@ -145,7 +145,7 @@ describe("B30 · ráfaga de fotos => UNA sola respuesta", () => {
 
   it("con el registro del pedido en curso, la foto NO va al buzón (se pide el dato que falta) y no se lee", async () => {
     const key = { tenantId: T, phoneNumberId: PN, waId: WA };
-    const built = deps().d.build(foto("m1"))!;
+    const built = deps().d.build(foto("m1"), null as never)!;
     const lector = async (id: string) => (lecturas.push(id), []);
     const base = { tools: built.tools, readImageReferences: lector };
     // Control: sin registro en curso, la foto sí va al buzón (y se lee).

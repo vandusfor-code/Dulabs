@@ -17,6 +17,7 @@
  * backend haya devuelto en este turno un pedido en ese estado (confirm_order o el pedido
  * activo ya confirmado). Sin eso, la respuesta no sale: nunca "pedido confirmado" sin venta.
  */
+import type { DeliveryType, PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 
 const REF = /\b([A-Z]{1,6}-\d{6,}|DL-ORD-[0-9A-HJKMNP-TV-Z]{6})\b/g;
 const PESOS = /(?:\$|COP\s?)\s?(\d{1,3}(?:[.,]\d{3})+|\d+)(?![\d.,]*\s*mil)/gi;
@@ -32,8 +33,8 @@ const cleanUrl = (u: string) => u.replace(/[.,;:!?*_)\]]+$/, "");
 export interface OrderTracking {
   etapa: "confirmado" | "en_preparacion" | "enviado" | "entregado";
   pago: "pendiente" | "recibido";
-  entrega: "tienda" | "domicilio";
-  metodo_pago: "pago_en_tienda" | "transferencia";
+  entrega: DeliveryType;
+  metodo_pago: PaymentMethod;
 }
 
 export interface Evidence {

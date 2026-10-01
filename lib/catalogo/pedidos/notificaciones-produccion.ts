@@ -7,7 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import { MetaGraphApiError, enviarTexto } from "@/lib/whatsapp";
-import { registrarMensaje, resolverTokenMeta } from "@/lib/whatsapp-outbound";
+import { registrarMensaje, resolverTokenMetaDeNumero } from "@/lib/whatsapp-outbound";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
 import {
   ErrorEnvioWhatsapp,
@@ -141,7 +141,9 @@ export function createSupabaseNotificacionesStore(supabase: SupabaseClient): Not
       const c = data as Pick<ClienteConfig, "id_tenant" | "phone_number_id" | "nombre_negocio" | "meta_permanent_token">;
       let token: string | null = null;
       try {
-        token = resolverTokenMeta(c as ClienteConfig);
+        // Número con agente conversacional: SU credencial (la de la plataforma solo si su fila lo autoriza).
+        // Sin agente (pedidos de la tienda en línea): como siempre. Sin poder saberlo: sin token (se omite).
+        token = await resolverTokenMetaDeNumero(supabase, c);
       } catch {
         token = null;
       }

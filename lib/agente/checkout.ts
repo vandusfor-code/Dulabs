@@ -26,9 +26,15 @@
  * pregunta cuál) · CORRECCIÓN de entrega o pago (se cambia ESE dato) · respuesta del paso (estricta:
  * una intención o una risa nunca es un nombre ni una dirección). El nombre se guarda en el contacto
  * solo cuando el pedido se confirma.
+ *
+ * Multi-negocio: las entregas y los pagos que se ofrecen, su orden, sus políticas y los textos que
+ * los enumeran salen del perfil del negocio (io.perfil, lib/agente/perfil-negocio.ts); igual el
+ * vocabulario con que se reconoce un producto o un nombre. Una sola opción => no se pregunta. Más
+ * de 3 => lista de WhatsApp (la decide quien envía). Antes de confirmar, el backend verifica que la
+ * entrega y el pago sigan entre los ofrecidos.
  */
 import { formatCop } from "@/lib/business-agent-quote";
-import { publicView, type OrderChannel, type OrderPublicView } from "@/lib/catalogo/pedidos/contrato";
+import { publicView, type DeliveryType, type OrderChannel, type OrderPublicView, type PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 import { OrderError, conversationKey, requestFingerprint, type CheckoutData, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import { extractReferences } from "@/lib/catalogo/resolucion";
 import type { OrderContact } from "@/lib/catalogo/pedidos/repositorio";
@@ -60,19 +66,36 @@ import {
 } from "@/lib/agente/lenguaje/interpretar";
 import { NUMEROS_EN_LETRAS } from "@/lib/agente/lenguaje/lexico";
 import { normalizar } from "@/lib/agente/lenguaje/normalizar";
+import {
+  ENTREGA_INFO,
+  PAGO_INFO,
+  VOCABULARIO_NEUTRAL,
+  ofreceEntrega,
+  pagoPermitido,
+  pagosPara,
+  type CheckoutOpciones,
+  type PerfilNegocio,
+  type Vocabulario,
+} from "@/lib/agente/perfil-negocio";
 
 type Button = { id: string; title: string };
 
+/** Botón de cada entrega y de cada pago del catálogo de la plataforma (cada negocio ofrece un subconjunto). */
+export const DELIVERY_BUTTONS: Readonly<Record<DeliveryType, Button>> = { tienda: ENTREGA_INFO.tienda.boton, domicilio: ENTREGA_INFO.domicilio.boton };
+export const PAYMENT_BUTTONS: Readonly<Record<PaymentMethod, Button>> = {
+  pago_en_tienda: PAGO_INFO.pago_en_tienda.boton,
+  transferencia: PAGO_INFO.transferencia.boton,
+  contra_entrega: PAGO_INFO.contra_entrega.boton,
+  link_pago: PAGO_INFO.link_pago.boton,
+};
+
+/** Botones de entrega que ofrece el negocio (en su orden). */
+export const deliveryButtons = (o: Pick<CheckoutOpciones, "entregas">): Button[] => o.entregas.map((e) => DELIVERY_BUTTONS[e]);
+/** Botones de pago que ofrece el negocio con esa entrega (en su orden). */
+export const paymentButtons = (o: Pick<CheckoutOpciones, "entregas" | "pagos">, entrega: DeliveryType | null): Button[] => pagosPara(o, entrega).map((p) => PAYMENT_BUTTONS[p]);
+
 export const CHECKOUT_BUTTONS = {
-  delivery: [
-    { id: "checkout_tienda", title: "🏬 Recoger en tienda" },
-    { id: "checkout_domicilio", title: "🏠 Domicilio" },
-  ],
   reference: [{ id: "checkout_sin_referencia", title: "Sin referencia" }],
-  payment: [
-    { id: "checkout_pago_tienda", title: "💵 Pago en tienda" },
-    { id: "checkout_transferencia", title: "🏦 Transferencia" },
-  ],
   summary: [
     { id: "checkout_confirmar", title: "✅ Confirmar pedido" },
     { id: "checkout_modificar", title: "✏️ Modificar pedido" },
@@ -80,13 +103,15 @@ export const CHECKOUT_BUTTONS = {
   ],
 } as const satisfies Record<string, readonly Button[]>;
 
+/** Todos los botones del checkout de ESE negocio, por paso (los de pago: los que ofrece con cualquier entrega). */
+export const checkoutButtons = (o: CheckoutOpciones) => ({ ...CHECKOUT_BUTTONS, delivery: deliveryButtons(o), payment: paymentButtons(o, null) });
+
 /** Mensajes FIJOS (sin IA). Nunca dicen "pago recibido", "enviado" ni "completado". */
 export const CHECKOUT_MESSAGES = {
   intro: "¡Perfecto! 💖 Vamos a registrar tu pedido.",
   askName: "¿A nombre de quién registramos tu pedido?",
   askNameAgain: "Por favor escríbeme solo el nombre de la persona a nombre de quien registramos el pedido.",
   delivery: "¿Cómo deseas recibir tu pedido?",
-  deliveryFallback: "¿Cómo deseas recibir tu pedido? Respóndeme *recoger en tienda* o *domicilio*.",
   address: "Perfecto. Envíame la dirección donde deseas recibir tu pedido.",
   addressAgain: "Por favor envíame la dirección completa donde deseas recibir tu pedido (calle, número y barrio si aplica).",
   city: "¿En qué ciudad?",
@@ -94,7 +119,6 @@ export const CHECKOUT_MESSAGES = {
   reference: "¿Tienes alguna referencia para facilitar la entrega?",
   referenceFallback: "¿Tienes alguna referencia para facilitar la entrega? (Si no tienes, respóndeme *no*.)",
   payment: "¿Cómo deseas pagar?",
-  paymentFallback: "¿Cómo deseas pagar? Respóndeme *pago en tienda* o *transferencia*.",
   summaryPrompt: "¿Confirmas tu pedido?",
   summaryFallback: "Respóndeme *confirmar*, *modificar* o *cancelar*.",
   chooseOption: "Para continuar, elige una opción:",
@@ -111,7 +135,6 @@ export const CHECKOUT_MESSAGES = {
   /** Pregunta que el asistente no pudo responder con datos verificados: nunca se inventa. */
   questionFallback: "Ese detalle te lo confirma una asesora apenas registremos tu pedido 😊",
   waiting: "Claro, aquí te espero 😊",
-  doubt: "Claro 😊 ¿Qué quieres cambiar? Puedes escribirme, por ejemplo, *recoger en tienda*, *domicilio*, *transferencia* o *pago en tienda*. Para cambiar cantidades dime cuántas y de cuál producto.",
   productsViaModify: "Para agregar otros productos escríbeme *modificar pedido* (lo que ya elegiste se conserva). Si solo quieres cambiar cantidades, dime cuántas y de cuál producto.",
   whichProduct: (c: { tipo: "fijar" | "sumar" | "restar" | "quitar"; n: number }, lines: ReadonlyArray<{ product_name: string; quantity: number }>) =>
     `${c.tipo === "quitar" ? "Claro. ¿Cuál producto quieres quitar?" : c.tipo === "fijar" ? `Claro. ¿De cuál producto quieres ${c.n} ${c.n === 1 ? "unidad" : "unidades"}?` : "Claro. ¿De cuál producto?"}\n\n${lines
@@ -120,17 +143,11 @@ export const CHECKOUT_MESSAGES = {
   onlyProduct: "Ese es el único producto de tu pedido. Si ya no lo quieres, toca ❌ Cancelar; si quieres seguir, continuemos 😊",
   updated: "Listo, actualicé tu pedido ✨",
   noChange: (name: string, qty: number) => `Tu pedido ya tiene ${qty} ${qty === 1 ? "unidad" : "unidades"} de ${name}.`,
-  noted: (c: { entrega?: "tienda" | "domicilio"; pago?: "pago_en_tienda" | "transferencia" }) =>
-    [
-      c.entrega ? (c.entrega === "tienda" ? "Anotado: *recoger en tienda* 🏬" : "Anotado: entrega a *domicilio* 🏠") : null,
-      c.pago ? (c.pago === "transferencia" ? "Anotado: pago por *transferencia* 🏦" : "Anotado: pago *en tienda* 💵") : null,
-    ]
-      .filter(Boolean)
-      .join("\n"),
+  noted: (c: { entrega?: DeliveryType; pago?: PaymentMethod }) =>
+    [c.entrega ? ENTREGA_INFO[c.entrega].anotado : null, c.pago ? PAGO_INFO[c.pago].anotado : null].filter(Boolean).join("\n"),
   addressVague: "Para que llegue sin problema necesito la dirección exacta: calle o carrera, número y barrio 📍",
   addressAnnounce: "Claro, envíamela cuando quieras 😊",
   referenceAsk: "Claro, escríbeme la referencia (por ejemplo: portón azul, frente al parque).",
-  noCashOnDelivery: "Por ahora no manejamos pago contra entrega 🙏 Puedes pagar por *transferencia* o *en la tienda*.",
   /** Ubicación compartida en el paso de la dirección (Bloque 28): se pide escrita, sin pasar a una asesora. */
   locationNeedsText: "Recibí tu ubicación 📍, pero para registrar el pedido necesito la dirección escrita: calle o carrera, número y barrio.",
   /** Foto o documento en el paso de la dirección o la ciudad (p. ej. captura de la dirección): se pide escrito. */
@@ -145,6 +162,36 @@ export const CHECKOUT_MESSAGES = {
   pending: "Estoy verificando el estado de tu pedido. Escríbeme de nuevo en un momento y te confirmo cómo quedó.",
 } as const;
 
+/** "a", "a o b", "a, b o c". */
+const listaO = (xs: readonly string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} o ${xs[xs.length - 1]}`);
+const negrita = (s: string) => `*${s}*`;
+
+/**
+ * Textos FIJOS (sin IA) que enumeran lo que el negocio OFRECE. Salen de sus opciones: nunca nombran
+ * un método que no ofrece. Los que el negocio escribió (`mensajes`) van tal cual.
+ */
+export function checkoutOptionTexts(o: CheckoutOpciones) {
+  const m = o.mensajes ?? {};
+  const entregas = o.entregas.map((e) => ENTREGA_INFO[e].palabra);
+  const pagos = (entrega: DeliveryType | null) => pagosPara(o, entrega).map((p) => PAGO_INFO[p].palabra);
+  const cambiables = [...(entregas.length > 1 ? entregas : []), ...(pagos(null).length > 1 ? pagos(null) : [])];
+  return {
+    deliveryFallback: `${CHECKOUT_MESSAGES.delivery} Respóndeme ${listaO(entregas.map(negrita))}.`,
+    /** "Respóndeme *a* o *b*." con los pagos de ESA entrega. */
+    paymentChoices: (entrega: DeliveryType | null) => `Respóndeme ${listaO(pagos(entrega).map(negrita))}.`,
+    doubt:
+      m.duda ??
+      `Claro 😊 ¿Qué quieres cambiar? ${cambiables.length > 0 ? `Puedes escribirme, por ejemplo, ${listaO(cambiables.map(negrita))}. ` : ""}Para cambiar cantidades dime cuántas y de cuál producto.`,
+    /** Pidió un pago que no se ofrece con su entrega. */
+    paymentUnavailable: (pedido: PaymentMethod, entrega: DeliveryType | null) =>
+      m.pago_no_disponible ?? `Por ahora no manejamos ${PAGO_INFO[pedido].nombre} 🙏 Puedes pagar con ${listaO(pagos(entrega).map(negrita))}.`,
+    /** Pidió una entrega que el negocio no ofrece. */
+    deliveryUnavailable: (pedida: DeliveryType) => `Por ahora no manejamos ${ENTREGA_INFO[pedida].palabra} 🙏 Podemos hacerlo por ${listaO(entregas.map(negrita))}.`,
+    deliveryHint: m.recordatorio_entrega ?? `Escríbeme si prefieres ${listaO(entregas.map(negrita))}.`,
+    paymentHint: (entrega: DeliveryType | null) => m.recordatorio_pago ?? `Escríbeme cómo pagas: ${listaO(pagos(entrega).map(negrita))}.`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Lectura determinista de lo que escribió el cliente
 // ---------------------------------------------------------------------------
@@ -158,49 +205,64 @@ const bare = (text: string) =>
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 
-const TITLES = new Map<string, string>(Object.values(CHECKOUT_BUTTONS).flatMap((list) => list.map((b) => [bare(b.title), b.id] as const)));
+const ENTREGA_POR_ID = new Map<string, DeliveryType>(Object.entries(DELIVERY_BUTTONS).map(([e, b]) => [b.id, e as DeliveryType]));
+const PAGO_POR_ID = new Map<string, PaymentMethod>(Object.entries(PAYMENT_BUTTONS).map(([p, b]) => [b.id, p as PaymentMethod]));
+/** Títulos del resumen y de la referencia (iguales para todos los negocios). */
+const FIXED_TITLES = new Map<string, string>(Object.values(CHECKOUT_BUTTONS).flatMap((list) => list.map((b) => [bare(b.title), b.id] as const)));
 
-/** Id de botón del checkout: el que llegó, o el del título EXACTO (el buzón guarda solo el texto). */
-function buttonOf(text: string, buttonId?: string | null): string | null {
-  if (buttonId && buttonId.startsWith("checkout_")) return buttonId;
-  return TITLES.get(bare(text)) ?? null;
+/** Botones que ESTE negocio puede haber enviado: sus entregas, sus pagos, la referencia y el resumen. */
+function offeredButtons(o: CheckoutOpciones): Button[] {
+  return [...deliveryButtons(o), ...paymentButtons(o, null), ...Object.values(CHECKOUT_BUTTONS).flat()];
 }
 
-/** ¿Es el texto/id de un botón del checkout? (un clic en un resumen viejo fuera del checkout) */
-export function isCheckoutButton(text: string, buttonId?: string | null): boolean {
-  return buttonOf(text, buttonId) !== null;
+/**
+ * Id de botón del checkout: el que llegó, o el del título EXACTO (el buzón guarda solo el texto). Solo
+ * botones de lo que el negocio ofrece: el título de un método que no ofrece no es un botón.
+ */
+function buttonOf(text: string, buttonId: string | null | undefined, o: CheckoutOpciones): string | null {
+  const offered = offeredButtons(o);
+  if (buttonId && buttonId.startsWith("checkout_")) return offered.some((b) => b.id === buttonId) ? buttonId : null;
+  const t = bare(text);
+  return offered.find((b) => bare(b.title) === t)?.id ?? null;
+}
+
+/** ¿Es el texto/id de un botón del checkout de este negocio? (un clic en un resumen viejo fuera del checkout) */
+export function isCheckoutButton(text: string, buttonId: string | null | undefined, o: CheckoutOpciones): boolean {
+  return buttonOf(text, buttonId, o) !== null;
 }
 
 /**
  * Nombre escrito por el cliente ("Laura Gómez", "me llamo Laura", "es Duvan", "a nombre de Laura").
  * Bloque 28: nunca un teléfono, una intención ("quiero dos aretes"), una pregunta, una risa ni un "ok".
  */
-export function parseCustomerName(text: string): string | null {
-  return leerNombre(text);
+export function parseCustomerName(text: string, vocabulario: Vocabulario = VOCABULARIO_NEUTRAL): string | null {
+  return leerNombre(text, vocabulario);
 }
 
 /** Nombre guardado confiable: con letras, sin ser (ni contener) un número de teléfono ni palabras que no son de un nombre. */
-export function isTrustedName(name: string | null | undefined): name is string {
+export function isTrustedName(name: string | null | undefined, vocabulario: Vocabulario = VOCABULARIO_NEUTRAL): name is string {
   const t = (name ?? "").trim();
   if (t.length < 2 || t.length > 60) return false;
   if (!/\p{L}/u.test(t)) return false;
   if ((t.match(/\d/g) ?? []).length >= 3) return false;
-  return sinIntencionDeNombre(t);
+  return sinIntencionDeNombre(t, vocabulario);
 }
 
-export function parseDelivery(text: string, buttonId?: string | null): "tienda" | "domicilio" | null {
-  const b = buttonOf(text, buttonId);
-  if (b === "checkout_tienda") return "tienda";
-  if (b === "checkout_domicilio") return "domicilio";
-  return leerEntrega(text);
+/** Entrega elegida, solo entre las que ofrece el negocio. */
+export function parseDelivery(text: string, o: CheckoutOpciones, buttonId: string | null = null): DeliveryType | null {
+  const b = buttonOf(text, buttonId, o);
+  const porBoton = b ? ENTREGA_POR_ID.get(b) : undefined;
+  if (porBoton) return porBoton;
+  const e = leerEntrega(text);
+  return e && ofreceEntrega(o, e) ? e : null;
 }
 
-/** Pago elegido. `entrega` resuelve "cuando llegue" / "contra entrega" (con domicilio no se ofrece => null). */
-export function parsePayment(text: string, buttonId?: string | null, entrega: "tienda" | "domicilio" | null = null): "pago_en_tienda" | "transferencia" | null {
-  const b = buttonOf(text, buttonId);
-  if (b === "checkout_pago_tienda") return "pago_en_tienda";
-  if (b === "checkout_transferencia") return "transferencia";
-  const p = leerPago(text, entrega);
+/** Pago elegido, solo entre los que ofrece el negocio. `entrega` resuelve "cuando llegue" / "contra entrega" (si no se ofrece => null). */
+export function parsePayment(text: string, o: CheckoutOpciones, buttonId: string | null = null, entrega: DeliveryType | null = null): PaymentMethod | null {
+  const b = buttonOf(text, buttonId, o);
+  const porBoton = b ? PAGO_POR_ID.get(b) : undefined;
+  if (porBoton) return porBoton;
+  const p = leerPago(text, entrega, o);
   return p === "no_disponible" ? null : p;
 }
 
@@ -223,7 +285,7 @@ export function parseSummaryAction(text: string, buttonId?: string | null): "con
   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
   // Una pregunta ("¿sí?") nunca es una decisión.
   if (lines.length === 0 || lines.length > 4 || /[?¿]/.test(text)) return null;
-  const actions = new Set(lines.map((l) => one(TITLES.get(bare(l)) ?? null, bare(l))));
+  const actions = new Set(lines.map((l) => one(FIXED_TITLES.get(bare(l)) ?? null, bare(l))));
   return actions.size === 1 ? ([...actions][0] ?? null) : null;
 }
 
@@ -264,8 +326,13 @@ const NO_REFERENCE = new Set(["no", "nop", "ninguna", "ninguno", "no tengo", "si
 // Resumen (del motor, nunca de la IA)
 // ---------------------------------------------------------------------------
 
-export function checkoutData(ck: CheckoutState): CheckoutData | null {
+/**
+ * Datos completos del checkout, o null. Con `o`, además, la entrega y el pago deben estar entre los que
+ * el negocio OFRECE (la última verificación del backend antes de registrar el pedido).
+ */
+export function checkoutData(ck: CheckoutState, o?: CheckoutOpciones): CheckoutData | null {
   if (!ck.customerName || !ck.delivery || !ck.paymentMethod) return null;
+  if (o && (!ofreceEntrega(o, ck.delivery) || !pagoPermitido(o, ck.paymentMethod, ck.delivery))) return null;
   if (ck.delivery === "domicilio" && (!ck.address || !ck.city)) return null;
   return {
     customerName: ck.customerName,
@@ -298,14 +365,14 @@ export function summaryText(order: OrderPublicView, data: CheckoutData, texts: C
   if (order.unpriced_units > 0) out.push("Algunos productos tienen precio a consultar: una asesora te confirma su valor.");
   out.push("", `👤 A nombre de: ${data.customerName}`);
   if (data.delivery === "tienda") {
-    out.push("🏬 Entrega: Recoger en tienda");
+    out.push(ENTREGA_INFO.tienda.resumen);
     if (texts.storeAddress) out.push(`📍 Dirección de la tienda: ${texts.storeAddress}`);
   }
   else {
-    out.push("🏠 Entrega: Domicilio", `📍 Dirección: ${data.address}, ${data.city}`);
+    out.push(ENTREGA_INFO.domicilio.resumen, `📍 Dirección: ${data.address}, ${data.city}`);
     if (data.deliveryReference) out.push(`📝 Referencia: ${data.deliveryReference}`);
   }
-  out.push(`💳 Pago: ${data.paymentMethod === "transferencia" ? "Transferencia" : "Pago en tienda"}`);
+  out.push(`💳 Pago: ${PAGO_INFO[data.paymentMethod].resumen}`);
   if (data.delivery === "domicilio" && texts.shippingNote) out.push(`🚚 ${texts.shippingNote}`);
   return out.join("\n");
 }
@@ -323,6 +390,8 @@ export interface CheckoutIO {
   turn: number;
   /** Nombre del negocio para el mensaje final (config del negocio; null = genérico). */
   businessName: string | null;
+  /** Perfil del negocio: su vocabulario y las entregas/pagos que OFRECE (config explícita, nunca del modelo). */
+  perfil: PerfilNegocio;
   /** Bloque 32: textos del negocio (pregunta de pago, nota de envío, mínimo mayorista, nota final). */
   texts?: CheckoutTexts;
   /** Bloque 34: el equipo lo marcó como cliente antiguo (ya compró fuera del bot): sin compra inicial. */
@@ -400,29 +469,48 @@ function nextStep(ck: CheckoutState): CheckoutStep {
   return "summary";
 }
 
-async function ask(io: CheckoutIO, step: CheckoutStep, prefix: string | null): Promise<string | null> {
+/**
+ * Lo que decide el NEGOCIO, no el cliente: un pago que ya no aplica a la entrega elegida se borra (se
+ * vuelve a preguntar) y una opción ÚNICA se llena sola (no se pregunta). Con dos o más, nada cambia.
+ */
+function completar(ck: CheckoutState, o: CheckoutOpciones): CheckoutState {
+  let n = ck;
+  if (!n.delivery && o.entregas.length === 1) n = { ...n, delivery: o.entregas[0] };
+  if (n.paymentMethod && n.delivery && !pagoPermitido(o, n.paymentMethod, n.delivery)) n = { ...n, paymentMethod: null };
+  if (!n.paymentMethod && n.delivery) {
+    const pagos = pagosPara(o, n.delivery);
+    if (pagos.length === 1) n = { ...n, paymentMethod: pagos[0] };
+  }
+  return n;
+}
+
+async function ask(io: CheckoutIO, step: CheckoutStep, prefix: string | null, entrega: DeliveryType | null): Promise<string | null> {
   // Un prefijo largo (p. ej. una respuesta a una pregunta) va aparte: el cuerpo con botones admite 1024 caracteres.
   if (prefix && prefix.length > 700) {
     const first = await io.sendText(prefix);
-    const rest = await ask(io, step, null);
+    const rest = await ask(io, step, null, entrega);
     return first && rest ? `${first}\n\n${rest}` : (first ?? rest);
   }
   const p = (s: string) => (prefix ? `${prefix}\n\n${s}` : s);
+  const o = io.perfil.opciones;
+  const t = checkoutOptionTexts(o);
   switch (step) {
     case "name":
       return io.sendText(p(CHECKOUT_MESSAGES.askName));
     case "delivery":
-      return io.sendMenu(p(CHECKOUT_MESSAGES.delivery), CHECKOUT_BUTTONS.delivery, p(CHECKOUT_MESSAGES.deliveryFallback));
+      return io.sendMenu(p(CHECKOUT_MESSAGES.delivery), deliveryButtons(o), p(t.deliveryFallback));
     case "address":
       return io.sendText(p(CHECKOUT_MESSAGES.address));
     case "city":
       return io.sendText(p(CHECKOUT_MESSAGES.city));
     case "reference":
       return io.sendMenu(p(CHECKOUT_MESSAGES.reference), CHECKOUT_BUTTONS.reference, p(CHECKOUT_MESSAGES.referenceFallback));
-    case "payment":
-      return io.texts?.paymentQuestion
-        ? io.sendMenu(p(io.texts.paymentQuestion), CHECKOUT_BUTTONS.payment, p(`${io.texts.paymentQuestion}\n\nRespóndeme *pago en tienda* o *transferencia*.`))
-        : io.sendMenu(p(CHECKOUT_MESSAGES.payment), CHECKOUT_BUTTONS.payment, p(CHECKOUT_MESSAGES.paymentFallback));
+    case "payment": {
+      const question = io.texts?.paymentQuestion;
+      return question
+        ? io.sendMenu(p(question), paymentButtons(o, entrega), p(`${question}\n\n${t.paymentChoices(entrega)}`))
+        : io.sendMenu(p(CHECKOUT_MESSAGES.payment), paymentButtons(o, entrega), p(`${CHECKOUT_MESSAGES.payment} ${t.paymentChoices(entrega)}`));
+    }
     case "summary":
       return io.sendMenu(p(CHECKOUT_MESSAGES.summaryPrompt), CHECKOUT_BUTTONS.summary, p(`${CHECKOUT_MESSAGES.summaryPrompt} ${CHECKOUT_MESSAGES.summaryFallback}`));
   }
@@ -464,15 +552,17 @@ export async function startCheckout(io: CheckoutIO, state: ConversationState, or
   const bloqueo = await minimoMayorista(io, order);
   if (bloqueo) return blockedByMinimum(io, state, order, bloqueo);
   const known = await io.knownName().catch(() => null);
+  const { vocabulario, opciones } = io.perfil;
   // Bloque 28: lo que el cliente YA dijo en el mismo mensaje ("soy Laura…, domicilio y transferencia") llena
   // campos vacíos; las preguntas del mensaje nunca cuentan. El resumen y el botón siguen siendo obligatorios.
-  const pistas = textoCompra ? pistasCheckout(textoCompra) : {};
-  const ck: CheckoutState = {
+  const pistas = textoCompra ? pistasCheckout(textoCompra, io.perfil) : {};
+  const entrega = pistas.entrega && ofreceEntrega(opciones, pistas.entrega) ? pistas.entrega : null;
+  let ck: CheckoutState = {
     orderId: order.order_id,
     step: "name",
     // El nombre dado en un checkout anterior de ESTA conversación (se salió con Modificar) va antes que el del contacto.
-    customerName: pistas.nombre ?? (isTrustedName(state.checkoutName) ? state.checkoutName : isTrustedName(known) ? known.trim() : null),
-    delivery: pistas.entrega ?? null,
+    customerName: pistas.nombre ?? (isTrustedName(state.checkoutName, vocabulario) ? state.checkoutName : isTrustedName(known, vocabulario) ? known.trim() : null),
+    delivery: entrega,
     address: null,
     city: null,
     deliveryReference: null,
@@ -481,20 +571,22 @@ export async function startCheckout(io: CheckoutIO, state: ConversationState, or
     startedTurn: io.turn,
     pendingChange: null,
   };
+  ck = completar(ck, opciones);
   ck.step = nextStep(ck);
   const next: ConversationState = { ...state, checkout: ck, activeOrderId: order.order_id, cart: [], ambiguity: null };
   if (ck.step === "summary") return summarize(io, next, ck, CHECKOUT_MESSAGES.intro);
-  const reply = await ask(io, ck.step, CHECKOUT_MESSAGES.intro);
+  const reply = await ask(io, ck.step, CHECKOUT_MESSAGES.intro, ck.delivery);
   return done(next, reply, "started");
 }
 
 /** Resumen desde el MOTOR (re-valida precios/stock y renueva la propuesta si hizo falta). */
-async function summarize(io: CheckoutIO, state: ConversationState, ck: CheckoutState, prefix: string | null): Promise<CheckoutResult> {
-  const data = checkoutData(ck);
+async function summarize(io: CheckoutIO, state: ConversationState, ckIn: CheckoutState, prefix: string | null): Promise<CheckoutResult> {
+  const ck = completar(ckIn, io.perfil.opciones);
+  const data = checkoutData(ck, io.perfil.opciones);
   if (!data) {
     const step = nextStep(ck);
     const next = { ...state, checkout: { ...ck, step } };
-    return done(next, await ask(io, step, prefix), "asked");
+    return done(next, await ask(io, step, prefix, ck.delivery), "asked");
   }
   let order: OrderPublicView;
   const validate = async () => publicView(await io.engine.validateOrder({ tenantId: io.tenantId, contact: io.contact, orderId: ck.orderId, actor: "agent", requestId: io.requestId }));
@@ -536,12 +628,13 @@ async function summarize(io: CheckoutIO, state: ConversationState, ck: CheckoutS
     return done(next, reply, "summary");
   }
   const first = await io.sendText(head);
-  const menu = await ask(io, "summary", null);
+  const menu = await ask(io, "summary", null, ck.delivery);
   return done(next, first && menu ? `${first}\n\n${menu}` : (first ?? menu), "summary");
 }
 
 async function confirm(io: CheckoutIO, state: ConversationState, ck: CheckoutState, order: OrderPublicView): Promise<CheckoutResult> {
-  const data = checkoutData(ck);
+  // Entrega y pago entre los que el negocio ofrece (si cambió su configuración, se vuelve a preguntar).
+  const data = checkoutData(ck, io.perfil.opciones);
   // Solo el resumen MOSTRADO y vigente se confirma; si el pedido cambió, se muestra el nuevo.
   if (!data || !ck.summary || order.confirmation?.id !== ck.summary.confirmationId || order.confirmation.total !== ck.summary.total) {
     return summarize(io, state, ck, CHECKOUT_MESSAGES.updatedSummary);
@@ -575,7 +668,7 @@ async function confirm(io: CheckoutIO, state: ConversationState, ck: CheckoutSta
 async function finishConfirmed(io: CheckoutIO, state: ConversationState): Promise<CheckoutResult> {
   // Bloque 28: el nombre se guarda en el contacto SOLO con el pedido confirmado (antes era un dato en curso).
   const name = state.checkout?.customerName;
-  if (name && isTrustedName(name)) await io.rememberName?.(name).catch(() => undefined);
+  if (name && isTrustedName(name, io.perfil.vocabulario)) await io.rememberName?.(name).catch(() => undefined);
   const next: ConversationState = { ...state, checkout: null, proposal: null, cart: [], ambiguity: null };
   delete next.checkoutName;
   const paused = await io.handOff("pedido confirmado").catch(() => false);
@@ -595,7 +688,7 @@ async function leave(io: CheckoutIO, state: ConversationState, ck: CheckoutState
     if (err.code !== "NOT_FOUND") return done(state, await io.sendText(CHECKOUT_MESSAGES.failed), "failed");
   }
   // El nombre se conserva SOLO en esta conversación (no en el contacto) para no volver a pedirlo tras modificar.
-  const name = isTrustedName(ck.customerName) ? ck.customerName : state.checkoutName;
+  const name = isTrustedName(ck.customerName, io.perfil.vocabulario) ? ck.customerName : state.checkoutName;
   const next: ConversationState = { ...backToCart(state, order), ...(name ? { checkoutName: name } : {}) };
   return done(next, await io.sendText(kind === "modify" ? CHECKOUT_MESSAGES.modify : CHECKOUT_MESSAGES.cancelled), kind === "modify" ? "modified" : "cancelled");
 }
@@ -604,37 +697,56 @@ async function leave(io: CheckoutIO, state: ConversationState, ck: CheckoutState
 // Bloque 28 — lenguaje humano dentro del checkout
 // ---------------------------------------------------------------------------
 
-type Entrega = "tienda" | "domicilio";
-type Pago = "pago_en_tienda" | "transferencia";
+type Entrega = DeliveryType;
+type Pago = PaymentMethod;
 type Cambio = { tipo: "fijar" | "sumar" | "restar" | "quitar"; n: number };
 type Linea = OrderPublicView["lines"][number];
 
-/** Lo que se le recuerda al cliente en cada paso (p. ej. tras una nota de voz). */
-export const CHECKOUT_STEP_HINT: Readonly<Record<CheckoutStep, string>> = {
+/** Lo que se le recuerda al cliente en cada paso que no depende del negocio. */
+const STEP_HINT: Readonly<Record<Exclude<CheckoutStep, "delivery" | "payment">, string>> = {
   name: "Escríbeme el nombre de la persona a nombre de quien registramos el pedido.",
-  delivery: "Escríbeme si prefieres *domicilio* o *recoger en tienda*.",
   address: "Escríbeme la dirección (calle o carrera, número y barrio).",
   city: "Escríbeme la ciudad.",
   reference: "Escríbeme si tienes alguna referencia para la entrega (o *sin referencia*).",
-  payment: "Escríbeme si pagas por *transferencia* o *en tienda*.",
   summary: "Toca ✅ Confirmar pedido, ✏️ Modificar pedido o ❌ Cancelar.",
 };
+
+/** Lo que se le recuerda al cliente en cada paso (p. ej. tras una nota de voz): entrega y pago, con lo que el negocio ofrece. */
+export function checkoutStepHint(o: CheckoutOpciones, step: CheckoutStep, entrega: DeliveryType | null): string {
+  if (step === "delivery") return checkoutOptionTexts(o).deliveryHint;
+  if (step === "payment") return checkoutOptionTexts(o).paymentHint(entrega);
+  return STEP_HINT[step];
+}
 
 /** Pregunta del cliente: se responde (solo lectura) y se repite la pregunta del paso. Nada cambia. */
 async function answerAndRepeat(io: CheckoutIO, state: ConversationState, ck: CheckoutState, text: string): Promise<CheckoutResult> {
   const answer = io.answerQuestion ? await io.answerQuestion(text, ck.step).catch(() => null) : null;
-  return done(state, await ask(io, ck.step, answer?.trim() || CHECKOUT_MESSAGES.questionFallback), "question");
+  return done(state, await ask(io, ck.step, answer?.trim() || CHECKOUT_MESSAGES.questionFallback, ck.delivery), "question");
 }
 
-/** Corrige entrega y/o pago (en cualquier paso) y sigue con lo que falte (o un resumen NUEVO). */
-async function corregir(io: CheckoutIO, state: ConversationState, ck: CheckoutState, c: { entrega?: Entrega; pago?: Pago }): Promise<CheckoutResult> {
+/**
+ * Corrige entrega y/o pago (en cualquier paso) y sigue con lo que falte (o un resumen NUEVO). Lo que el
+ * negocio no ofrece no se anota: se dice qué sí ofrece y se repite la pregunta del paso.
+ */
+async function corregir(io: CheckoutIO, state: ConversationState, ck: CheckoutState, pedido: { entrega?: Entrega; pago?: Pago }): Promise<CheckoutResult> {
+  const o = io.perfil.opciones;
+  const t = checkoutOptionTexts(o);
+  const c: { entrega?: Entrega; pago?: Pago } = {};
+  if (pedido.entrega && ofreceEntrega(o, pedido.entrega)) c.entrega = pedido.entrega;
+  const entrega = c.entrega ?? ck.delivery;
+  if (pedido.pago && pagoPermitido(o, pedido.pago, entrega)) c.pago = pedido.pago;
+  if (!c.entrega && !c.pago) {
+    const aviso = pedido.entrega && !ofreceEntrega(o, pedido.entrega) ? t.deliveryUnavailable(pedido.entrega) : t.paymentUnavailable(pedido.pago!, ck.delivery);
+    return done(state, await ask(io, ck.step, aviso, ck.delivery), "invalid");
+  }
   let n: CheckoutState = { ...ck, summary: null, pendingChange: null };
   if (c.entrega) n = c.entrega === "tienda" ? { ...n, delivery: "tienda", address: null, city: null, deliveryReference: null } : { ...n, delivery: "domicilio" };
   if (c.pago) n = { ...n, paymentMethod: c.pago };
+  n = completar(n, o);
   const step = nextStep(n);
   const prefix = CHECKOUT_MESSAGES.noted(c);
   if (step === "summary") return summarize(io, state, { ...n, step }, prefix);
-  return done({ ...state, checkout: { ...n, step } }, await ask(io, step, prefix), "corrected");
+  return done({ ...state, checkout: { ...n, step } }, await ask(io, step, prefix, n.delivery), "corrected");
 }
 
 const NUMERO = (w: string): number | null => (/^\d{1,2}$/.test(w) ? Number(w) : (NUMEROS_EN_LETRAS[w] ?? null));
@@ -668,7 +780,7 @@ function cambioDeCantidad(text: string): { cambio: Cambio; objetivoTexto: string
 async function aplicarCambio(io: CheckoutIO, state: ConversationState, ck: CheckoutState, order: OrderPublicView, ref: string, cambio: Cambio): Promise<CheckoutResult> {
   const lines = order.lines.filter((l) => l.quantity > 0);
   const actual = lines.find((l) => l.reference === ref);
-  if (!actual) return done(state, await ask(io, ck.step, CHECKOUT_MESSAGES.doubt), "doubt");
+  if (!actual) return done(state, await ask(io, ck.step, checkoutOptionTexts(io.perfil.opciones).doubt, ck.delivery), "doubt");
   const base: CheckoutState = { ...ck, pendingChange: null };
   const q = Math.min(99, cambio.tipo === "fijar" ? cambio.n : cambio.tipo === "sumar" ? actual.quantity + 1 : cambio.tipo === "restar" ? actual.quantity - 1 : 0);
   const items = lines.map((l) => ({ reference: l.reference, quantity: l.reference === ref ? q : l.quantity })).filter((l) => l.quantity > 0);
@@ -676,7 +788,7 @@ async function aplicarCambio(io: CheckoutIO, state: ConversationState, ck: Check
     const cancel = CHECKOUT_BUTTONS.summary[2];
     return done({ ...state, checkout: base }, await io.sendMenu(CHECKOUT_MESSAGES.onlyProduct, [cancel], `${CHECKOUT_MESSAGES.onlyProduct} (escríbeme *cancelar* si ya no lo quieres)`), "only_product");
   }
-  if (q === actual.quantity) return done({ ...state, checkout: base }, await ask(io, ck.step, CHECKOUT_MESSAGES.noChange(actual.product_name, q)), "unchanged");
+  if (q === actual.quantity) return done({ ...state, checkout: base }, await ask(io, ck.step, CHECKOUT_MESSAGES.noChange(actual.product_name, q), ck.delivery), "unchanged");
   return rehacer(io, state, base, items);
 }
 
@@ -715,11 +827,11 @@ async function rehacer(io: CheckoutIO, state: ConversationState, ck: CheckoutSta
     await io.engine.cancelProposal({ tenantId: io.tenantId, contact: io.contact, orderId: o.order_id, reason: "checkout_issues", requestId: io.requestId }).catch(() => null);
     return done(backToCart(state, o), await io.sendText([...issues, CHECKOUT_MESSAGES.notConfirmed].join("\n\n")), "not_confirmed");
   }
-  const n: CheckoutState = { ...ck, orderId: o.order_id, summary: null, pendingChange: null };
+  const n: CheckoutState = completar({ ...ck, orderId: o.order_id, summary: null, pendingChange: null }, io.perfil.opciones);
   const next: ConversationState = { ...state, activeOrderId: o.order_id };
   const step = ck.step === "summary" ? "summary" : nextStep(n);
   if (step === "summary") return summarize(io, next, { ...n, step }, CHECKOUT_MESSAGES.updated);
-  return done({ ...next, checkout: { ...n, step } }, await ask(io, step, CHECKOUT_MESSAGES.updated), "updated");
+  return done({ ...next, checkout: { ...n, step } }, await ask(io, step, CHECKOUT_MESSAGES.updated, n.delivery), "updated");
 }
 
 /** Cambio de productos dentro del checkout (cantidad, quitar, "¿de cuál?" pendiente) o null si el mensaje no es eso. */
@@ -734,7 +846,7 @@ async function cambiarProductos(io: CheckoutIO, state: ConversationState, ck: Ch
   }
   const cant = cambioDeCantidad(text);
   const quitar = !cant && pideQuitar(text);
-  if (!cant && !quitar) return pideProducto(text) ? done(state, await ask(io, ck.step, CHECKOUT_MESSAGES.productsViaModify), "products_via_modify") : null;
+  if (!cant && !quitar) return pideProducto(text, io.perfil.vocabulario) ? done(state, await ask(io, ck.step, CHECKOUT_MESSAGES.productsViaModify, ck.delivery), "products_via_modify") : null;
   const cambio: Cambio = cant ? cant.cambio : { tipo: "quitar", n: 0 };
   const ref = objetivo(cant ? cant.objetivoTexto : text, lines);
   if (ref === "ambiguo") return done({ ...state, checkout: { ...ck, pendingChange: cambio } }, await io.sendText(CHECKOUT_MESSAGES.whichProduct(cambio, lines)), "ask_target");
@@ -767,66 +879,73 @@ export async function continueCheckout(
   const escape = parseEscape(text, input.buttonId);
   if (escape) return leave(io, state, ck, order, escape);
 
-  const btn = buttonOf(text, input.buttonId);
+  const { vocabulario, opciones } = io.perfil;
+  const textos = checkoutOptionTexts(opciones);
+  const btn = buttonOf(text, input.buttonId, opciones);
   // Botón de entrega o de pago de un mensaje anterior, tocado en otro paso: corrige ESE dato.
-  if ((btn === "checkout_tienda" || btn === "checkout_domicilio") && ck.step !== "delivery") return corregir(io, state, ck, { entrega: btn === "checkout_tienda" ? "tienda" : "domicilio" });
-  if ((btn === "checkout_pago_tienda" || btn === "checkout_transferencia") && ck.step !== "payment") return corregir(io, state, ck, { pago: btn === "checkout_pago_tienda" ? "pago_en_tienda" : "transferencia" });
+  const btnEntrega = btn ? ENTREGA_POR_ID.get(btn) : undefined;
+  const btnPago = btn ? PAGO_POR_ID.get(btn) : undefined;
+  if (btnEntrega && ck.step !== "delivery") return corregir(io, state, ck, { entrega: btnEntrega });
+  if (btnPago && ck.step !== "payment") return corregir(io, state, ck, { pago: btnPago });
 
   if (!btn) {
     if (ck.pendingChange) {
       const r = await cambiarProductos(io, state, ck, order, text);
       if (r) return r;
     }
-    if (leerSalida(text) === "doubt") return done(state, await ask(io, ck.step, CHECKOUT_MESSAGES.doubt), "doubt");
+    if (leerSalida(text) === "doubt") return done(state, await ask(io, ck.step, textos.doubt, ck.delivery), "doubt");
     if (esEspera(text)) return done(state, await io.sendText(CHECKOUT_MESSAGES.waiting), "waiting");
     if (ck.step === "address" && anunciaDireccion(text)) return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAnnounce), "waiting");
     // Una PREGUNTA nunca es un dato: se responde y se repite la pregunta del paso (sin tocar nada).
-    if (esPregunta(text) || pideCatalogo(text)) return answerAndRepeat(io, state, ck, text);
+    // ("link de pago" en el paso del pago, si el negocio lo ofrece, es la respuesta, no un pedido del catálogo.)
+    const eligeLinkDePago = ck.step === "payment" && leerPago(text, ck.delivery, opciones) === "link_pago";
+    if (esPregunta(text) || (pideCatalogo(text) && !eligeLinkDePago)) return answerAndRepeat(io, state, ck, text);
     const cambio = await cambiarProductos(io, state, ck, order, text);
     if (cambio) return cambio;
-    const corr = leerCorreccion(text, ck.delivery);
+    const corr = leerCorreccion(text, ck.delivery, opciones);
     if (corr && ((corr.entrega && ck.step !== "delivery") || (corr.pago && ck.step !== "payment"))) return corregir(io, state, ck, corr);
   }
 
   const save = (patch: Partial<CheckoutState>) => ({ ...ck, ...patch, pendingChange: null });
-  const move = async (nextCk: CheckoutState, prefix: string | null = null) => {
+  const move = async (nextCkIn: CheckoutState, prefix: string | null = null) => {
+    const nextCk = completar(nextCkIn, opciones);
     const step = nextStep(nextCk);
     if (step === "summary") return summarize(io, state, nextCk, prefix);
-    return done({ ...state, checkout: { ...nextCk, step } }, await ask(io, step, prefix), "asked");
+    return done({ ...state, checkout: { ...nextCk, step } }, await ask(io, step, prefix, nextCk.delivery), "asked");
   };
-  const again = async (text: string, step: CheckoutStep) => done(state, await ask(io, step, text), "invalid");
-  /** Otro dato que vino en el MISMO mensaje ("domicilio y transferencia"): solo llena lo vacío. */
+  const again = async (text: string, step: CheckoutStep) => done(state, await ask(io, step, text, ck.delivery), "invalid");
+  /** Otro dato que vino en el MISMO mensaje ("domicilio y transferencia"): solo llena lo vacío (y solo con un pago que se ofrece). */
   const extra = (c: CheckoutState): CheckoutState => {
     if (btn) return c;
-    const x = leerCorreccion(text, c.delivery);
-    return { ...c, ...(x?.pago && !c.paymentMethod && ck.step !== "payment" ? { paymentMethod: x.pago } : {}) };
+    const x = leerCorreccion(text, c.delivery, opciones);
+    return { ...c, ...(x?.pago && !c.paymentMethod && ck.step !== "payment" && pagoPermitido(opciones, x.pago, c.delivery) ? { paymentMethod: x.pago } : {}) };
   };
 
   switch (ck.step) {
     case "name": {
-      const name = parseCustomerName(text);
+      const name = parseCustomerName(text, vocabulario);
       if (!name) return done(state, await io.sendText(CHECKOUT_MESSAGES.askNameAgain), "invalid");
       // Bloque 28: el nombre queda en el pedido en curso; se guarda en el contacto solo al confirmar.
       return move(save({ customerName: name }));
     }
     case "delivery": {
-      const d = parseDelivery(text, input.buttonId);
+      const d = parseDelivery(text, opciones, input.buttonId);
       if (!d) return again(CHECKOUT_MESSAGES.chooseOption, "delivery");
       const patch: Partial<CheckoutState> = d === "tienda" ? { delivery: d, address: null, city: null, deliveryReference: null } : { delivery: d };
       return move(extra(save(patch)));
     }
     case "address": {
-      const a = leerDireccion(text);
+      const a = leerDireccion(text, io.perfil);
       if (a?.tipo === "vaga") return done(state, await io.sendText(CHECKOUT_MESSAGES.addressVague), "invalid");
       if (a?.tipo === "anuncio") return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAnnounce), "waiting");
       if (!a || NO_REFERENCE.has(normalizar(a.valor))) return done(state, await io.sendText(CHECKOUT_MESSAGES.addressAgain), "invalid");
       // Bloque 32: si la dirección ya trae la ciudad al final, no se vuelve a preguntar.
       const conCiudad = ciudadEnDireccion(a.valor);
-      if (conCiudad && leerDireccion(conCiudad.direccion)?.tipo === "ok") return move(save({ address: conCiudad.direccion, city: conCiudad.ciudad, step: "reference" }));
+      if (conCiudad && leerDireccion(conCiudad.direccion, io.perfil)?.tipo === "ok") return move(save({ address: conCiudad.direccion, city: conCiudad.ciudad, step: "reference" }));
       return move(save({ address: a.valor }));
     }
     case "city": {
-      const c = leerCiudad(text);
+      const c = leerCiudad(text, io.perfil);
       if (!c || NO_REFERENCE.has(normalizar(c))) return done(state, await io.sendText(CHECKOUT_MESSAGES.cityAgain), "invalid");
       // La referencia es opcional, pero se pregunta (paso explícito).
       return move(save({ city: c, step: "reference" }));
@@ -839,9 +958,12 @@ export async function continueCheckout(
       return move(save({ deliveryReference: r, step: "payment" }));
     }
     case "payment": {
-      const m = btn ? parsePayment(text, input.buttonId) : leerPago(text, ck.delivery);
-      if (m === "no_disponible") return again(CHECKOUT_MESSAGES.noCashOnDelivery, "payment");
+      const m = btn ? parsePayment(text, opciones, input.buttonId) : leerPago(text, ck.delivery, opciones);
+      // "Contra entrega" / "cuando llegue" con un pago que no se ofrece para esa entrega: se explica qué sí.
+      if (m === "no_disponible") return again(textos.paymentUnavailable(ck.delivery === "tienda" ? "pago_en_tienda" : "contra_entrega", ck.delivery), "payment");
       if (!m) return again(CHECKOUT_MESSAGES.chooseOption, "payment");
+      // Autoridad del backend: un botón de un pago que no aplica a ESTA entrega no se anota.
+      if (!pagoPermitido(opciones, m, ck.delivery)) return again(textos.paymentUnavailable(m, ck.delivery), "payment");
       return move(save({ paymentMethod: m, step: "summary" }));
     }
     case "summary": {

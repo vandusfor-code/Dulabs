@@ -2,6 +2,7 @@
 
 // Bloque 27 — piezas visuales del módulo "Pedidos". Solo muestran lo que decidió el backend.
 import type { AccionPedido, EstadoVisible, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
+import type { PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 import { cn } from "@/components/dashboard/catalogo/ui";
 
 type T = (es: string, en: string) => string;
@@ -24,9 +25,12 @@ export const PAGO: Record<"pendiente" | "recibido", { es: string; en: string; to
   recibido: { es: "Pago recibido", en: "Payment received", tone: "bg-lime-soft text-lime-text" },
 };
 
-export const METODO: Record<"pago_en_tienda" | "transferencia", { es: string; en: string }> = {
+/** Todos los métodos del catálogo de la plataforma (un pedido muestra el suyo, sea cual sea el negocio). */
+export const METODO: Record<PaymentMethod, { es: string; en: string }> = {
   pago_en_tienda: { es: "Pago en tienda", en: "Pay in store" },
   transferencia: { es: "Transferencia", en: "Bank transfer" },
+  contra_entrega: { es: "Contra entrega", en: "Cash on delivery" },
+  link_pago: { es: "Link de pago", en: "Payment link" },
 };
 
 export const ENTREGA: Record<"tienda" | "domicilio", { es: string; en: string }> = {

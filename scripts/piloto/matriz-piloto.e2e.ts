@@ -34,9 +34,15 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { NON_TEXT_MESSAGES } from "@/lib/agente/entrada";
 import { FALLBACK_MESSAGES } from "@/lib/agente/runtime";
 import { activarPausaChat, liberarPausaChat } from "@/lib/pausas-chat";
-import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, INTENT_MENU, START_MESSAGES, channelQuestionBody, createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
+import { CHANNEL_QUESTION, CLASSIFICATION_MESSAGES, DEFAULT_WELCOME, channelQuestionBody, createSupabaseCustomerChannelStore, intentMenu, startMessages } from "@/lib/agente/clasificacion";
 import { procesarCambio, registrarMensajesEntrantesSincrono, type MetaChangeValue } from "@/app/webhook-dulabs/route";
-import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES } from "@/lib/agente/checkout";
+import { CHECKOUT_MESSAGES, checkoutButtons } from "@/lib/agente/checkout";
+import { PERFIL_LEGADO } from "@/lib/agente/perfil-negocio";
+
+// Matriz del piloto de DELACOUR: su vocabulario y su checkout (configuración explícita).
+const INTENT_MENU = intentMenu(PERFIL_LEGADO.vocabulario);
+const START_MESSAGES = startMessages(PERFIL_LEGADO.vocabulario);
+const CHECKOUT_BUTTONS = checkoutButtons(PERFIL_LEGADO.opciones);
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
 import { accionGestion, detalleGestion, eliminarGestion, listarGestion, reintentarNotificacionGestion, type PedidoGestion } from "@/lib/catalogo/pedidos/gestion";

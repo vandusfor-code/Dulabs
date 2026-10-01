@@ -102,8 +102,8 @@ export interface PanelQuery {
   stages?: readonly OrderStage[];
   paymentStatus?: "pendiente" | "recibido";
   channel?: OrderChannel;
-  paymentMethod?: "pago_en_tienda" | "transferencia";
-  delivery?: "tienda" | "domicilio";
+  paymentMethod?: OrderCheckout["paymentMethod"];
+  delivery?: OrderCheckout["delivery"];
   from?: string;
   to?: string;
   /** Número de pedido, nombre o referencia de producto; teléfono solo si `searchPhone`. */

@@ -25,7 +25,18 @@ import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { CART_CLARIFY, runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore, parseChannelChoice } from "@/lib/agente/clasificacion";
-import { CHECKOUT_BUTTONS, CHECKOUT_MESSAGES, CHECKOUT_STEP_HINT, parseCustomerName, parseDelivery, parsePayment, wantsCheckout } from "@/lib/agente/checkout";
+import {
+  CHECKOUT_MESSAGES,
+  checkoutButtons,
+  checkoutOptionTexts,
+  checkoutStepHint,
+  parseCustomerName as parseCustomerNameCon,
+  parseDelivery as parseDeliveryCon,
+  parsePayment as parsePaymentCon,
+  wantsCheckout,
+} from "@/lib/agente/checkout";
+import { PERFIL_LEGADO } from "@/lib/agente/perfil-negocio";
+import type { DeliveryType } from "@/lib/catalogo/pedidos/contrato";
 import { MEDIA_MESSAGES, NON_TEXT_MESSAGES, hablaDePago } from "@/lib/agente/entrada";
 import { resolveSelection } from "@/lib/agente/seleccion";
 import { checkGrounding, emptyEvidence, addOrderStateEvidence } from "@/lib/agente/anclaje";
@@ -33,18 +44,34 @@ import { normalizar } from "@/lib/agente/lenguaje/normalizar";
 import {
   esPregunta,
   leerCantidad,
-  leerCiudad,
-  leerCorreccion,
-  leerDireccion,
+  leerCiudad as leerCiudadCon,
+  leerCorreccion as leerCorreccionCon,
+  leerDireccion as leerDireccionCon,
   leerEntrega,
-  leerNombre,
-  leerPago,
+  leerNombre as leerNombreCon,
+  leerPago as leerPagoCon,
   leerSalida,
   modalidadInicial,
   numerosDelCliente,
   pideQuitar,
-  pistasCheckout,
+  pistasCheckout as pistasCheckoutCon,
 } from "@/lib/agente/lenguaje/interpretar";
+
+// Estas pruebas fijan el comportamiento de DELACOUR (joyería): su perfil, antes implícito en el motor,
+// ahora es configuración EXPLÍCITA (PERFIL_LEGADO = lo que la migración escribe en su fila). El motor
+// sin perfil habla de "producto" (ver agente-perfil-negocio.test.ts).
+const P = PERFIL_LEGADO;
+const CHECKOUT_BUTTONS = checkoutButtons(P.opciones);
+const CHECKOUT_STEP_HINT = { delivery: checkoutStepHint(P.opciones, "delivery", null) };
+const leerPago = (t: string, entrega: DeliveryType | null = null) => leerPagoCon(t, entrega, P.opciones);
+const leerCorreccion = (t: string, entrega: DeliveryType | null) => leerCorreccionCon(t, entrega, P.opciones);
+const leerDireccion = (t: string) => leerDireccionCon(t, P);
+const leerCiudad = (t: string) => leerCiudadCon(t, P);
+const leerNombre = (t: string) => leerNombreCon(t, P.vocabulario);
+const pistasCheckout = (t: string) => pistasCheckoutCon(t, P);
+const parseCustomerName = (t: string) => parseCustomerNameCon(t, P.vocabulario);
+const parseDelivery = (t: string, buttonId: string | null = null) => parseDeliveryCon(t, P.opciones, buttonId);
+const parsePayment = (t: string, buttonId: string | null = null) => parsePaymentCon(t, P.opciones, buttonId);
 
 // ===========================================================================
 // 1. Normalizador
@@ -584,7 +611,9 @@ describe("B28 · P0 nombre y dirección no aceptan basura", () => {
     await tocar("reference", 0);
     await turno([], "pago cuando llegue");
     assert.equal((await estado()).checkout?.paymentMethod, null);
-    assert.ok(buttons.at(-1)!.body.startsWith(CHECKOUT_MESSAGES.noCashOnDelivery));
+    assert.ok(buttons.at(-1)!.body.startsWith(checkoutOptionTexts(P.opciones).paymentUnavailable("contra_entrega", "domicilio")));
+    // El texto de Delacour, tal cual (explícito en su perfil).
+    assert.ok(buttons.at(-1)!.body.startsWith("Por ahora no manejamos pago contra entrega 🙏 Puedes pagar por *transferencia* o *en la tienda*."));
   });
 });
 

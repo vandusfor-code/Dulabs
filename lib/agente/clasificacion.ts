@@ -14,6 +14,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 import { normalizar } from "@/lib/agente/lenguaje/normalizar";
+import { VOCABULARIO_NEUTRAL, type Vocabulario } from "@/lib/agente/perfil-negocio";
 
 export type CustomerChannelOrigin = "cliente" | "catalogo_detal" | "catalogo_mayorista" | "asesora";
 export type InitialChannelOrigin = Exclude<CustomerChannelOrigin, "asesora">;
@@ -85,18 +86,24 @@ export const CHANNEL_QUESTION = {
 /** Pregunta del primer contacto: saludo + pregunta en un solo mensaje (con los botones). */
 export const channelQuestionBody = (welcome: string | null) => (welcome ? `${welcome}\n\n${CHANNEL_QUESTION.body}` : CHANNEL_QUESTION.body);
 
+const SEARCH_BUTTON_ID = "accion_buscar";
+const CATALOG_BUTTON = { id: "accion_catalogo", title: "📖 Ver catálogo" } as const;
+
 /**
  * Bloque 26 — después de elegir DETAL, antes de cualquier IA: qué quiere hacer. Fijo, con botones.
- * El cliente igual puede escribir lo que busca (ese texto va al agente normal).
+ * El cliente igual puede escribir lo que busca (ese texto va al agente normal). El botón de búsqueda,
+ * el nombre de lo que vende y los ejemplos salen del VOCABULARIO del negocio (sin él, el neutral).
  */
-export const INTENT_MENU = {
-  body: "¡Perfecto! ✨ ¿Qué quieres hacer?",
-  buttons: [
-    { id: "accion_buscar", title: "🔎 Buscar una joya" },
-    { id: "accion_catalogo", title: "📖 Ver catálogo" },
-  ],
-  textFallback: "¡Perfecto! ✨ Escríbeme qué joya buscas (por ejemplo: dijes, aretes dorados…) o escribe *ver catálogo*.",
-} as const;
+export function intentMenu(v: Vocabulario) {
+  const ejemplos = v.ejemplos.slice(0, 2).join(", ");
+  return {
+    body: "¡Perfecto! ✨ ¿Qué quieres hacer?",
+    buttons: [{ id: SEARCH_BUTTON_ID, title: v.boton_buscar }, CATALOG_BUTTON],
+    textFallback: `¡Perfecto! ✨ Escríbeme qué ${v.producto} buscas${ejemplos ? ` (por ejemplo: ${ejemplos}…)` : ""} o escribe *ver catálogo*.`,
+    /** Respaldo en texto de un menú con mensaje propio del negocio (detal o cliente conocido). */
+    writeOrCatalog: `Escríbeme qué ${v.producto} buscas o escribe *ver catálogo*.`,
+  };
+}
 
 /**
  * Bloque 32 — con `negocio.inicio.detal`: el menú de detal suma "Es para regalo" (el texto va al agente,
@@ -118,13 +125,15 @@ export const WHOLESALE_MENU = {
   textFallback: (body: string) => `${body}\n\nTambién puedes escribir *ver catálogo*.`,
 } as const;
 
-/** Mensajes FIJOS de las acciones de inicio (sin IA). */
-export const START_MESSAGES = {
-  searchPrompt: "Cuéntame qué estás buscando y te ayudo a encontrarlo.\n\nPor ejemplo: dijes, aretes dorados, collar corazón…",
-  /** El enlace lo arma el backend con la publicación REAL del negocio y el canal GUARDADO del contacto. */
-  catalog: (url: string) => `Aquí tienes nuestro catálogo 📖✨\n${url}\n\nSi algo te gusta, escríbeme su nombre o referencia y te ayudo.`,
-  catalogUnavailable: "En este momento el catálogo en línea no está disponible. Cuéntame qué joya buscas y te ayudo por aquí.",
-} as const;
+/** Mensajes FIJOS de las acciones de inicio (sin IA), con el vocabulario del negocio. */
+export function startMessages(v: Vocabulario) {
+  return {
+    searchPrompt: `Cuéntame qué estás buscando y te ayudo a encontrarlo.${v.ejemplos.length > 0 ? `\n\nPor ejemplo: ${v.ejemplos.join(", ")}…` : ""}`,
+    /** El enlace lo arma el backend con la publicación REAL del negocio y el canal GUARDADO del contacto. */
+    catalog: (url: string) => `Aquí tienes nuestro catálogo 📖✨\n${url}\n\nSi algo te gusta, escríbeme su nombre o referencia y te ayudo.`,
+    catalogUnavailable: `En este momento el catálogo en línea no está disponible. Cuéntame qué ${v.producto} buscas y te ayudo por aquí.`,
+  };
+}
 
 /**
  * Acción de inicio que pidió el cliente, decidida por el BACKEND (nunca por el modelo):
@@ -138,8 +147,8 @@ export type StartAction = "classify_retail" | "classify_wholesale" | "search_pro
 const BUTTON_ACTIONS: Record<string, StartAction> = {
   [CHANNEL_QUESTION.buttons[0].id]: "classify_retail",
   [CHANNEL_QUESTION.buttons[1].id]: "classify_wholesale",
-  [INTENT_MENU.buttons[0].id]: "search_product",
-  [INTENT_MENU.buttons[1].id]: "open_catalog",
+  [SEARCH_BUTTON_ID]: "search_product",
+  [CATALOG_BUTTON.id]: "open_catalog",
 };
 
 /** Solo letras y números (sin emojis, tildes ni signos), en minúsculas y con un espacio. */
@@ -152,7 +161,7 @@ const bare = (text: string) =>
     .trim();
 
 const EXACT_ACTIONS = new Map<string, StartAction>([
-  ...[...CHANNEL_QUESTION.buttons, ...INTENT_MENU.buttons].map((b) => [bare(b.title), BUTTON_ACTIONS[b.id]] as const),
+  ...[...CHANNEL_QUESTION.buttons, CATALOG_BUTTON].map((b) => [bare(b.title), BUTTON_ACTIONS[b.id]] as const),
   // Títulos del Bloque 25 (mensajes ya enviados que el cliente todavía puede tocar) y respuestas mínimas.
   ["comprar al detal", "classify_retail"],
   ["comprar al por mayor", "classify_wholesale"],
@@ -164,10 +173,12 @@ const EXACT_ACTIONS = new Map<string, StartAction>([
   ["catalogo", "open_catalog"],
 ]);
 
-export function resolveStartAction(text: string, buttonId?: string | null): StartAction | null {
+/** `vocabulario`: el título del botón de búsqueda es el del negocio (el buzón guarda solo el texto). */
+export function resolveStartAction(text: string, buttonId?: string | null, vocabulario: Vocabulario = VOCABULARIO_NEUTRAL): StartAction | null {
   if (buttonId && BUTTON_ACTIONS[buttonId]) return BUTTON_ACTIONS[buttonId];
   const t = bare(text).slice(0, 60);
-  return t ? (EXACT_ACTIONS.get(t) ?? null) : null;
+  if (!t) return null;
+  return EXACT_ACTIONS.get(t) ?? (t === bare(vocabulario.boton_buscar) ? "search_product" : null);
 }
 
 export const CHANNEL_LABEL: Record<OrderChannel, string> = { retail: "al detal", wholesale: "al por mayor" };

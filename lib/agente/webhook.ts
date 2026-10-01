@@ -22,13 +22,13 @@ import type { ClienteConfig } from "@/lib/supabase";
 import { chatEnPausaHumana } from "@/lib/pausas-chat";
 import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { MetaGraphApiError, enviarMedia, enviarTexto } from "@/lib/whatsapp";
-import { enviarBotones, incrementarUsoMensajes, registrarMensaje, resolverTokenMeta } from "@/lib/whatsapp-outbound";
+import { enviarBotones, enviarLista, incrementarUsoMensajes, registrarMensaje, resolverTokenMetaAgente } from "@/lib/whatsapp-outbound";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
 import { productionAgentToolDeps } from "@/lib/catalogo/pedidos/produccion";
 import { createGeminiProvider } from "@/lib/ia-proveedores/gemini";
 import { validateAIProviderConfig, type AIProviderFactories } from "@/lib/ia-proveedores/registro";
 import { crearLectorDeReferencias } from "@/lib/agente/lectura-referencias";
-import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, type AgentConfigStore } from "@/lib/agente/config";
+import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, type AgentConfigStore, type AgentRuntimeConfig } from "@/lib/agente/config";
 import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
@@ -86,7 +86,12 @@ export interface AgentBoundaryDeps {
    * Construye el resto de dependencias solo si hay un agente válido (evita trabajo para los demás números).
    * Con `mailbox`, los mensajes pasan por el buzón y hay UN turno a la vez por conversación (Bloque 11).
    */
-  build(input: AgentBoundaryInput): (Omit<AgentRuntimeDeps, "config" | "provider" | "model"> & { mailbox?: MailboxStore; drain?: DrainOptions; imageReader?: ImageReaderFactory }) | null;
+  build(input: AgentBoundaryInput, config: AgentRuntimeConfig): (Omit<AgentRuntimeDeps, "config" | "provider" | "model"> & { mailbox?: MailboxStore; drain?: DrainOptions; imageReader?: ImageReaderFactory }) | null;
+  /**
+   * ¿El número tiene con qué enviar por WhatsApp SIN usar la credencial de otro? (su token, o el de la
+   * plataforma solo si su fila lo autoriza). false => el agente no corre: error controlado, sin fallback.
+   */
+  hasMetaCredential?(config: AgentRuntimeConfig): boolean;
   env?: Record<string, string | undefined>;
   factories?: Partial<AIProviderFactories>;
   logError?: (entry: Record<string, unknown>) => void;
@@ -127,7 +132,15 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
     logError({ ...base, result: "invalid_config", reason: provider.reason, provider: cfg.config.provider });
     return { handled: true, outcome: "invalid_config", reason: provider.reason };
   }
-  const rest = deps.build(input);
+  // Sin credencial de Meta PROPIA del negocio (ni autorización explícita para la de la plataforma):
+  // no se gasta un turno que no podría responder ni se envía con la credencial de otro.
+  if (deps.hasMetaCredential && !deps.hasMetaCredential(cfg.config)) {
+    logError({ ...base, result: "invalid_config", reason: "meta_credential_missing" });
+    return { handled: true, outcome: "invalid_config", reason: "meta_credential_missing" };
+  }
+  // Fila leída sin las columnas del perfil (migración pendiente): se atiende como antes, y queda a la vista.
+  if (cfg.config.legacyProfile) console.warn(JSON.stringify({ log: "agent_boundary", result: "legacy_profile", business_id: input.cliente.id_tenant }));
+  const rest = deps.build(input, cfg.config);
   if (!rest) {
     logError({ ...base, result: "unavailable", reason: "runtime_deps_unavailable" });
     return { handled: true, outcome: "unavailable", reason: "runtime_deps_unavailable" };
@@ -268,9 +281,13 @@ export async function encolarEnBuzonSiAplica(input: AgentBoundaryInput, deps: { 
 // Producción
 // ---------------------------------------------------------------------------
 
-/** Envío real por WhatsApp Cloud API; registra en el historial (origen "ia") y cuenta el uso, igual que enviarWhatsApp. */
-function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input: AgentBoundaryInput): AgentSender {
+/**
+ * Envío real por WhatsApp Cloud API; registra en el historial (origen "ia") y cuenta el uso, igual que enviarWhatsApp.
+ * Credencial: la del negocio; la de la plataforma solo si su fila lo autoriza (`permitePlataforma`).
+ */
+function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input: AgentBoundaryInput, permitePlataforma: boolean): AgentSender {
   const simulated = process.env.NODE_ENV !== "production" && process.env.DULABS_AGENTE_ENVIO_SIMULADO === "1";
+  const resolverTokenMeta = (c: ClienteConfig) => resolverTokenMetaAgente(c, permitePlataforma);
   // Diagnóstico de envío SIN datos sensibles: solo el estado HTTP y el código de Meta (nunca el token, el texto ni el teléfono).
   // Devuelve el motivo resumido para la traza del turno (p. ej. "meta_rejected 400/131053").
   const sendError = (kind: "text" | "image", reason: string, err?: unknown): string => {
@@ -333,6 +350,24 @@ function whatsappSender(supabase: SupabaseClient, cliente: ClienteConfig, input:
       await registrarMensaje(supabase, cliente.phone_number_id, input.waId, "saliente", `${body}\n[${buttons.map((b) => b.title).join("] [")}]`, "ia", wamid ?? undefined);
       return { sent: true, wamid };
     },
+    async sendList(body, buttonLabel, rows) {
+      let wamid: string | null = simulated ? simulatedWamid() : null;
+      if (!simulated) {
+        const token = resolverTokenMeta(cliente);
+        if (!token) {
+          return { sent: false, wamid: null, error: sendError("text", "no_meta_token") };
+        }
+        try {
+          ({ wamid } = await enviarLista({ phoneNumberId: cliente.phone_number_id, token, para: input.destino, cuerpo: body, boton: buttonLabel, filas: rows.map((r) => ({ id: r.id, titulo: r.title })) }));
+        } catch (err) {
+          return { sent: false, wamid: null, error: sendError("text", err instanceof MetaGraphApiError ? "meta_rejected" : "send_failed", err) };
+        }
+        await incrementarUsoMensajes(supabase, cliente);
+      }
+      // Igual que los botones: en el Inbox se ven las opciones (el cliente responde con el título de la fila).
+      await registrarMensaje(supabase, cliente.phone_number_id, input.waId, "saliente", `${body}\n[${rows.map((r) => r.title).join("] [")}]`, "ia", wamid ?? undefined);
+      return { sent: true, wamid };
+    },
     humanTookOver: () => chatEnPausaHumana(supabase, cliente.phone_number_id, input.waId),
   };
 }
@@ -365,7 +400,16 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
       if (ref) persist(traces.record(boundaryRecord(entry, { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id, contactRef: ref, wamid: null })));
     },
     factories: baseUrl ? { gemini: (apiKey) => createGeminiProvider({ apiKey, baseUrl }) } : undefined,
-    build(input) {
+    // Fuera de producción con envío simulado no se envía nada a Meta: no hace falta credencial.
+    hasMetaCredential: (config) => {
+      if (process.env.NODE_ENV !== "production" && process.env.DULABS_AGENTE_ENVIO_SIMULADO === "1") return true;
+      try {
+        return resolverTokenMetaAgente(cliente, config.metaPlatformToken) !== null;
+      } catch {
+        return false;
+      }
+    },
+    build(input, config) {
       const catalogDeps = productionAgentToolDeps(supabase);
       if (!catalogDeps) return null;
       const tools: AgentToolsDeps = {
@@ -380,12 +424,12 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         tools,
         state: createSupabaseConversationStateStore(supabase),
         history: createSupabaseHistoryStore(supabase),
-        sender: whatsappSender(supabase, cliente, input),
+        sender: whatsappSender(supabase, cliente, input, config.metaPlatformToken),
         media: createSupabaseProductMediaLedger(supabase),
         mailbox: createSupabaseMailboxStore(supabase),
         usage: createSupabaseUsageReader(supabase),
         classification: createSupabaseCustomerChannelStore(supabase),
-        imageReader: ({ apiKey, model }) => crearLectorDeReferencias({ token: resolverTokenMeta(cliente), apiKey, model, baseUrl }),
+        imageReader: ({ apiKey, model }) => crearLectorDeReferencias({ token: resolverTokenMetaAgente(cliente, config.metaPlatformToken), apiKey, model, baseUrl }),
         log: (trace) => {
           console.info(JSON.stringify(trace));
           persist(traces.record(turnRecord(trace, cliente.phone_number_id)));

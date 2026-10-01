@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ORDER_MAX_QUANTITY } from "@/lib/catalogo/pedido";
+import { DELIVERY_TYPES, PAYMENT_METHODS } from "@/lib/catalogo/pedidos/contrato";
 
 const reference = z.string().regex(/^[A-Z]{1,6}-\d{6,}$/);
 const orderId = z.string().regex(/^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/);
@@ -35,11 +36,12 @@ export const checkoutStateSchema = z
     orderId,
     step: z.enum(CHECKOUT_STEPS),
     customerName: z.string().min(1).max(120).nullable(),
-    delivery: z.enum(["tienda", "domicilio"]).nullable(),
+    delivery: z.enum(DELIVERY_TYPES).nullable(),
     address: z.string().min(1).max(300).nullable(),
     city: z.string().min(1).max(80).nullable(),
     deliveryReference: z.string().min(1).max(300).nullable(),
-    paymentMethod: z.enum(["pago_en_tienda", "transferencia"]).nullable(),
+    /** Catálogo cerrado de la plataforma; cuáles se ofrecen lo decide el perfil del negocio. */
+    paymentMethod: z.enum(PAYMENT_METHODS).nullable(),
     /** Resumen que se le MOSTRÓ: solo esa propuesta (id + total) se puede confirmar. */
     summary: z.object({ confirmationId: z.string().regex(/^cf_[0-9a-z]{16}$/), total: z.number().int().min(0), turn: z.number().int().min(0) }).strict().nullable(),
     startedTurn: z.number().int().min(0),

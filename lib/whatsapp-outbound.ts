@@ -20,6 +20,42 @@ export function resolverTokenMeta(cliente: ClienteConfig): string | null {
   return cliente.meta_permanent_token ? descifrarSecreto(cliente.meta_permanent_token) : (process.env.META_ACCESS_TOKEN ?? null);
 }
 
+/**
+ * Token de Meta de un número con AGENTE conversacional (catalog_sales): SU token. El de la plataforma
+ * (META_ACCESS_TOKEN) solo si la fila del agente lo autoriza EXPLÍCITAMENTE (meta_token_plataforma:
+ * números conectados a mano con el usuario de sistema de DuLabs). Sin ninguno => null: el agente no
+ * responde (error controlado), nunca envía con una credencial que no es la del negocio.
+ */
+export function resolverTokenMetaAgente(cliente: Pick<ClienteConfig, "meta_permanent_token">, permitePlataforma: boolean): string | null {
+  if (cliente.meta_permanent_token) return descifrarSecreto(cliente.meta_permanent_token);
+  return permitePlataforma ? (process.env.META_ACCESS_TOKEN ?? null) : null;
+}
+
+/**
+ * Token de Meta para un envío de un NÚMERO fuera de la conversación del agente (p. ej. notificaciones de
+ * pedidos): si el número tiene agente conversacional, la MISMA política del agente (resolverTokenMetaAgente
+ * con la autorización de su fila); si no tiene, la de siempre (resolverTokenMeta). Sin la tabla o la
+ * columna (migración pendiente): la de siempre. La fila de otro negocio para ese número => null.
+ */
+export async function resolverTokenMetaDeNumero(
+  supabase: SupabaseClient,
+  cliente: Pick<ClienteConfig, "id_tenant" | "phone_number_id" | "meta_permanent_token">,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("dulabs_agente_runtime_config")
+    .select("id_tenant, meta_token_plataforma")
+    .eq("phone_number_id", cliente.phone_number_id)
+    .maybeSingle();
+  if (error) {
+    if (["42P01", "42703", "PGRST204", "PGRST205"].includes(error.code ?? "")) return resolverTokenMeta(cliente as ClienteConfig);
+    throw new Error(`[whatsapp-outbound] política de token ${error.code ?? "?"}`);
+  }
+  const agente = data as { id_tenant: string; meta_token_plataforma: boolean | null } | null;
+  if (!agente) return resolverTokenMeta(cliente as ClienteConfig);
+  if (agente.id_tenant !== cliente.id_tenant) return null;
+  return resolverTokenMetaAgente(cliente, agente.meta_token_plataforma === true);
+}
+
 // Registra un mensaje en el historial. Devuelve true si este wamid ya
 // estaba registrado (constraint único dulabs_mensajes_log_wamid_unico) —
 // esa colisión ES la deduplicación real. Devuelve false tanto si el mensaje
@@ -190,6 +226,50 @@ export async function enviarBotones(params: {
       },
     }),
     signal: params.signal,
+  });
+  const json = (await res.json()) as { messages?: { id?: string }[] } & { error?: { message?: string; code?: number } };
+  if (!res.ok) {
+    const header = res.headers.get("retry-after");
+    const segundos = header ? Number(header) : NaN;
+    throw new MetaGraphApiError({
+      httpStatus: res.status,
+      metaErrorCode: json.error?.code,
+      metaErrorMessage: json.error?.message,
+      retryAfterMs: Number.isFinite(segundos) && segundos >= 0 ? segundos * 1000 : undefined,
+    });
+  }
+  return { wamid: json.messages?.[0]?.id ?? null };
+}
+
+// Mensaje interactivo de LISTA (más de 3 opciones de una sola elección, p. ej.
+// formas de pago): un botón abre la lista; cada fila máx. 24 caracteres. La
+// respuesta llega como interactive.list_reply (id + título). Mensaje de sesión
+// (ventana de 24h), igual que enviarBotones.
+export async function enviarLista(params: {
+  phoneNumberId: string;
+  token: string;
+  para: string;
+  cuerpo: string;
+  /** Texto del botón que abre la lista (máx. 20 caracteres). */
+  boton: string;
+  filas: { id: string; titulo: string }[];
+}): Promise<{ wamid: string | null }> {
+  const res = await fetch(`${GRAPH}/${params.phoneNumberId}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${params.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: params.para,
+      type: "interactive",
+      interactive: {
+        type: "list",
+        body: { text: params.cuerpo },
+        action: {
+          button: params.boton.slice(0, 20),
+          sections: [{ rows: params.filas.slice(0, 10).map((f) => ({ id: f.id, title: f.titulo.slice(0, 24) })) }],
+        },
+      },
+    }),
   });
   const json = (await res.json()) as { messages?: { id?: string }[] } & { error?: { message?: string; code?: number } };
   if (!res.ok) {

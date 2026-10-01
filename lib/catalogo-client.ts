@@ -15,7 +15,7 @@ import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel"
 import type { AccionPedido, EstadoVisible, GrupoPedidos, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import type { ResultadoNotificacion, TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
 import type { ClienteDetalle, ClienteFila, FilaImportacion, FiltroClientes, Modalidad, NotaCliente } from "@/lib/catalogo/clientes/modelo";
-import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
+import type { DeliveryType, OrderChannel, PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 
 /** Bloque 27 — filtros del listado del módulo "Pedidos" (todos opcionales). */
 export interface PedidosFiltros {
@@ -24,8 +24,8 @@ export interface PedidosFiltros {
   grupo?: GrupoPedidos;
   pago?: "pendiente" | "recibido";
   modalidad?: "detal" | "mayorista";
-  metodo?: "pago_en_tienda" | "transferencia";
-  entrega?: "tienda" | "domicilio";
+  metodo?: PaymentMethod;
+  entrega?: DeliveryType;
   desde?: string;
   hasta?: string;
   q?: string;

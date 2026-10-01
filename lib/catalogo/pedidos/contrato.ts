@@ -80,7 +80,11 @@ export const TERMINAL_STATUSES: ReadonlySet<OrderStatus> = new Set(["completed",
 // Bloque 27 — datos del checkout y operación del pedido
 // ---------------------------------------------------------------------------
 
-export const PAYMENT_METHODS = ["pago_en_tienda", "transferencia"] as const;
+/**
+ * Catálogo CERRADO de métodos de pago de la plataforma (mismo CHECK de la BD: migración
+ * 20261205000000). Cada negocio ofrece un subconjunto (dulabs_agente_runtime_config.checkout_opciones).
+ */
+export const PAYMENT_METHODS = ["pago_en_tienda", "transferencia", "contra_entrega", "link_pago"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 /** El MÉTODO no es el pago: pendiente hasta que una persona del equipo registra el pago recibido. */
 export const PAYMENT_STATUSES = ["pendiente", "recibido"] as const;
