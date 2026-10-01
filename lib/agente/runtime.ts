@@ -199,7 +199,13 @@ export interface AgentTurnInput {
    * Mensaje SIN texto (nota de voz, imagen, documento…; Bloque 23): lo resuelve la política
    * determinista de entrada.ts, sin modelo. `text` llega vacío.
    */
-  nonText?: { kind: NonTextKind; caption?: string | null; mediaId?: string | null } | null;
+  nonText?: {
+    kind: NonTextKind;
+    caption?: string | null;
+    mediaId?: string | null;
+    /** FASE 2: el número transcribe notas de voz y ESTA no se pudo entender: se pide escrita (sin decir que no escucha audios). */
+    audioNoEntendido?: boolean;
+  } | null;
   /**
    * Bloque 26: id del botón de WhatsApp que tocó el cliente (solo si llegó; el buzón guarda solo el
    * texto, y entonces la acción se decide por el título exacto del botón). Nunca lo interpreta el modelo.
@@ -676,6 +682,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);
         return finish("rate_limited", null);
       }
+      // FASE 2: el número transcribe notas de voz, pero esta no se entendió: se pide escrita sin decir "no escucho audios".
+      const noEntendido = policy.kind === "audio" && input.nonText?.audioNoEntendido === true;
       const text =
         policy.kind === "unsupported"
           ? NON_TEXT_MESSAGES.unsupported
@@ -683,8 +691,12 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             ? NON_TEXT_MESSAGES.audioAboutProduct({ reference: photo.reference, name: photo.name, available: photo.status === "available" })
             : ckStep
               ? // Bloque 28: con un pedido en registro, se dice exactamente qué dato falta.
-                `Por ahora no puedo escuchar notas de voz 🙏 ${pasoHint(ckStep)}`
-              : NON_TEXT_MESSAGES.audio;
+                noEntendido
+                ? NON_TEXT_MESSAGES.audioNoEntendidoEnCheckout(pasoHint(ckStep))
+                : `Por ahora no puedo escuchar notas de voz 🙏 ${pasoHint(ckStep)}`
+              : noEntendido
+                ? NON_TEXT_MESSAGES.audioNoEntendido
+                : NON_TEXT_MESSAGES.audio;
       const sent = await sendFixed(text);
       if (sent) next = { ...next, nonTextNoticeAt: new Date(now()).toISOString() };
       trace.state_saved = await deps.state.save(key, next, loaded.version).catch(() => false);

@@ -28,14 +28,15 @@ import { productionAgentToolDeps } from "@/lib/catalogo/pedidos/produccion";
 import { createGeminiProvider } from "@/lib/ia-proveedores/gemini";
 import { validateAIProviderConfig, type AIProviderFactories } from "@/lib/ia-proveedores/registro";
 import { crearLectorDeReferencias } from "@/lib/agente/lectura-referencias";
+import { crearTranscriptorDeAudio, type ResultadoTranscripcion, type TranscriptorDeAudio } from "@/lib/agente/transcripcion-audio";
 import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, type AgentConfigStore, type AgentRuntimeConfig } from "@/lib/agente/config";
 import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
 import { batchInput, createSupabaseMailboxStore, drain, enqueueAndDrain, type DrainOptions, type MailboxMessage, type MailboxStore } from "@/lib/agente/buzon";
-import { FOTO_SIN_REFERENCIA, PREFIJO_FOTO, type NonTextKind } from "@/lib/agente/entrada";
+import { FOTO_SIN_REFERENCIA, PREFIJO_FOTO, inboxLabel, type NonTextKind } from "@/lib/agente/entrada";
 import { boundaryRecord, createSupabaseTraceSink, turnRecord } from "@/lib/agente/trazas";
-import { createSupabaseUsageReader } from "@/lib/agente/limites";
+import { createSupabaseUsageReader, decideLimits } from "@/lib/agente/limites";
 import { createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { classifyCustomerMedia, runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
@@ -51,8 +52,8 @@ export interface AgentBoundaryInput {
   /** context de Meta: mensaje citado (swipe-to-reply a una foto) o reenviado. */
   replyTo?: { wamid?: string | null; forwarded?: boolean } | null;
   /** Mensaje sin texto (Bloque 23): `text` vacío y la política determinista de entrada.ts. */
-  nonText?: { kind: NonTextKind; caption?: string | null; mediaId?: string | null } | null;
-  /** Bloque 30: mensaje superado por uno más nuevo (freno de ráfaga): una foto de producto solo se encola en el buzón. */
+  nonText?: { kind: NonTextKind; caption?: string | null; mediaId?: string | null; audioNoEntendido?: boolean } | null;
+  /** Bloque 30: mensaje superado por uno más nuevo (freno de ráfaga): una foto de producto (o una nota de voz transcrita) solo se encola en el buzón. */
   soloEncolar?: boolean;
   /** Bloque 26: id del botón tocado (interactive.button_reply.id). Solo el turno directo lo usa; el buzón guarda el texto. */
   buttonId?: string | null;
@@ -80,13 +81,39 @@ export type AgentBoundaryResult =
 /** Bloque 29: lector de referencias en fotos del cliente, con la MISMA credencial y modelo del agente. */
 export type ImageReaderFactory = (gemini: { apiKey: string; model: string }) => (mediaId: string) => Promise<string[]>;
 
+/** FASE 2: transcriptor de notas de voz, con la MISMA credencial y modelo del agente (y la credencial de Meta del negocio). */
+export type AudioTranscriberFactory = (gemini: { apiKey: string; model: string }) => TranscriptorDeAudio;
+
+/** FASE 2: lo que queda de una transcripción (sin el texto: solo tamaños, tokens y resultado). */
+export interface TranscriptionTrace {
+  wamid: string;
+  contact_ref: string;
+  outcome: "transcrito" | Extract<ResultadoTranscripcion, { ok: false }>["motivo"] | "tope";
+  bytes: number | null;
+  chars: number | null;
+  ms: number;
+  usage: { input: number; output: number } | null;
+}
+
 export interface AgentBoundaryDeps {
   configStore: AgentConfigStore;
   /**
    * Construye el resto de dependencias solo si hay un agente válido (evita trabajo para los demás números).
    * Con `mailbox`, los mensajes pasan por el buzón y hay UN turno a la vez por conversación (Bloque 11).
    */
-  build(input: AgentBoundaryInput, config: AgentRuntimeConfig): (Omit<AgentRuntimeDeps, "config" | "provider" | "model"> & { mailbox?: MailboxStore; drain?: DrainOptions; imageReader?: ImageReaderFactory }) | null;
+  build(input: AgentBoundaryInput, config: AgentRuntimeConfig):
+    | (Omit<AgentRuntimeDeps, "config" | "provider" | "model"> & {
+        mailbox?: MailboxStore;
+        drain?: DrainOptions;
+        imageReader?: ImageReaderFactory;
+        /** FASE 2: transcriptor de notas de voz (solo se usa si el número tiene la transcripción encendida). */
+        audioTranscriber?: AudioTranscriberFactory;
+        /** FASE 2: la transcripción queda en el Inbox junto a "[nota de voz]" (y en el historial de los turnos siguientes). */
+        noteTranscription?: (wamid: string, texto: string) => Promise<void>;
+        /** FASE 2: traza de la transcripción (tokens cuentan para el tope diario del negocio). */
+        logTranscription?: (t: TranscriptionTrace) => void;
+      })
+    | null;
   /**
    * ¿El número tiene con qué enviar por WhatsApp SIN usar la credencial de otro? (su token, o el de la
    * plataforma solo si su fila lo autoriza). false => el agente no corre: error controlado, sin fallback.
@@ -145,7 +172,7 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
     logError({ ...base, result: "unavailable", reason: "runtime_deps_unavailable" });
     return { handled: true, outcome: "unavailable", reason: "runtime_deps_unavailable" };
   }
-  const { mailbox, drain: drainOptions, imageReader, ...runtimeDeps } = rest;
+  const { mailbox, drain: drainOptions, imageReader, audioTranscriber, noteTranscription, logTranscription, ...runtimeDeps } = rest;
   const deps2: AgentRuntimeDeps = { ...runtimeDeps, config: cfg.config, provider: provider.provider, model: provider.model };
   // Bloque 29 (solo con el checkout conversacional): leer la referencia escrita en una foto del cliente.
   if (cfg.config.checkoutEnabled && imageReader && input.nonText?.kind === "image" && input.nonText.mediaId) {
@@ -154,6 +181,39 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
     if (valid.ok && apiKey) deps2.readImageReferences = imageReader({ apiKey, model: valid.model });
   }
   const key = { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId };
+  // FASE 2 — NOTA DE VOZ (solo con la transcripción encendida para el número): se descarga de Meta con la
+  // credencial del negocio, se transcribe con SU proveedor y la transcripción entra como TEXTO del cliente,
+  // con la misma autoridad que un mensaje escrito (buzón, intérprete y guardas; nunca un botón). Si no se
+  // puede (o el negocio/cliente está en su tope de costo), la política de siempre: se pide escrita.
+  if (input.nonText?.kind === "audio" && cfg.config.audioTranscription && audioTranscriber) {
+    const inicio = Date.now();
+    const valid = validateAIProviderConfig({ provider: cfg.config.provider, model: cfg.config.model, credentialRef: cfg.config.credentialRef });
+    const apiKey = valid.ok ? (deps.env ?? process.env)[valid.envVar]?.trim() : undefined;
+    const uso = deps2.usage ? await deps2.usage.read({ tenantId: key.tenantId, phoneNumberId: key.phoneNumberId, contactRef: base.contact_ref }).catch(() => null) : null;
+    const mediaId = input.nonText.mediaId;
+    let r: ResultadoTranscripcion | { ok: false; motivo: "tope" };
+    if (decideLimits(uso, cfg.config.limits).action !== "allow") r = { ok: false, motivo: "tope" };
+    else if (!valid.ok || !apiKey || !mediaId) r = { ok: false, motivo: "error" };
+    else r = await (async () => audioTranscriber({ apiKey, model: valid.model })(mediaId))().catch(() => ({ ok: false as const, motivo: "error" as const }));
+    logTranscription?.(
+      r.ok
+        ? { wamid: input.wamid, contact_ref: base.contact_ref, outcome: "transcrito", bytes: r.bytes, chars: r.texto.length, ms: Date.now() - inicio, usage: r.usage }
+        : { wamid: input.wamid, contact_ref: base.contact_ref, outcome: r.motivo, bytes: ("bytes" in r && r.bytes) || null, chars: null, ms: Date.now() - inicio, usage: ("usage" in r && r.usage) || null },
+    );
+    if (r.ok) {
+      await noteTranscription?.(input.wamid, r.texto).catch(() => undefined);
+      input = { ...input, text: r.texto, nonText: null };
+      if (input.soloEncolar && mailbox) {
+        // Nota de voz superada por un mensaje más nuevo (freno de ráfaga): solo se encola; el turno del más nuevo la atiende.
+        const q = await mailbox
+          .enqueue(key, { wamid: input.wamid, text: r.texto, replyTo: input.replyTo ? { wamid: input.replyTo.wamid ?? null, forwarded: !!input.replyTo.forwarded } : null })
+          .catch(() => "unavailable" as const);
+        if (q !== "unavailable") return { handled: true, outcome: "queued" };
+      }
+    } else {
+      input = { ...input, nonText: { ...input.nonText, audioNoEntendido: true } };
+    }
+  }
   const single = () =>
     runAgentTurn(deps2, { ...key, wamid: input.wamid, text: input.text, replyTo: input.replyTo ?? null, nonText: input.nonText ?? null, buttonId: input.buttonId ?? null }).then((r) => ({ handled: true as const, outcome: r.outcome }));
   let last: AgentTurnTrace["outcome"] | null = null;
@@ -430,6 +490,32 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         usage: createSupabaseUsageReader(supabase),
         classification: createSupabaseCustomerChannelStore(supabase),
         imageReader: ({ apiKey, model }) => crearLectorDeReferencias({ token: resolverTokenMetaAgente(cliente, config.metaPlatformToken), apiKey, model, baseUrl }),
+        audioTranscriber: ({ apiKey, model }) => crearTranscriptorDeAudio({ token: resolverTokenMetaAgente(cliente, config.metaPlatformToken), apiKey, model, baseUrl }),
+        noteTranscription: async (wamid, texto) => {
+          // Solo la fila de ESTA nota de voz (entrante, de este contacto y número): la asesora y los turnos siguientes ven lo que dijo.
+          await supabase
+            .from("dulabs_mensajes_log")
+            .update({ contenido: `${inboxLabel("audio")} ${texto}`.slice(0, 4_000) })
+            .eq("phone_number_id", cliente.phone_number_id)
+            .eq("telefono_cliente", input.waId)
+            .eq("direccion", "entrante")
+            .eq("wamid", wamid);
+        },
+        logTranscription: (t) => {
+          // Sin el texto: solo resultado, tamaños y tokens (los tokens cuentan para el tope diario del negocio).
+          console.info(JSON.stringify({ log: "agent_audio", business_id: cliente.id_tenant, ...t }));
+          persist(
+            traces.record({
+              tenantId: cliente.id_tenant,
+              phoneNumberId: cliente.phone_number_id,
+              contactRef: t.contact_ref,
+              kind: "turn",
+              wamid: t.wamid,
+              result: t.outcome === "transcrito" ? "audio_transcrito" : "audio_no_transcrito",
+              trace: { rounds: 0, usage: { input: t.usage?.input ?? 0, output: t.usage?.output ?? 0, thinking: 0, cached: 0 }, audio: { outcome: t.outcome, bytes: t.bytes, chars: t.chars, ms: t.ms } },
+            }),
+          );
+        },
         log: (trace) => {
           console.info(JSON.stringify(trace));
           persist(traces.record(turnRecord(trace, cliente.phone_number_id)));

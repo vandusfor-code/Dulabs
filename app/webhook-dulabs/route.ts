@@ -1395,10 +1395,12 @@ async function intentarAgenteConversacionalSiAplica(cliente: ClienteConfig, mens
     const deps = productionAgentBoundaryDeps(supabase, cliente);
     if (!texto) {
       // Bloque 23 -- sin texto (nota de voz, imagen, documento…): política determinista del agente, sin modelo.
+      // FASE 2: la nota de voz lleva su mediaId (solo se transcribe si el número lo tiene encendido).
       const politica = nonTextPolicy(mensaje.type);
       if (politica && politica.action !== "ignore") {
+        const mediaId = mensaje.image?.id ?? (mensaje.type === "audio" ? mensaje.audio?.id : null) ?? null;
         const r = await atenderConAgenteSiAplica(
-          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje), mediaId: mensaje.image?.id ?? null }, soloEncolar },
+          { cliente, waId: telefonoRemitente, destino, wamid: mensaje.id, text: "", replyTo: replyToDeMeta(mensaje.context), nonText: { kind: politica.kind, caption: leyendaDeMeta(mensaje), mediaId }, soloEncolar },
           deps,
         );
         return r.handled;

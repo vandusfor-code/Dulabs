@@ -134,6 +134,11 @@ export interface AgentRuntimeConfig {
    * como antes. Ver resolverTokenMetaAgente (lib/whatsapp-outbound.ts).
    */
   metaPlatformToken: boolean;
+  /**
+   * FASE 2 (columna transcripcion_audio, false por defecto): true => una nota de voz se transcribe y
+   * entra como TEXTO del cliente (misma autoridad). Ausente/false => como antes (se pide escrito).
+   */
+  audioTranscription: boolean;
 }
 
 export type AgentConfigInvalidReason =
@@ -177,6 +182,8 @@ const rowSchema = z.object({
   vocabulario: z.unknown().optional(),
   checkout_opciones: z.unknown().optional(),
   meta_token_plataforma: z.boolean().nullable().optional(),
+  /** FASE 2: puede faltar (fila leída antes de la migración de la transcripción de audio). */
+  transcripcion_audio: z.boolean().optional(),
 });
 
 export type AgentConfigRow = z.input<typeof rowSchema>;
@@ -230,6 +237,7 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
       checkoutOptions: options.opciones,
       legacyProfile: vocabulary.legado || options.legado,
       metaPlatformToken: r.meta_token_plataforma === undefined ? true : r.meta_token_plataforma === true,
+      audioTranscription: r.transcripcion_audio === true,
     },
   };
 }
@@ -263,6 +271,7 @@ export function createSupabaseAgentConfigStore(supabase: SupabaseClient): AgentC
       let data: unknown = null;
       let error: { code?: string } | null = null;
       for (const extra of [
+        ", limites, clasificacion_cliente, checkout_conversacional, vocabulario, checkout_opciones, meta_token_plataforma, transcripcion_audio",
         ", limites, clasificacion_cliente, checkout_conversacional, vocabulario, checkout_opciones, meta_token_plataforma",
         ", limites, clasificacion_cliente, checkout_conversacional",
         ", limites, clasificacion_cliente",
