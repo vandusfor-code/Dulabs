@@ -18,7 +18,7 @@
  *   - Aislado por negocio: módulo "notificaciones_pedidos" del tenant, y el número de WhatsApp del
  *     pedido debe ser de ESE negocio. No toca la IA, las pausas ni la asignación del chat.
  */
-import type { Order } from "@/lib/catalogo/pedidos/contrato";
+import type { DeliveryType, Order } from "@/lib/catalogo/pedidos/contrato";
 
 export const TIPOS_NOTIFICACION = ["pago_recibido", "en_preparacion", "enviado", "entregado", "completado", "cancelado", "rechazado"] as const;
 export type TipoNotificacion = (typeof TIPOS_NOTIFICACION)[number];
@@ -89,7 +89,8 @@ export function ventanaConversacion(ultimoEntrante: string | null, ahora: number
 export interface DatosMensaje {
   nombre: string | null;
   pedido: string;
-  entrega: "tienda" | "domicilio" | null;
+  /** Fase 3B: la oficina de transportadora se trata como lo que viaja (igual que domicilio), nunca como tienda. */
+  entrega: DeliveryType | null;
   negocio: string | null;
 }
 

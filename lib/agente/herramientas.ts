@@ -36,6 +36,7 @@ import { siteUrl } from "@/lib/site-url";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 import { productView, runAgentTool, type AgentToolDeps as CatalogToolDeps } from "@/lib/catalogo/pedidos/herramientas";
 import { OrderError, conversationKey, requestFingerprint, type OrderErrorCode } from "@/lib/catalogo/pedidos/motor";
+import type { DocumentCipher } from "@/lib/catalogo/pedidos/documento";
 import { MAX_CART_LINES, MAX_SHOWN, isKnownReference, rememberReferences, type ConversationState } from "@/lib/agente/estado";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { isExplicitConfirmation } from "@/lib/agente/etapa";
@@ -126,6 +127,8 @@ export interface AgentToolsDeps extends CatalogToolDeps {
   writeToolTimeoutMs?: number;
   /** Origen público del sitio (pruebas); por defecto NEXT_PUBLIC_SITE_URL. */
   siteUrl?: () => string;
+  /** Fase 3B.4: cifra el documento de identidad al recibirlo en el checkout (producción: lib/crypto.ts). */
+  documentCipher?: DocumentCipher;
 }
 
 const MAX_IMAGES_PER_TURN = 5;

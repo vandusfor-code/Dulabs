@@ -15,7 +15,7 @@
  * id interno, el negocio y el contacto nunca salen en vistas públicas.
  */
 
-export const ORDER_STATUSES = ["draft", "validated", "pending_confirmation", "confirmed", "handoff", "completed", "cancelled", "expired", "rejected"] as const;
+export const ORDER_STATUSES = ["draft", "validated", "pending_confirmation", "pending_acceptance", "confirmed", "handoff", "completed", "cancelled", "expired", "rejected"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export const ORDER_SOURCES = ["catalog", "whatsapp", "agent", "manual"] as const;
@@ -54,17 +54,22 @@ export type OrderActor = "system" | "agent" | "human";
  * Bloque 27: el checkout conversacional confirma como `agent` (la conversación, tras el "Confirmar"
  * explícito del cliente; el sistema nunca confirma por el cliente) y el SISTEMA cancela una
  * propuesta sin reserva (el cliente cancela o modifica el checkout).
+ * Fase 3B — pending_acceptance: datos completos y aviso obligatorio enviado, pero NO es una venta
+ * (sin confirmedAt, etapa ni pago). Solo una persona del negocio lo acepta (-> confirmed), lo cancela
+ * o lo rechaza; vence (sistema) solo si el pedido trae un vencimiento explícito.
  */
 const TRANSITIONS: Record<OrderStatus, Partial<Record<OrderStatus, readonly OrderActor[]>>> = {
   draft: { validated: ["system"], handoff: ["system", "agent", "human"], cancelled: ["system", "human"], expired: ["system"] },
   validated: { pending_confirmation: ["system", "agent"], draft: ["system"], handoff: ["system", "agent", "human"], cancelled: ["system", "human"], expired: ["system"] },
   pending_confirmation: {
     confirmed: ["agent", "human"],
+    pending_acceptance: ["agent"],
     draft: ["system"],
     handoff: ["system", "agent", "human"],
     cancelled: ["human", "system"],
     expired: ["system"],
   },
+  pending_acceptance: { confirmed: ["human"], cancelled: ["human"], rejected: ["human"], expired: ["system"] },
   // expired (system): la reserva de stock venció sin cerrar la venta (Bloque 19, cron horario).
   confirmed: { handoff: ["system", "agent", "human"], completed: ["human"], cancelled: ["human"], rejected: ["human"], expired: ["system"] },
   handoff: { confirmed: ["human"], completed: ["human"], cancelled: ["human"], rejected: ["human"] },
@@ -89,11 +94,12 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 /** El MÉTODO no es el pago: pendiente hasta que una persona del equipo registra el pago recibido. */
 export const PAYMENT_STATUSES = ["pendiente", "recibido"] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
-export const DELIVERY_TYPES = ["tienda", "domicilio"] as const;
+/** Fase 3B: oficina_transportadora = el cliente reclama en una oficina de la transportadora (nunca se nombra una aquí). */
+export const DELIVERY_TYPES = ["tienda", "domicilio", "oficina_transportadora"] as const;
 export type DeliveryType = (typeof DELIVERY_TYPES)[number];
 /**
  * Etapa operativa del pedido mientras está activo (confirmed). Eje INDEPENDIENTE del pago:
- *   confirmado -> en_preparacion -> enviado (solo domicilio) -> entregado
+ *   confirmado -> en_preparacion -> enviado (domicilio u oficina de transportadora) -> entregado
  * (recoger en tienda: en_preparacion -> entregado). "Confirmado" NO significa pagado.
  */
 export const ORDER_STAGES = ["confirmado", "en_preparacion", "enviado", "entregado"] as const;
@@ -102,7 +108,7 @@ export type OrderStage = (typeof ORDER_STAGES)[number];
 /** Siguiente etapa permitida (misma regla que la BD: solo hacia adelante, de a un paso). */
 export function nextStage(stage: OrderStage, delivery: DeliveryType): OrderStage | null {
   if (stage === "confirmado") return "en_preparacion";
-  if (stage === "en_preparacion") return delivery === "domicilio" ? "enviado" : "entregado";
+  if (stage === "en_preparacion") return delivery === "tienda" ? "entregado" : "enviado";
   if (stage === "enviado") return "entregado";
   return null;
 }
@@ -132,7 +138,56 @@ export interface OrderCheckout {
   city: string | null;
   deliveryReference: string | null;
   stage: OrderStage;
+  /** Fase 3B: datos que solo pide un negocio que los configura (ausentes/null en los pedidos de siempre). */
+  contactPhone?: string | null;
+  department?: string | null;
+  neighborhood?: string | null;
+  carrierOffice?: string | null;
 }
+
+/**
+ * Fase 3B — datos del checkout de un pedido que NO es venta: pendiente de aceptación, o cerrado sin
+ * haberse aceptado (cancelado, rechazado o vencido). Sin etapa, sin estado de pago y sin confirmedAt.
+ */
+export interface OrderAcceptance {
+  customerName: string;
+  paymentMethod: PaymentMethod;
+  delivery: DeliveryType;
+  address: string | null;
+  city: string | null;
+  deliveryReference: string | null;
+  contactPhone: string | null;
+  department: string | null;
+  neighborhood: string | null;
+  carrierOffice: string | null;
+  /** Cuándo salió el aviso obligatorio (null = no salió). */
+  noticeSentAt: string | null;
+  /** Cuándo el cliente respondió que sí después del aviso. Informativo: no acepta nada. */
+  customerReplyAt: string | null;
+  /** Política de reserva fijada al enviarlo: null = sin reserva. */
+  reservationMinutes: number | null;
+  /** Vencimiento: null = no vence solo. */
+  expiresAt: string | null;
+}
+
+/**
+ * Fase 3B — políticas con que un pedido se envía a aceptación. TODAS explícitas: el motor no tiene
+ * valores por defecto (son decisiones del negocio) y rechaza un envío sin ellas.
+ */
+export interface AcceptancePolicy {
+  /** Stock mientras espera: sin reserva, o reserva con plazo propio (nunca las 72 h de los confirmados). */
+  reservation: { kind: "none" } | { kind: "ttl"; minutes: number };
+  /** Si nadie lo acepta ni lo cierra: no vence, o vence tras un plazo. */
+  expiration: { kind: "none" } | { kind: "after"; minutes: number };
+  /** Documento de identidad (solo con entrega en oficina de transportadora). */
+  document: { kind: "not_collected" } | { kind: "required_for_office"; allowedTypes: readonly string[]; retention: { kind: "no_automatic_deletion" } | { kind: "days"; days: number } };
+}
+
+/** Fase 3B — plazo de la reserva al ACEPTAR: el de la plataforma (como cualquier confirmado) o uno propio. */
+export type AcceptedReservation = { kind: "platform" } | { kind: "ttl"; minutes: number };
+
+/** Límites técnicos de los plazos (minutos): 1 minuto a 30 días. No son una política. */
+export const POLICY_MINUTES_MAX = 43_200;
 
 export function canTransition(from: OrderStatus, to: OrderStatus, actor: OrderActor): boolean {
   return TRANSITIONS[from][to]?.includes(actor) ?? false;
@@ -205,6 +260,8 @@ export interface Order {
   handoff: OrderHandoff | null;
   /** Bloque 27: datos del checkout conversacional (null = pedido sin checkout, p. ej. anterior al Bloque 27). */
   checkout: OrderCheckout | null;
+  /** Fase 3B: datos del checkout de un pedido que NO es venta (pendiente de aceptación o cerrado sin aceptar). */
+  acceptance?: OrderAcceptance | null;
   /** Cuándo quedó confirmado (null = nunca se confirmó). */
   confirmedAt: string | null;
   idempotencyKey: string;

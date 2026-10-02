@@ -40,6 +40,7 @@ import { createSupabaseUsageReader, decideLimits } from "@/lib/agente/limites";
 import { createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { classifyCustomerMedia, runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
+import { cifrarSecreto } from "@/lib/crypto";
 
 export interface AgentBoundaryInput {
   cliente: Pick<ClienteConfig, "id_tenant" | "phone_number_id">;
@@ -479,6 +480,8 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         customerIsExisting: (k) => createSupabaseClientesRepo(supabase).yaCompro(k.tenantId, k.phoneNumberId, k.waId),
         // Bloque 27: el nombre que el cliente dio en el checkout (mismo registro que el resto de DuLabs).
         rememberCustomerName: (k, nombre) => recordarNombreCliente(supabase, { idTenant: k.tenantId, phoneNumberId: k.phoneNumberId, telefonoCliente: k.waId, nombre }),
+        // Fase 3B.4: el documento de identidad se cifra al recibirlo (AES-256-GCM, TOKEN_ENCRYPTION_KEY).
+        documentCipher: { encrypt: cifrarSecreto },
       };
       return {
         tools,

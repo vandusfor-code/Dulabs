@@ -2,7 +2,7 @@
 
 // Bloque 27 — piezas visuales del módulo "Pedidos". Solo muestran lo que decidió el backend.
 import type { AccionPedido, EstadoVisible, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
-import type { PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
+import type { DeliveryType, PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 import { cn } from "@/components/dashboard/catalogo/ui";
 
 type T = (es: string, en: string) => string;
@@ -17,6 +17,7 @@ export const ESTADO_VISIBLE: Record<EstadoVisible, { es: string; en: string; ton
   rechazado: { es: "Rechazado", en: "Rejected", tone: "bg-red-500/15 text-red-400" },
   vencido: { es: "Vencido", en: "Expired", tone: "bg-ink-2 text-mist" },
   con_asesora: { es: "Con asesora (anterior)", en: "With advisor (legacy)", tone: "bg-amber-500/15 text-amber-500" },
+  por_aceptar: { es: "Pendiente de aceptación", en: "Pending acceptance", tone: "bg-amber-500/15 text-amber-500" },
 };
 
 /** Estado del PAGO: eje aparte del estado del pedido ("confirmado" no es pagado). */
@@ -33,9 +34,10 @@ export const METODO: Record<PaymentMethod, { es: string; en: string }> = {
   link_pago: { es: "Link de pago", en: "Payment link" },
 };
 
-export const ENTREGA: Record<"tienda" | "domicilio", { es: string; en: string }> = {
+export const ENTREGA: Record<DeliveryType, { es: string; en: string }> = {
   tienda: { es: "Recoger en tienda", en: "Store pickup" },
   domicilio: { es: "Domicilio", en: "Home delivery" },
+  oficina_transportadora: { es: "Oficina de transportadora", en: "Carrier office pickup" },
 };
 
 export const ACCION: Record<AccionPedido, { es: string; en: string; confirmar: { es: string; en: string } }> = {

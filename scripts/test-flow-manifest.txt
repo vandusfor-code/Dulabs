@@ -493,6 +493,9 @@ lib/agente/agente-limites.test.ts
 lib/agente/agente-intencion.test.ts
 lib/agente/agente-perfil-negocio.test.ts
 lib/agente/agente-audio.test.ts
+lib/catalogo/pedidos/pedidos-aceptacion.test.ts
+lib/agente/agente-perfil-3b.test.ts
+lib/agente/agente-checkout-aceptacion.test.ts
 app/api/dashboard/conversaciones/atencion-humana.test.ts
 lib/publibordados/observador/observador.test.ts
 app/webhook-dulabs/publibordados-observador-aislamiento.test.ts

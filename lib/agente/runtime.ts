@@ -67,6 +67,7 @@ import {
   type CheckoutTexts,
 } from "@/lib/agente/checkout";
 import type { CheckoutStep } from "@/lib/agente/estado";
+import { politicaDeAceptacion } from "@/lib/agente/perfil-negocio";
 import { formatoWhatsApp } from "@/lib/agente/formato-whatsapp";
 import { esAfirmacion, esSoloSaludo, leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
 import { addOrderStateEvidence, type OrderTracking } from "@/lib/agente/anclaje";
@@ -345,6 +346,13 @@ const STEP_LABEL: Readonly<Record<CheckoutStep, string>> = {
   reference: "referencia de la entrega",
   payment: "forma de pago",
   summary: "resumen del pedido",
+  // Fase 3B.4
+  phone: "teléfono de contacto",
+  department: "departamento",
+  neighborhood: "barrio",
+  office: "oficina de la transportadora",
+  document: "documento de identidad",
+  fix: "corrección de un dato",
 };
 const SIDE_QUESTION_RULES = (step: CheckoutStep) =>
   `El cliente está REGISTRANDO su pedido con el sistema (paso actual: ${STEP_LABEL[step]}) y te hizo una pregunta. Responde SOLO esa pregunta, en 1 a 3 frases, con datos de las herramientas o de la configuración del negocio (políticas). Si el dato no está (por ejemplo, el costo o el tiempo del envío no están configurados), dilo con honestidad y di que una asesora lo confirma al registrar el pedido. No pidas nombre, dirección, entrega ni pago; no confirmes ni registres pedidos; no agregues ni quites productos; no repitas la pregunta del paso: el sistema la repite después de tu respuesta.`;
@@ -995,12 +1003,17 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         // Bloque 28: una PREGUNTA durante el checkout la responde el modelo SOLO con herramientas de lectura
         // (y el anclaje); el checkout no cambia y el backend repite la pregunta del paso.
         answerQuestion: (text, step) => answerSideQuestion(text, step),
+        // Fase 3B.4 — checkout con aceptación: políticas explícitas del negocio, cifrado del documento y los
+        // wamid del turno (el que trae el documento se oculta del historial del modelo).
+        acceptancePolicy: politicaDeAceptacion(checkoutOptions),
+        documentCipher: deps.tools.documentCipher,
+        wamids,
       }
     : null;
   async function answerSideQuestion(text: string, step: CheckoutStep): Promise<string | null> {
     const readOnly = allowed.filter((t) => SIDE_QUESTION_TOOLS.includes(t));
     const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 }).catch(() => []);
-    const qTurns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids }), { role: "user", text }];
+    const qTurns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids, redactWamids: state.documentoWamids }), { role: "user", text }];
     const qFacts: TurnFacts = {
       channel,
       channelSource: source,
@@ -1184,7 +1197,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
 
   // 3) Contexto por capas.
   const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 });
-  const turns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids }), { role: "user", text: input.text }];
+  const turns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids, redactWamids: state.documentoWamids }), { role: "user", text: input.text }];
   const declarations = agentToolDeclarations(allowed);
 
   const ctx: AgentTurnToolContext = {

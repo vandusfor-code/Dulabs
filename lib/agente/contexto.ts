@@ -166,17 +166,24 @@ export const HISTORY_MAX_TURNS = 10;
 export const HISTORY_MAX_CHARS = 6_000;
 export const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** Fase 3B.4 — lo que ve el modelo en lugar de un mensaje con el documento de identidad del cliente. */
+export const DOCUMENTO_OCULTO = "[documento de identidad]";
+
 /**
  * Filas del historial -> turnos alternados (usuario/modelo). Excluye el
  * mensaje actual, campañas y vacíos; fusiona consecutivos del mismo rol;
  * empieza por el cliente; recorta por turnos y por caracteres (lo más nuevo gana).
  */
-export function historyTurns(rows: HistoryRow[], opts: { excludeWamid?: string; excludeWamids?: readonly string[]; maxTurns?: number; maxChars?: number } = {}): AITurn[] {
+export function historyTurns(
+  rows: HistoryRow[],
+  opts: { excludeWamid?: string; excludeWamids?: readonly string[]; redactWamids?: readonly string[]; maxTurns?: number; maxChars?: number } = {},
+): AITurn[] {
   const turns: Array<{ role: "user" | "model"; text: string }> = [];
   for (const row of rows) {
     if (row.wamid && (row.wamid === opts.excludeWamid || opts.excludeWamids?.includes(row.wamid))) continue;
     if (row.origen === "campaña") continue;
-    const text = row.contenido.trim();
+    // Fase 3B.4: el documento nunca entra a un prompt (el mensaje se reemplaza, no se omite: el turno sigue coherente).
+    const text = row.wamid && opts.redactWamids?.includes(row.wamid) ? DOCUMENTO_OCULTO : row.contenido.trim();
     if (!text) continue;
     const role = row.direccion === "entrante" ? "user" : "model";
     const last = turns[turns.length - 1];

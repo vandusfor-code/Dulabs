@@ -13,6 +13,7 @@ import type { AgentToolDeps } from "@/lib/catalogo/pedidos/herramientas";
 import type { IntakeDeps } from "@/lib/catalogo/pedidos/intake";
 import { createOrderEngine, type HumanHandoffPort, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import { createSupabaseOrdersRepository } from "@/lib/catalogo/pedidos/repositorio";
+import { cifrarSecreto } from "@/lib/crypto";
 
 /** Igual que transferir_soporte del Flow: la IA calla 24 h en ESE chat (la asesora la devuelve antes desde el Inbox). */
 const PAUSA_HANDOFF_MS = 24 * 60 * 60 * 1000;
@@ -51,6 +52,8 @@ export function productionOrderEngine(supabase: SupabaseClient): OrderEngine | n
     catalog: createSupabaseCatalogRepository(supabase),
     key,
     handoff: supabaseHandoffPort(supabase),
+    // Fase 3B: el documento de identidad se cifra (AES-256-GCM, TOKEN_ENCRYPTION_KEY) antes de guardarlo.
+    documentCipher: { encrypt: cifrarSecreto },
   });
   cached = { supabase, engine };
   return engine;

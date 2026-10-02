@@ -23,10 +23,13 @@ import { formatCop } from "@/lib/business-agent-quote";
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import {
   CONFIRMATION_TTL_MS,
+  POLICY_MINUTES_MAX,
   TERMINAL_STATUSES,
   canCancelStage,
   canCompleteStage,
   nextStage,
+  type AcceptancePolicy,
+  type AcceptedReservation,
   type DeliveryType,
   type Order,
   type OrderActor,
@@ -43,6 +46,7 @@ import { eventIdFrom, logOrderEventSink, orderEvent, type OrderEvent, type Order
 import { contactRef, logOrderOperation, type OrderLogger } from "@/lib/catalogo/pedidos/log";
 import { InvalidTransition, ProductNotSellable, PublicIdTaken, StockUnavailable, applyChanges, type NewOrder, type OrderChanges, type OrderContact, type OrderCursor, type OrdersRepository, type PanelFilters, type PanelQuery, type ReservationSummary } from "@/lib/catalogo/pedidos/repositorio";
 import { parseWhatsappOrderText } from "@/lib/catalogo/pedidos/whatsapp";
+import { maskDocument, prepareDocument, validDocumentPolicy, type DocumentCipher, type DocumentInput } from "@/lib/catalogo/pedidos/documento";
 
 /** Errores DETERMINISTAS (mismo insumo => mismo código). El mensaje es apto para el cliente. */
 export const ORDER_ERROR_CODES = [
@@ -88,6 +92,8 @@ export interface OrderEngineDeps {
   handoff?: HumanHandoffPort;
   log?: OrderLogger;
   now?: () => Date;
+  /** Fase 3B: cifra el documento de identidad antes de guardarlo (producción: lib/crypto.ts). Sin él, no se guarda ninguno. */
+  documentCipher?: DocumentCipher;
 }
 
 export interface Evaluation {
@@ -104,13 +110,14 @@ export type NextStep = "confirm" | "resolve_issues" | "wait_human" | "none";
 export function nextStepOf(o: Order): NextStep {
   if (o.status === "pending_confirmation") return "confirm";
   if (o.status === "draft") return "resolve_issues";
-  if (o.status === "handoff") return "wait_human";
+  // Fase 3B: pendiente de aceptación = lo decide una persona del negocio (nunca el agente ni el cliente).
+  if (o.status === "handoff" || o.status === "pending_acceptance") return "wait_human";
   return "none";
 }
 
 /** Problemas que dependen de lo que el cliente ESCRIBIÓ (no del catálogo): re-validar no los borra. */
 const STICKY: ReadonlySet<OrderIssue["code"]> = new Set(["reference_not_found", "invalid_quantity", "message_mismatch", "wholesale_unverified"]);
-export const OPEN_STATUSES: readonly OrderStatus[] = ["draft", "validated", "pending_confirmation", "confirmed", "handoff"];
+export const OPEN_STATUSES: readonly OrderStatus[] = ["draft", "validated", "pending_confirmation", "pending_acceptance", "confirmed", "handoff"];
 /** Estados finales: el historial del panel (Bloque 21). Su reserva ya se consumió o se liberó. */
 export const CLOSED_STATUSES = ["completed", "cancelled", "expired", "rejected"] as const satisfies readonly OrderStatus[];
 export type ClosedStatus = (typeof CLOSED_STATUSES)[number];
@@ -172,10 +179,17 @@ export interface CheckoutData {
   address: string | null;
   city: string | null;
   deliveryReference: string | null;
+  /** Fase 3B: solo si el negocio los pide (ausentes en los pedidos de siempre). */
+  contactPhone?: string | null;
+  department?: string | null;
+  neighborhood?: string | null;
+  carrierOffice?: string | null;
 }
 
 /** Motivo del traspaso automático tras un pedido confirmado por el checkout. */
 export const CHECKOUT_HANDOFF_REASON = "pedido confirmado";
+
+const largo = (v: string | null | undefined, min: number, max: number) => v === null || v === undefined || (v.trim().length >= min && v.length <= max);
 
 export function validCheckout(c: CheckoutData): boolean {
   const name = c.customerName.trim();
@@ -185,7 +199,23 @@ export function validCheckout(c: CheckoutData): boolean {
     if (!c.city || c.city.trim().length < 2 || c.city.length > 80) return false;
   }
   if (c.deliveryReference !== null && c.deliveryReference.length > 300) return false;
+  // Fase 3B (mismos límites que la BD). Ningún campo se vuelve obligatorio aquí: eso lo decide el negocio.
+  if (c.delivery === "oficina_transportadora") {
+    if (!c.carrierOffice || !c.city || c.city.trim().length < 2 || c.city.length > 80) return false;
+  } else if (c.carrierOffice) return false;
+  if (c.contactPhone !== null && c.contactPhone !== undefined && !/^[0-9]{7,15}$/.test(c.contactPhone)) return false;
+  if (!largo(c.department, 2, 60) || !largo(c.neighborhood, 1, 120) || !largo(c.carrierOffice, 2, 160)) return false;
   return true;
+}
+
+/** Fase 3B — ¿la política de aceptación es utilizable? Todo explícito y dentro de los límites técnicos. */
+export function validAcceptancePolicy(p: AcceptancePolicy | null | undefined): p is AcceptancePolicy {
+  if (!p || !p.reservation || !p.expiration || !p.document) return false;
+  const minutos = (m: unknown) => typeof m === "number" && Number.isInteger(m) && m >= 1 && m <= POLICY_MINUTES_MAX;
+  if (p.reservation.kind !== "none" && !(p.reservation.kind === "ttl" && minutos(p.reservation.minutes))) return false;
+  if (p.expiration.kind !== "none" && !(p.expiration.kind === "after" && minutos(p.expiration.minutes))) return false;
+  if (p.document.kind !== "not_collected" && p.document.kind !== "required_for_office") return false;
+  return validDocumentPolicy(p.document);
 }
 
 export function createOrderEngine(deps: OrderEngineDeps) {
@@ -410,6 +440,27 @@ export function createOrderEngine(deps: OrderEngineDeps) {
     return move(current, "pending_confirmation", current.status === "pending_confirmation" ? "system" : actor, propose, { reason: "proposal" });
   }
 
+  /** Fase 3B — aviso / respuesta de un pedido pendiente de aceptación de ESTA conversación (una sola vez). */
+  async function markAcceptance(operation: string, mark: "aviso" | "respuesta", input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<Order> {
+    return (
+      await traced(operation, input, async () => {
+        await requireAvailable();
+        if (!deps.orders.markAcceptance) throw new OrderError("UNAVAILABLE", "La aceptación de pedidos aún no está disponible.");
+        const order = await load(input.tenantId, input.contact, input.orderId);
+        let r;
+        try {
+          r = await deps.orders.markAcceptance({ businessId: input.tenantId, orderId: order.orderId, mark, eventId: eventIdFrom("acceptance-mark", order.id, mark) });
+        } catch (err) {
+          if (err instanceof InvalidTransition) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no admite ese registro ahora.`);
+          throw err;
+        }
+        if (r.result === "no_encontrado") throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
+        if (r.result === "conflicto") throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no está pendiente de aceptación${mark === "respuesta" ? " con el aviso enviado" : ""}.`);
+        return { order: r.order, result: r.result === "ok" ? ("ok" as const) : ("duplicate" as const) };
+      })
+    ).order;
+  }
+
   return {
     evaluate,
 
@@ -562,6 +613,11 @@ export function createOrderEngine(deps: OrderEngineDeps) {
         await traced("confirm_order", input, async () => {
           await requireAvailable();
           if (input.checkout && !validCheckout(input.checkout)) throw new OrderError("INVALID_INPUT", "Faltan datos del pedido.");
+          // Fase 3B: la oficina de transportadora y los datos nuevos solo existen en el flujo con aceptación
+          // del negocio (submitForAcceptance). Confirmar directo con ellos se rechaza (nada se pierde en silencio).
+          if (input.checkout && (input.checkout.delivery === "oficina_transportadora" || input.checkout.contactPhone || input.checkout.department || input.checkout.neighborhood || input.checkout.carrierOffice)) {
+            throw new OrderError("INVALID_INPUT", "Esos datos del pedido solo se registran con la aceptación del negocio.");
+          }
           const order = await load(input.tenantId, input.contact, input.orderId);
           if (order.status === "confirmed" && order.confirmation?.id === input.confirmationId) return { order, result: "duplicate" as const };
           if (order.status !== "pending_confirmation") {
@@ -622,9 +678,183 @@ export function createOrderEngine(deps: OrderEngineDeps) {
     },
 
     /**
+     * FASE 3B — el checkout ENVÍA el pedido a aceptación del negocio (pending_confirmation ->
+     * pending_acceptance). Mismas verificaciones que confirmar (propuesta vigente con su id, canal,
+     * precios y stock), pero NO es una venta:
+     *   - no llama a confirmOrder, no fija confirmedAt, ni etapa, ni estado de pago;
+     *   - no cuenta como compra (las estadísticas solo cuentan confirmed / completed);
+     *   - no aparta stock salvo política explícita; no vence salvo política explícita;
+     *   - el documento (solo con oficina de transportadora y según la política) se guarda CIFRADO.
+     * Las políticas son OBLIGATORIAS y explícitas: sin ellas no se envía nada (fail-closed).
+     * Idempotente por la propuesta: repetir el mismo envío devuelve el pedido tal cual.
+     */
+    async submitForAcceptance(input: {
+      tenantId: string;
+      contact: OrderContact;
+      orderId: string;
+      confirmationId: string;
+      checkout: CheckoutData;
+      policy: AcceptancePolicy;
+      /** Solo con oficina de transportadora y política que lo pida. Nunca se registra ni se devuelve. */
+      /** Fase 3B.4: también ya SELLADO (cifrado al recibirlo en el checkout). */
+      document?: DocumentInput | null;
+      expectedChannel?: OrderChannel;
+      requestId?: string;
+    }): Promise<Order> {
+      return (
+        await traced("submit_for_acceptance", { tenantId: input.tenantId, requestId: input.requestId, contact: input.contact }, async () => {
+          await requireAvailable();
+          if (!validAcceptancePolicy(input.policy)) throw new OrderError("INVALID_INPUT", "Falta la configuración de aceptación del negocio (reserva, vencimiento o documento).");
+          if (!validCheckout(input.checkout)) throw new OrderError("INVALID_INPUT", "Faltan datos del pedido.");
+          const at = now();
+          const doc = prepareDocument(input.document, { delivery: input.checkout.delivery, policy: input.policy.document, cipher: deps.documentCipher, now: at });
+          if (!doc.ok) {
+            if (doc.error === "document_cipher_unavailable") throw new OrderError("UNAVAILABLE", "No se pudo guardar el documento de forma segura en este momento.");
+            throw new OrderError("INVALID_INPUT", doc.error === "document_required" ? "Falta el documento para reclamar en la oficina." : "El documento no es válido para este pedido.");
+          }
+          const order = await load(input.tenantId, input.contact, input.orderId);
+          if (order.status === "pending_acceptance" && order.confirmation?.id === input.confirmationId) return { order, result: "duplicate" as const };
+          if (order.status !== "pending_confirmation") {
+            throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no está esperando confirmación (estado: ${order.status}).`);
+          }
+          if (!order.confirmation || order.confirmation.id !== input.confirmationId) {
+            throw new OrderError("CONFIRMATION_MISMATCH", "Esa confirmación no corresponde a la propuesta vigente del pedido.");
+          }
+          if (new Date(order.confirmation.expiresAt).getTime() <= at.getTime()) {
+            throw new OrderError("CONFIRMATION_EXPIRED", "La propuesta venció. Hay que validar el pedido de nuevo.");
+          }
+          if (input.expectedChannel && order.channel !== input.expectedChannel) {
+            throw new OrderError("CONFIRMATION_MISMATCH", "Esa confirmación no corresponde a la propuesta vigente del pedido.");
+          }
+          const ev = await evaluate(order.businessId, order.channel, itemsOf(order), previousPrices(order), order.issues);
+          if (ev.issues.length > 0 || ev.total !== order.confirmation.total || ev.unpricedUnits !== order.confirmation.unpricedUnits) {
+            const moved = await move(order, "draft", "system", { ...evaluationChanges(ev), confirmation: null }, { reason: codeForIssues(ev.issues) });
+            throw new OrderError(codeForIssues(ev.issues), ev.issues[0]?.message ?? "El pedido cambió; hay que validarlo de nuevo.", {
+              order_id: moved.order.orderId,
+              issues: ev.issues.map((i) => ({ code: i.code, message: i.message })),
+            });
+          }
+          const c = input.checkout;
+          const office = c.delivery === "oficina_transportadora";
+          const home = c.delivery === "domicilio";
+          const changes: OrderChanges = {
+            acceptance: {
+              data: {
+                customerName: c.customerName.trim(),
+                paymentMethod: c.paymentMethod,
+                delivery: c.delivery,
+                address: home || office ? c.address?.trim() || null : null,
+                city: home || office ? c.city?.trim() || null : null,
+                deliveryReference: home ? c.deliveryReference?.trim() || null : null,
+                contactPhone: c.contactPhone ?? null,
+                department: c.department?.trim() || null,
+                neighborhood: c.neighborhood?.trim() || null,
+                carrierOffice: office ? c.carrierOffice?.trim() || null : null,
+              },
+              reservationMinutes: input.policy.reservation.kind === "ttl" ? input.policy.reservation.minutes : null,
+              expiresAt: input.policy.expiration.kind === "after" ? new Date(at.getTime() + input.policy.expiration.minutes * 60_000).toISOString() : null,
+              document: doc.document,
+            },
+          };
+          try {
+            return await move(order, "pending_acceptance", "agent", changes, { reason: "submitted_for_acceptance" });
+          } catch (err) {
+            if (!(err instanceof StockUnavailable) && !(err instanceof ProductNotSellable)) throw err;
+            // Solo con reserva explícita: otro cliente se llevó las unidades; vuelve a borrador con el problema real.
+            const fresh = await evaluate(order.businessId, order.channel, itemsOf(order), previousPrices(order), order.issues);
+            const issues = [...fresh.issues, ...issuesFromReservation(err, fresh.issues)];
+            const moved = await move(order, "draft", "system", { ...evaluationChanges(fresh), issues, confirmation: null }, { reason: codeForIssues(issues) });
+            throw new OrderError(codeForIssues(issues), issues[0]?.message ?? "Ya no hay unidades suficientes.", {
+              order_id: moved.order.orderId,
+              issues: issues.map((i) => ({ code: i.code, message: i.message })),
+            });
+          }
+        })
+      ).order;
+    },
+
+    /**
+     * FASE 3B — una PERSONA del negocio acepta el pedido (pending_acceptance -> confirmed): ahí empieza la
+     * venta (etapa "confirmado", pago pendiente, confirmedAt) y se aparta el stock con el plazo elegido
+     * (explícito: el de la plataforma o uno propio). Precios y productos son los que el cliente vio en el
+     * resumen (inmutables). Si ya no alcanza el stock, el pedido SIGUE pendiente y se dice qué falta.
+     */
+    async acceptOrder(input: {
+      tenantId: string;
+      orderId: string;
+      memberId: number;
+      reservation: AcceptedReservation;
+      reason?: string | null;
+      requestId?: string;
+    }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
+      return traced("accept_order", input, async () => {
+        await requireAvailable();
+        if (!Number.isInteger(input.memberId) || input.memberId <= 0) throw new OrderError("FORBIDDEN", "Solo una persona del equipo acepta un pedido.");
+        const r = input.reservation;
+        if (!r || (r.kind !== "platform" && !(r.kind === "ttl" && Number.isInteger(r.minutes) && r.minutes >= 1 && r.minutes <= POLICY_MINUTES_MAX))) {
+          throw new OrderError("INVALID_INPUT", "Falta la política de reserva al aceptar.");
+        }
+        const order = await deps.orders.getByOrderId(input.tenantId, input.orderId);
+        if (!order) throw new OrderError("NOT_FOUND", `No encontramos el pedido ${input.orderId}.`);
+        if (order.status === "confirmed" && order.checkout && !order.acceptance) return { order, result: "duplicate" as const };
+        if (order.status !== "pending_acceptance" || !order.acceptance) {
+          throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no está pendiente de aceptación (estado: ${order.status}).`);
+        }
+        try {
+          const moved = await move(
+            order,
+            "confirmed",
+            "human",
+            { accept: { reservationMinutes: r.kind === "ttl" ? r.minutes : null }, confirmedAt: now().toISOString() },
+            { reason: input.reason?.trim().slice(0, 500) || "accepted_by_team", memberId: input.memberId },
+          );
+          return { order: moved.order, eventId: moved.eventId, result: "ok" as const };
+        } catch (err) {
+          if (err instanceof StockUnavailable || err instanceof ProductNotSellable) {
+            const issues = issuesFromReservation(err, []);
+            throw new OrderError(codeForIssues(issues), issues[0]?.message ?? "Ya no hay unidades suficientes para aceptar el pedido.", {
+              order_id: order.orderId,
+              issues: issues.map((i) => ({ code: i.code, message: i.message })),
+            });
+          }
+          if (err instanceof InvalidTransition) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no se puede aceptar ahora.`);
+          throw err;
+        }
+      });
+    },
+
+    /** FASE 3B — registra (una vez) que salió el aviso obligatorio de un pedido pendiente de aceptación. */
+    async recordAcceptanceNotice(input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<Order> {
+      return markAcceptance("record_acceptance_notice", "aviso", input);
+    },
+
+    /** FASE 3B — registra (una vez) que el cliente respondió que sí después del aviso. INFORMATIVO: no acepta ni confirma nada. */
+    async recordCustomerReply(input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<Order> {
+      return markAcceptance("record_customer_reply", "respuesta", input);
+    },
+
+    /**
+     * FASE 3B — vencimientos de la aceptación (reserva y pedido), SOLO si el pedido trae esas políticas.
+     * Preparado: ningún cron lo llama todavía.
+     */
+    async expireAcceptance(limit = 200): Promise<number> {
+      if (!(await deps.orders.available()) || !deps.orders.expireAcceptance) return 0;
+      return deps.orders.expireAcceptance(limit);
+    },
+
+    /** FASE 3B — documento del pedido para el panel: SOLO enmascarado (nunca el número). */
+    async acceptanceDocument(tenantId: string, order: Order): Promise<{ type: string; masked: string } | null> {
+      await requireAvailable();
+      if (!deps.orders.documentFor || order.businessId !== tenantId) return null;
+      const d = await deps.orders.documentFor(tenantId, order.id);
+      return d ? { type: d.type, masked: maskDocument(d.last4) } : null;
+    },
+
+    /**
      * La ASESORA cierra un pedido desde el panel (actor humano, negocio de la sesión):
      *   complete  confirmed | handoff            => completed (la reserva se consume)
      *   cancel    pending_confirmation | confirmed | handoff | draft | validated => cancelled (el stock vuelve)
+     *   (Fase 3B: cancelar o rechazar también un pedido pendiente de aceptación; nunca "completar".)
      * Idempotente: repetir la misma acción sobre un pedido ya cerrado así devuelve el pedido tal cual.
      */
     async closeOrder(input: {
@@ -649,7 +879,11 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           throw new OrderError("CONFLICT", "El pedido cambió mientras lo procesábamos. Consulta el pedido de nuevo.");
         }
         const allowed: readonly OrderStatus[] =
-          input.action === "cancel" ? ["draft", "validated", "pending_confirmation", "confirmed", "handoff"] : ["confirmed", "handoff"];
+          input.action === "cancel"
+            ? ["draft", "validated", "pending_confirmation", "pending_acceptance", "confirmed", "handoff"]
+            : input.action === "reject"
+              ? ["pending_acceptance", "confirmed", "handoff"]
+              : ["confirmed", "handoff"];
         const verb = input.action === "complete" ? "completar" : input.action === "reject" ? "rechazar" : "cancelar";
         if (!allowed.includes(order.status)) {
           throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} está ${order.status}: no se puede ${verb}.`);
@@ -888,8 +1122,9 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           order = await load(input.tenantId, input.contact, input.orderId);
           if (TERMINAL_STATUSES.has(order.status)) throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} ya está cerrado (${order.status}).`);
           // Bloque 27: la atención es de la CONVERSACIÓN; un pedido del checkout sigue su propio ciclo
-          // (su reserva y su vencimiento no dependen de que una asesora lo atienda).
-          if (order.status !== "handoff" && !order.checkout) {
+          // (su reserva y su vencimiento no dependen de que una asesora lo atienda). Fase 3B: igual un
+          // pedido pendiente de aceptación (nunca pasa a "handoff").
+          if (order.status !== "handoff" && !order.checkout && !order.acceptance) {
             ({ order, eventId } = await move(
               order,
               "handoff",
