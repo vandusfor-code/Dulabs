@@ -34,6 +34,9 @@ import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
+import { coberturaDeCiudad, type EnviosConfig, type ShippingDecision } from "@/lib/agente/envios";
+import { emptyShippingEvidence } from "@/lib/agente/envios-anclaje";
+import { textoDeEnvio } from "@/lib/agente/textos-cliente";
 import { FOTO_SIN_REFERENCIA, MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, hablaDePago, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
 import {
   CHANNEL_LABEL,
@@ -58,6 +61,7 @@ import {
   continueCheckout,
   isCheckoutButton,
   parseSummaryAction,
+  respuestaPagoNoOfrecido,
   staleCheckoutButton,
   startCheckout,
   wantsCheckout,
@@ -67,6 +71,7 @@ import {
   type CheckoutTexts,
 } from "@/lib/agente/checkout";
 import type { CheckoutStep } from "@/lib/agente/estado";
+import { cierreConAceptacion, esVocabularioNeutral, politicaDeAceptacion } from "@/lib/agente/perfil-negocio";
 import { formatoWhatsApp } from "@/lib/agente/formato-whatsapp";
 import { esAfirmacion, esSoloSaludo, leerCantidad, modalidadInicial, numerosDelCliente, pideQuitar } from "@/lib/agente/lenguaje/interpretar";
 import { addOrderStateEvidence, type OrderTracking } from "@/lib/agente/anclaje";
@@ -226,10 +231,12 @@ export function saludoConocido(plantilla: string, nombre: string | null): string
 }
 
 /** Bloque 32: textos del checkout configurados por el negocio (`negocio.pedido`). */
-function checkoutTexts(b: AgentRuntimeConfig["business"]): CheckoutTexts | undefined {
+function checkoutTexts(b: AgentRuntimeConfig["business"], envios?: EnviosConfig | null): CheckoutTexts | undefined {
   const p = b.pedido;
-  if (!p) return undefined;
-  return { paymentQuestion: p.pregunta_pago, shippingNote: p.nota_envio_domicilio, wholesaleMinimum: p.minimo_mayorista, confirmedNote: p.nota_confirmado, storeAddress: p.direccion_tienda };
+  // Fase 3B.6: la línea del resumen sobre el envío del bloque `envios` (texto del negocio) manda sobre la nota general.
+  const resumenEnvio = envios?.texto_resumen;
+  if (!p && !resumenEnvio) return undefined;
+  return { paymentQuestion: p?.pregunta_pago, shippingNote: resumenEnvio ?? p?.nota_envio_domicilio, wholesaleMinimum: p?.minimo_mayorista, confirmedNote: p?.nota_confirmado, storeAddress: p?.direccion_tienda };
 }
 
 export interface AgentTurnTrace {
@@ -294,6 +301,8 @@ export interface AgentTurnTrace {
   start: "intent_menu" | "wholesale_welcome" | "known_greeting" | "search_prompt" | "catalog_link" | null;
   /** Bloque 27 — checkout conversacional: paso en que quedó y qué decidió el backend (sin datos del cliente). */
   checkout?: { step: CheckoutStep | null; action: CheckoutAction } | null;
+  /** Fase 3B.6 — lo que decidió el motor de envíos en el turno (sin la ciudad ni datos del cliente): estado, tipo de tiempo, código y si pasó a una persona. */
+  shipping?: { status: ShippingDecision["status"]; eta_type: ShippingDecision["eta_type"]; reason: string; handoff: boolean } | null;
 }
 
 // Mensajes FIJOS (sin IA): nunca afirman datos comerciales.
@@ -336,6 +345,8 @@ const SIDE_QUESTION_TOOLS: readonly AgentToolName[] = [
   "get_product_details",
   "get_catalog_link",
   "get_customer_context",
+  // Fase 3B.6: una pregunta de envío durante el checkout se responde SOLO con el motor de envíos (lectura pura).
+  "consultar_envio",
 ];
 const STEP_LABEL: Readonly<Record<CheckoutStep, string>> = {
   name: "nombre",
@@ -345,12 +356,21 @@ const STEP_LABEL: Readonly<Record<CheckoutStep, string>> = {
   reference: "referencia de la entrega",
   payment: "forma de pago",
   summary: "resumen del pedido",
+  // Fase 3B.4
+  phone: "teléfono de contacto",
+  department: "departamento",
+  neighborhood: "barrio",
+  office: "oficina de la transportadora",
+  document: "documento de identidad",
+  fix: "corrección de un dato",
 };
 const SIDE_QUESTION_RULES = (step: CheckoutStep) =>
   `El cliente está REGISTRANDO su pedido con el sistema (paso actual: ${STEP_LABEL[step]}) y te hizo una pregunta. Responde SOLO esa pregunta, en 1 a 3 frases, con datos de las herramientas o de la configuración del negocio (políticas). Si el dato no está (por ejemplo, el costo o el tiempo del envío no están configurados), dilo con honestidad y di que una asesora lo confirma al registrar el pedido. No pidas nombre, dirección, entrega ni pago; no confirmes ni registres pedidos; no agregues ni quites productos; no repitas la pregunta del paso: el sistema la repite después de tu respuesta.`;
 
 const CORRECTION = (v: GroundingViolation[]) =>
-  v.some((x) => x.kind === "cart")
+  v.some((x) => x.kind === "shipping")
+    ? "[VERIFICACIÓN DEL SISTEMA] Dijiste algo sobre el envío (tiempo, cobertura, costo o transportadora) que el sistema NO respalda. Llama a consultar_envio con la ciudad del cliente y responde SOLO con lo que devuelva: repite customer_text tal cual, el mismo día solo como una posibilidad (nunca una garantía) y ningún costo, transportadora o cobertura que no venga en su respuesta. Si no puedes verificarlo, ofrece una asesora. No menciones esta verificación."
+    : v.some((x) => x.kind === "cart")
     ? "[VERIFICACIÓN DEL SISTEMA] La selección NO cambió: la herramienta rechazó el cambio (lee su motivo). No digas que agregaste o dejaste listo nada: hazle al cliente la pregunta concreta que indica la herramienta (cuál producto o cuántas unidades). No menciones esta verificación."
     : `[VERIFICACIÓN DEL SISTEMA] Tu respuesta incluye datos que no vienen de las herramientas (${v
     .map((x) => x.value)
@@ -740,6 +760,22 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     if (await handOffNow("customer_request", "customer", "El cliente pidió hablar con una asesora")) return finish("handoff", trace.sent ? FALLBACK_MESSAGES.handoff : null);
   }
 
+  // Fase 3B.9A: un medio de pago que el negocio NO ofrece (Nequi, Daviplata, transferencia, anticipo…), FUERA del checkout: respuesta FIJA
+  // armada con SU configuración, sin modelo (solo negocios con cierre por aceptación humana). Dentro del checkout lo atiende el checkout.
+  const opcionesPago = deps.config.checkoutOptions;
+  if (!loaded.state.checkout && deps.config.checkoutEnabled && opcionesPago && cierreConAceptacion(opcionesPago)) {
+    const respuestaPago = respuestaPagoNoOfrecido(input.text, opcionesPago);
+    if (respuestaPago) {
+      trace.turn = loaded.state.turn;
+      const r = sendResult(await deps.sender.sendText(respuestaPago).catch(() => false));
+      trace.sent = r.sent;
+      trace.delivery.text_wamid = r.wamid;
+      trace.delivery.text_error = r.error;
+      trace.state_saved = await deps.state.save(key, seen, loaded.version).catch(() => false);
+      return finish("replied", r.sent ? respuestaPago : null);
+    }
+  }
+
   let state: ConversationState = {
     ...loaded.state,
     turn: loaded.state.turn + 1,
@@ -856,7 +892,9 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       trace.classification = { action: "asked", channel: null, origin: null };
       // Primer mensaje de la conversación: el saludo del negocio va ARRIBA de la pregunta, en el mismo
       // mensaje (Bloque 26). Al volver a preguntar, solo la pregunta.
-      const welcome = loaded.state.turn === 0 ? (deps.config.business.saludo ?? DEFAULT_WELCOME) : null;
+      // Fase 3B.9A: el saludo por defecto (con 💍) es el de un negocio con vocabulario propio; un negocio NEUTRAL sin saludo configurado
+      // no recibe palabras de otro rubro: va solo la pregunta.
+      const welcome = loaded.state.turn === 0 ? (deps.config.business.saludo ?? (esVocabularioNeutral(deps.config.vocabulary) ? null : DEFAULT_WELCOME)) : null;
       const text = await sendMenu(channelQuestionBody(welcome), CHANNEL_QUESTION.buttons, welcome ? `${welcome}\n\n${CHANNEL_QUESTION.textFallback}` : CHANNEL_QUESTION.textFallback);
       trace.state_saved = await deps.state.save(key, state, loaded.version).catch(() => false);
       return finish("replied", text);
@@ -938,6 +976,12 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   // sin modelo. El modelo solo detecta la intención (create_order_request, más abajo).
   // (Encendido sin opciones de entrega/pago del negocio no llega aquí: la config es inválida.)
   const checkoutOptions = deps.config.checkoutEnabled ? deps.config.checkoutOptions : null;
+  // Fase 3B.6: reglas de envío del negocio de ESTE número (su propia configuración; null = el negocio no usa el motor de envíos).
+  const enviosRules: EnviosConfig | null = deps.config.checkoutOptions?.envios ?? null;
+  // Fase 3B.9A: el guardián de afirmaciones sobre envíos actúa con reglas de envío O con la herramienta en la lista del número: un negocio
+  // que usa el motor de envíos pero aún NO tiene reglas configuradas no puede afirmar tiempos, cobertura, costo ni transportadora (sin
+  // hechos del motor no hay respaldo: una persona). Delacour no tiene la herramienta ni reglas: sin cambios.
+  const shippingGuard = enviosRules !== null || deps.config.tools.includes("consultar_envio");
   const checkoutIO: CheckoutIO | null = checkoutOptions
     ? {
         engine: deps.tools.engine,
@@ -948,7 +992,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         turn: state.turn,
         businessName: deps.config.business.nombre_negocio ?? null,
         perfil: { vocabulario: deps.config.vocabulary, opciones: checkoutOptions },
-        texts: checkoutTexts(deps.config.business),
+        texts: checkoutTexts(deps.config.business, enviosRules),
+        // Fase 3B.6: ciudad dentro del checkout — con `ciudad_desconocida_en_checkout = handoff`, solo una ciudad CONFIRMADA
+        // como cubierta sigue; cualquier otra cosa la confirma una persona (nunca se estima).
+        ...(enviosRules ? { cityCoverage: async (city: string) => coberturaDeCiudad(enviosRules, city, now()) } : {}),
         sendText: async (text) => {
           const r = sendResult(await deps.sender.sendText(text).catch(() => false));
           trace.sent = r.sent;
@@ -995,12 +1042,17 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         // Bloque 28: una PREGUNTA durante el checkout la responde el modelo SOLO con herramientas de lectura
         // (y el anclaje); el checkout no cambia y el backend repite la pregunta del paso.
         answerQuestion: (text, step) => answerSideQuestion(text, step),
+        // Fase 3B.4 — checkout con aceptación: políticas explícitas del negocio, cifrado del documento y los
+        // wamid del turno (el que trae el documento se oculta del historial del modelo).
+        acceptancePolicy: politicaDeAceptacion(checkoutOptions),
+        documentCipher: deps.tools.documentCipher,
+        wamids,
       }
     : null;
   async function answerSideQuestion(text: string, step: CheckoutStep): Promise<string | null> {
     const readOnly = allowed.filter((t) => SIDE_QUESTION_TOOLS.includes(t));
     const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 }).catch(() => []);
-    const qTurns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids }), { role: "user", text }];
+    const qTurns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids, redactWamids: state.documentoWamids }), { role: "user", text }];
     const qFacts: TurnFacts = {
       channel,
       channelSource: source,
@@ -1027,8 +1079,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       handedOff: false,
       handoffMotive: null,
       newProposal: null,
+      shipping: { rules: enviosRules, nowMs: now() },
     };
     const ev = emptyEvidence();
+    if (shippingGuard) ev.shipping = emptyShippingEvidence();
     addCustomerEvidence(text, ev);
     addEvidence(activeOrder, ev);
     addOrderStateEvidence(activeOrder, ev);
@@ -1058,6 +1112,17 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             trace.tool_calls.push({ name: tc.name.slice(0, 40), result: outcome.ok ? "ok" : outcome.error.code, ms: now() - t0, args: summarizeArgs(tc.args) });
             const output = outcome.ok ? outcome.data : { error: outcome.error };
             addEvidence(output, ev);
+            // Fase 3B.6: un envío que el sistema no puede verificar NO se responde con el modelo: sin respuesta verificable
+            // (el checkout decide según `pregunta_sin_respuesta`: pasar a una persona o seguir con el paso).
+            if (tc.name === "consultar_envio" && outcome.ok) {
+              const d = outcome.data as unknown as ShippingDecision;
+              ev.shipping?.facts.push(d);
+              trace.shipping = { status: d.status, eta_type: d.eta_type, reason: d.reason, handoff: d.human_handoff_required };
+              if (d.human_handoff_required) return null;
+              // Fase 3B.8: ciudad excluida explícitamente y texto del negocio configurado => ese texto, tal cual.
+              const fijo = d.status === "not_covered" ? textoDeEnvio(enviosRules, "sin_cobertura") : null;
+              if (fijo) return fijo;
+            }
             results.push({ callId: tc.id, name: tc.name, output });
           }
           for (const k of qCtx.state.known) ev.refs.add(k.reference);
@@ -1176,6 +1241,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   };
 
   const evidence: Evidence = emptyEvidence();
+  // Fase 3B.6: con reglas de envío, lo que el texto diga de envíos debe estar respaldado por consultar_envio (ver envios-anclaje.ts).
+  if (shippingGuard) evidence.shipping = emptyShippingEvidence();
   addCustomerEvidence(input.text, evidence);
   addEvidence(activeOrder, evidence);
   addOrderStateEvidence(activeOrder, evidence);
@@ -1184,7 +1251,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
 
   // 3) Contexto por capas.
   const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 });
-  const turns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids }), { role: "user", text: input.text }];
+  const turns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids, redactWamids: state.documentoWamids }), { role: "user", text: input.text }];
   const declarations = agentToolDeclarations(allowed);
 
   const ctx: AgentTurnToolContext = {
@@ -1216,6 +1283,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     handedOff: false,
     handoffMotive: null,
     newProposal: null,
+    shipping: { rules: enviosRules, nowMs: now() },
   };
 
   let writes = 0;
@@ -1227,6 +1295,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   let corrected = false;
   let forceText = false;
   let nudged = false;
+  /** Fase 3B.6: código del primer envío que el motor no pudo verificar en este turno (=> una persona, sin texto del modelo). */
+  let shippingHandoff: string | null = null;
+  /** Fase 3B.8: texto del NEGOCIO para una ciudad excluida explícitamente (null = no lo configuró: rige lo de siempre). */
+  let shippingFixed: string | null = null;
   let checkoutOrderId: string | null = null;
 
   const call = async (toolMode: "auto" | "none"): Promise<AIGenerateResult> => {
@@ -1280,6 +1352,14 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           trace.tool_calls.push({ name: tc.name.slice(0, 40), result: outcome.ok ? "ok" : outcome.error.code, ms: now() - t0, args: summarizeArgs(tc.args) });
           const output = outcome.ok ? outcome.data : { error: outcome.error };
           addEvidence(output, evidence);
+          // Fase 3B.6: la respuesta ESTRUCTURADA del motor de envíos es el único respaldo de lo que se diga del envío.
+          if (tc.name === "consultar_envio" && outcome.ok) {
+            const d = outcome.data as unknown as ShippingDecision;
+            evidence.shipping?.facts.push(d);
+            trace.shipping = { status: d.status, eta_type: d.eta_type, reason: d.reason, handoff: d.human_handoff_required };
+            if (d.human_handoff_required && shippingHandoff === null) shippingHandoff = d.reason;
+            if (d.status === "not_covered" && shippingFixed === null) shippingFixed = textoDeEnvio(enviosRules, "sin_cobertura");
+          }
           // Bloque 28: "actualicé tu pedido" solo con una escritura real sobre el pedido en este turno.
           if (outcome.ok && ["create_order_request", "validate_order", "confirm_order"].includes(tc.name)) evidence.orderWritten = true;
           // Bloque 28 (auditoría final; solo con el checkout conversacional): "listo" sin cambio real en la selección.
@@ -1300,6 +1380,28 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         if (trace.tool_calls.some((c) => c.result === "OUTCOME_UNKNOWN")) {
           failure = "pending";
           trace.error_kind = "write_outcome_unknown";
+          break;
+        }
+        // Fase 3B.6: el motor de envíos NO pudo verificar (ciudad, cobertura o tiempo): una persona sigue la conversación y el
+        // mensaje es FIJO. El modelo no redacta nada sobre ese envío (nunca una estimación). Queda en la traza y en el motivo.
+        if (shippingHandoff !== null && !ctx.handedOff) {
+          try {
+            await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: `Envío sin información verificable (${shippingHandoff})`, actor: "system", requestId });
+            trace.handoff = { source: "system", motive: "payment_or_delivery" };
+            ctx.handedOff = true;
+            // Fase 3B.8: el texto de "no se puede verificar" es del negocio (sin él, el mensaje neutro de siempre).
+            reply = textoDeEnvio(enviosRules, "cobertura_no_verificable") ?? FALLBACK_MESSAGES.handoff;
+          } catch {
+            // No se pudo avisar a una persona: mensaje técnico fijo (tampoco aquí habla el modelo de envíos).
+            failure = "technical";
+            trace.error_kind = "shipping_handoff_failed";
+          }
+          break;
+        }
+        // Fase 3B.8: ciudad excluida EXPLÍCITAMENTE por el negocio y texto configurado => responde el backend con ese texto, tal cual
+        // (el modelo no redacta nada sobre la cobertura). Sin texto configurado, nada cambia respecto a la 3B.6.
+        if (shippingFixed !== null && !ctx.handedOff) {
+          reply = shippingFixed;
           break;
         }
         // Bloque 27: hay propuesta del backend => el checkout del sistema sigue (el modelo no la presenta).
@@ -1385,6 +1487,18 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     } else if (failure === "pending") {
       reply = FALLBACK_MESSAGES.pending;
       outcome = "fallback";
+    } else if (failure === "unverified" && trace.grounding.violations.includes("shipping") && !ctx.handedOff) {
+      // Fase 3B.6: el modelo insistió en una afirmación de envío que el sistema no respalda (aun después de corregirla):
+      // salida segura a una persona, con mensaje fijo. Nunca se envía lo que dijo.
+      try {
+        await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: "Afirmación sobre el envío sin respaldo del sistema", actor: "system", requestId });
+        trace.handoff = { source: "system", motive: "payment_or_delivery" };
+        reply = textoDeEnvio(enviosRules, "cobertura_no_verificable") ?? FALLBACK_MESSAGES.handoff;
+        outcome = "handoff";
+      } catch {
+        reply = textoDeEnvio(enviosRules, "error_consulta") ?? FALLBACK_MESSAGES.technical;
+        outcome = "fallback";
+      }
     } else if (ctx.state.failures >= 2 && !ctx.handedOff) {
       try {
         await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: "El asistente no pudo responder (fallas repetidas)", actor: "system", requestId });
@@ -1396,7 +1510,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         outcome = "fallback";
       }
     } else {
-      reply = failure === "unverified" ? FALLBACK_MESSAGES.unverified : FALLBACK_MESSAGES.technical;
+      reply = failure === "unverified" ? FALLBACK_MESSAGES.unverified : trace.error_kind === "shipping_handoff_failed" ? (textoDeEnvio(enviosRules, "error_consulta") ?? FALLBACK_MESSAGES.technical) : FALLBACK_MESSAGES.technical;
       outcome = "fallback";
     }
     ctx.images = [];

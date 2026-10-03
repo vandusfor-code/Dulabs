@@ -24,12 +24,15 @@ import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { MetaGraphApiError, enviarMedia, enviarTexto } from "@/lib/whatsapp";
 import { enviarBotones, enviarLista, incrementarUsoMensajes, registrarMensaje, resolverTokenMetaAgente } from "@/lib/whatsapp-outbound";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
-import { productionAgentToolDeps } from "@/lib/catalogo/pedidos/produccion";
+import { productionAgentToolDeps, productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
+import { leerConfigAceptacion } from "@/lib/agente/aceptacion-humana";
+import { atenderRespuestaTrasAviso, createSupabaseHumanEvidence, esConfirmacionTrasAviso, type ResultadoRespuestaAviso } from "@/lib/agente/respuesta-aviso";
 import { createGeminiProvider } from "@/lib/ia-proveedores/gemini";
 import { validateAIProviderConfig, type AIProviderFactories } from "@/lib/ia-proveedores/registro";
 import { crearLectorDeReferencias } from "@/lib/agente/lectura-referencias";
 import { crearTranscriptorDeAudio, type ResultadoTranscripcion, type TranscriptorDeAudio } from "@/lib/agente/transcripcion-audio";
 import { createSupabaseAgentConfigStore, loadAgentConfig, providerForConfig, type AgentConfigStore, type AgentRuntimeConfig } from "@/lib/agente/config";
+import type { FuncionFase3B } from "@/lib/agente/perfil-negocio";
 import { createSupabaseHistoryStore } from "@/lib/agente/contexto";
 import { createSupabaseConversationStateStore } from "@/lib/agente/estado";
 import { createSupabaseProductMediaLedger } from "@/lib/agente/medios";
@@ -40,6 +43,7 @@ import { createSupabaseUsageReader, decideLimits } from "@/lib/agente/limites";
 import { createSupabaseCustomerChannelStore } from "@/lib/agente/clasificacion";
 import type { AgentToolsDeps } from "@/lib/agente/herramientas";
 import { classifyCustomerMedia, runAgentTurn, type AgentRuntimeDeps, type AgentSender, type AgentTurnTrace } from "@/lib/agente/runtime";
+import { cifrarSecreto } from "@/lib/crypto";
 
 export interface AgentBoundaryInput {
   cliente: Pick<ClienteConfig, "id_tenant" | "phone_number_id">;
@@ -76,7 +80,7 @@ export function replyToDeMeta(context: { id?: string | null; forwarded?: boolean
 
 export type AgentBoundaryResult =
   | { handled: false; reason: "no_agent" }
-  | { handled: true; outcome: "disabled" | "invalid_config" | "unavailable" | "queued" | AgentTurnTrace["outcome"]; reason?: string; turns?: number };
+  | { handled: true; outcome: "disabled" | "invalid_config" | "unavailable" | "queued" | "pending_acceptance" | AgentTurnTrace["outcome"]; reason?: string; turns?: number };
 
 /** Bloque 29: lector de referencias en fotos del cliente, con la MISMA credencial y modelo del agente. */
 export type ImageReaderFactory = (gemini: { apiKey: string; model: string }) => (mediaId: string) => Promise<string[]>;
@@ -97,6 +101,16 @@ export interface TranscriptionTrace {
 
 export interface AgentBoundaryDeps {
   configStore: AgentConfigStore;
+  /** SOLO para pruebas: enciende bloques de la Fase 3B que en producción siguen bloqueados (ver parseAgentConfig). */
+  funciones3b?: Readonly<Record<FuncionFase3B, boolean>>;
+  /**
+   * Fase 3B.5 — BARRERA de la aceptación humana: ¿esta conversación tiene un pedido pendiente de aceptación CON el aviso
+   * ya enviado? Solo se consulta en números cuya configuración usa la aceptación humana. Mientras lo haya, el agente NO
+   * atiende (silencio): la conversación es de la persona responsable, haya o no una pausa vigente, y un error de la capa
+   * de aceptación nunca abre otro camino de IA. Si la configuración usa aceptación humana y esta barrera no existe o no
+   * se puede leer: fail-closed (tampoco se atiende).
+   */
+  pendingAcceptance?(key: { tenantId: string; phoneNumberId: string; waId: string }): Promise<{ pending: boolean; noticeSent: boolean }>;
   /**
    * Construye el resto de dependencias solo si hay un agente válido (evita trabajo para los demás números).
    * Con `mailbox`, los mensajes pasan por el buzón y hay UN turno a la vez por conversación (Bloque 11).
@@ -142,7 +156,7 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
   const expected = { tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id };
   let cfg;
   try {
-    cfg = await loadAgentConfig(deps.configStore, expected).catch(() => loadAgentConfig(deps.configStore, expected));
+    cfg = await loadAgentConfig(deps.configStore, expected, { funciones3b: deps.funciones3b }).catch(() => loadAgentConfig(deps.configStore, expected, { funciones3b: deps.funciones3b }));
   } catch {
     // Ni con un reintento se pudo saber si hay agente: fail-closed (no se arriesga a que responda otro bot).
     logError({ ...base, result: "config_unreadable" });
@@ -164,6 +178,23 @@ async function atender(input: AgentBoundaryInput, deps: AgentBoundaryDeps): Prom
   if (deps.hasMetaCredential && !deps.hasMetaCredential(cfg.config)) {
     logError({ ...base, result: "invalid_config", reason: "meta_credential_missing" });
     return { handled: true, outcome: "invalid_config", reason: "meta_credential_missing" };
+  }
+  // Fase 3B.5 — aceptación humana: con un pedido pendiente CON aviso, la conversación es de la persona responsable y el
+  // agente no la atiende (ni por la pausa, que puede faltar o haberse liberado, ni por un error de la capa de aceptación).
+  // Sin el aviso aún registrado (el cierre del checkout se está completando) el turno sigue: el checkout lo termina.
+  if (leerConfigAceptacion(cfg.config)) {
+    if (!deps.pendingAcceptance) {
+      logError({ ...base, result: "unavailable", reason: "acceptance_guard_unavailable" });
+      return { handled: true, outcome: "unavailable", reason: "acceptance_guard_unavailable" };
+    }
+    let estado: { pending: boolean; noticeSent: boolean };
+    try {
+      estado = await deps.pendingAcceptance({ tenantId: input.cliente.id_tenant, phoneNumberId: input.cliente.phone_number_id, waId: input.waId });
+    } catch {
+      logError({ ...base, result: "unavailable", reason: "pending_acceptance_unreadable" });
+      return { handled: true, outcome: "unavailable", reason: "pending_acceptance_unreadable" };
+    }
+    if (estado.pending && estado.noticeSent) return { handled: true, outcome: "pending_acceptance" };
   }
   // Fila leída sin las columnas del perfil (migración pendiente): se atiende como antes, y queda a la vista.
   if (cfg.config.legacyProfile) console.warn(JSON.stringify({ log: "agent_boundary", result: "legacy_profile", business_id: input.cliente.id_tenant }));
@@ -453,6 +484,13 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
       await Promise.allSettled([...pending]);
     },
     configStore: createSupabaseAgentConfigStore(supabase),
+    // Fase 3B.5: barrera de la aceptación humana (solo se consulta en números con aceptación humana; ver AgentBoundaryDeps).
+    pendingAcceptance: async (key) => {
+      const engine = productionOrderEngine(supabase);
+      if (!engine) throw new Error("motor de pedidos no disponible");
+      const o = await engine.pendingAcceptanceFor({ tenantId: key.tenantId, contact: { phoneNumberId: key.phoneNumberId, waId: key.waId } });
+      return { pending: o !== null, noticeSent: !!o?.acceptance?.noticeSentAt };
+    },
     // Errores de la frontera (config inválida, sin credencial, buzón…): log + traza persistente.
     logError: (entry) => {
       defaultLogError(entry);
@@ -479,6 +517,8 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         customerIsExisting: (k) => createSupabaseClientesRepo(supabase).yaCompro(k.tenantId, k.phoneNumberId, k.waId),
         // Bloque 27: el nombre que el cliente dio en el checkout (mismo registro que el resto de DuLabs).
         rememberCustomerName: (k, nombre) => recordarNombreCliente(supabase, { idTenant: k.tenantId, phoneNumberId: k.phoneNumberId, telefonoCliente: k.waId, nombre }),
+        // Fase 3B.4: el documento de identidad se cifra al recibirlo (AES-256-GCM, TOKEN_ENCRYPTION_KEY).
+        documentCipher: { encrypt: cifrarSecreto },
       };
       return {
         tools,
@@ -523,4 +563,37 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
       };
     },
   };
+}
+
+/**
+ * FASE 3B.5 — el cliente responde "sí" después del aviso obligatorio (puerta del webhook ANTES de la pausa de la
+ * conversación; ver respuesta-aviso.ts). Con la configuración inválida, sin aceptación humana, sin pedido pendiente o
+ * ante cualquier error: handled=false y el mensaje sigue su camino de siempre. Nunca lanza.
+ */
+export async function atenderRespuestaTrasAvisoProduccion(supabase: SupabaseClient, cliente: ClienteConfig, input: { waId: string; destino: string; wamid: string; text: string }): Promise<ResultadoRespuestaAviso> {
+  // Barato primero: solo un "sí" claro puede ser la respuesta al aviso (para los demás mensajes no se lee nada).
+  if (!esConfirmacionTrasAviso(input.text)) return { handled: false, motivo: "no_es_confirmacion" };
+  try {
+    const cfg = await loadAgentConfig(createSupabaseAgentConfigStore(supabase), { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id });
+    if (cfg.kind !== "ok") return { handled: false, motivo: "sin_configuracion" };
+    const aceptacion = leerConfigAceptacion(cfg.config);
+    const engine = productionOrderEngine(supabase);
+    if (!aceptacion || !engine) return { handled: false, motivo: "sin_configuracion" };
+    const sender = whatsappSender(supabase, cliente, { cliente, waId: input.waId, destino: input.destino, wamid: input.wamid, text: input.text }, cfg.config.metaPlatformToken);
+    return await atenderRespuestaTrasAviso(
+      { tenantId: cliente.id_tenant, phoneNumberId: cliente.phone_number_id, waId: input.waId, text: input.text },
+      {
+        config: async () => aceptacion,
+        engine,
+        // Una persona del equipo escribió (historial del Inbox/celular + bitácora de la conversación); sin certeza => sí.
+        humanWroteSince: createSupabaseHumanEvidence(supabase),
+        sendText: async (text) => {
+          const r = await sender.sendText(text);
+          return { sent: typeof r === "boolean" ? r : r.sent };
+        },
+      },
+    );
+  } catch {
+    return { handled: false, motivo: "error" };
+  }
 }

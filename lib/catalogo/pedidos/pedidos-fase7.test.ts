@@ -110,12 +110,13 @@ type OrderOut = ReturnType<typeof publicView> & { next_step: string; created?: b
 
 describe("contrato: estados y transiciones", () => {
   it("la tabla de transiciones de TS es EXACTAMENTE la de la función SQL (su definición más reciente)", () => {
-    // La última migración que redefine la función manda (Bloque 19 agregó confirmed -> expired).
+    // La última migración que redefine la función manda (Bloque 19 agregó confirmed -> expired; Fase 3B,
+    // las transiciones de "pendiente de aceptación").
     const ultima = readdirSync("supabase/migrations")
       .filter((f) => f.endsWith(".sql") && /function public\.dulabs_catalogo_pedido_transicion_valida\(/.test(readFileSync(`supabase/migrations/${f}`, "utf8")))
       .sort()
       .at(-1)!;
-    assert.equal(ultima, "20261122000000_dulabs_catalogo_pedidos_checkout.sql");
+    assert.equal(ultima, "20261207000000_dulabs_catalogo_pedidos_aceptacion.sql");
     const sql = readFileSync(`supabase/migrations/${ultima}`, "utf8");
     const bloque = /transicion_valida[\s\S]*?\(values([\s\S]*?)\) as t\(desde, hacia, actor\)/.exec(sql)?.[1] ?? "";
     const enSql = [...bloque.matchAll(/\('(\w+)', '(\w+)', '(\w+)'\)/g)].map((m) => `${m[1]}>${m[2]}>${m[3]}`).sort();

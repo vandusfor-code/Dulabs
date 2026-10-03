@@ -36,9 +36,11 @@ import { siteUrl } from "@/lib/site-url";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 import { productView, runAgentTool, type AgentToolDeps as CatalogToolDeps } from "@/lib/catalogo/pedidos/herramientas";
 import { OrderError, conversationKey, requestFingerprint, type OrderErrorCode } from "@/lib/catalogo/pedidos/motor";
+import type { DocumentCipher } from "@/lib/catalogo/pedidos/documento";
 import { MAX_CART_LINES, MAX_SHOWN, isKnownReference, rememberReferences, type ConversationState } from "@/lib/agente/estado";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { isExplicitConfirmation } from "@/lib/agente/etapa";
+import { resolverEnvio, type EnviosConfig } from "@/lib/agente/envios";
 import { HANDOFF_MOTIVES, type HandoffMotive } from "@/lib/agente/intencion";
 
 export type AgentToolErrorCode =
@@ -108,6 +110,11 @@ export interface AgentTurnToolContext {
   newProposal: { orderId: string; confirmationId: string; total: number } | null;
   /** Pedido confirmado en este turno (la etapa de salida lo refleja). */
   confirmedOrderId?: string | null;
+  /**
+   * Fase 3B.6 — lo único que `consultar_envio` usa, y NADA de esto viene del modelo: las reglas de envío del negocio de
+   * ESTE número (su propia configuración) y el reloj del backend (instante del turno, en ms). Sin reglas: null.
+   */
+  shipping?: { rules: EnviosConfig | null; nowMs: number };
 }
 
 export interface AgentToolsDeps extends CatalogToolDeps {
@@ -126,6 +133,8 @@ export interface AgentToolsDeps extends CatalogToolDeps {
   writeToolTimeoutMs?: number;
   /** Origen público del sitio (pruebas); por defecto NEXT_PUBLIC_SITE_URL. */
   siteUrl?: () => string;
+  /** Fase 3B.4: cifra el documento de identidad al recibirlo en el checkout (producción: lib/crypto.ts). */
+  documentCipher?: DocumentCipher;
 }
 
 const MAX_IMAGES_PER_TURN = 5;
@@ -661,6 +670,23 @@ export const AGENT_TOOLS = {
         return { ok: true, data: { url: `${pub.origin}${productPathIn(pub.base, input.reference)}`, kind: "product", reference: input.reference } };
       }
       return { ok: true, data: { url: `${pub.origin}${pub.base}`, kind: "catalog", channel: ctx.channel === "wholesale" ? "mayorista" : "detal" } };
+    },
+  }),
+
+  consultar_envio: spec({
+    description:
+      "Consulta al SISTEMA la cobertura, la transportadora y el tiempo de entrega del envío a una ciudad. Úsala para CUALQUIER pregunta sobre envíos (¿llegan a…?, ¿cuánto demora?, ¿el envío tiene costo?, ¿por cuál transportadora?). La respuesta del sistema es la ÚNICA fuente: no calcules, estimes ni cambies tiempos; no inventes cobertura, costo ni transportadora. Para el tiempo de entrega repite customer_text tal cual (si same_day_possible es true, el mismo día es una POSIBILIDAD, nunca una garantía). free_shipping solo es true si el negocio lo dice; si es null, no menciones ningún costo. Si ask es \"city\", pregúntale al cliente su ciudad. Si human_handoff_required es true, el sistema pasa la conversación a una asesora por sí mismo: no respondas con datos de envío. Solo recibe la ciudad (y el departamento, si el cliente lo dijo).",
+    input: z
+      .object({
+        city: z.string().trim().min(1).max(80).optional(),
+        department: z.string().trim().min(1).max(60).optional(),
+      })
+      .strict(),
+    kind: "read",
+    async run(ctx, input) {
+      // Reglas y reloj salen del CONTEXTO del turno (el backend), nunca de los argumentos del modelo.
+      const decision = resolverEnvio(ctx.shipping?.rules ?? null, { city: input.city, department: input.department }, ctx.shipping?.nowMs ?? 0);
+      return { ok: true, data: decision as unknown as Record<string, unknown> };
     },
   }),
 

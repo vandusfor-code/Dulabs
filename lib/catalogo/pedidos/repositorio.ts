@@ -22,6 +22,7 @@ import {
   canTransition,
   reservationCanExpire,
   type Order,
+  type OrderAcceptance,
   type OrderActor,
   type OrderChannel,
   type OrderCheckout,
@@ -34,10 +35,32 @@ import {
   type OrderStatus,
 } from "@/lib/catalogo/pedidos/contrato";
 import type { OrderEvent } from "@/lib/catalogo/pedidos/eventos";
+import type { StoredDocument } from "@/lib/catalogo/pedidos/documento";
 
 export type OrderContact = { phoneNumberId: string; waId: string };
 
-export type NewOrder = Omit<Order, "id" | "handoff" | "updatedAt" | "checkout" | "confirmedAt">;
+export type NewOrder = Omit<Order, "id" | "handoff" | "updatedAt" | "checkout" | "confirmedAt" | "acceptance">;
+
+/** Fase 3B — datos del checkout que se guardan al enviar a aceptación (sin etapa, pago ni marcas). */
+export type AcceptanceData = Omit<OrderAcceptance, "noticeSentAt" | "customerReplyAt" | "reservationMinutes" | "expiresAt">;
+
+/** Fase 3B — al ACEPTAR, los datos pasan al checkout de la venta: etapa "confirmado" y pago pendiente. */
+export function checkoutFromAcceptance(a: OrderAcceptance): OrderCheckout {
+  return {
+    customerName: a.customerName,
+    paymentMethod: a.paymentMethod,
+    paymentStatus: "pendiente",
+    delivery: a.delivery,
+    address: a.address,
+    city: a.city,
+    deliveryReference: a.deliveryReference,
+    stage: "confirmado",
+    contactPhone: a.contactPhone,
+    department: a.department,
+    neighborhood: a.neighborhood,
+    carrierOffice: a.carrierOffice,
+  };
+}
 
 /** Lo único que una transición puede cambiar (negocio, canal, origen, id público y clave son inmutables). */
 export interface OrderChanges {
@@ -53,7 +76,17 @@ export interface OrderChanges {
   /** Bloque 27: datos del checkout (solo al confirmar; después son inmutables). */
   checkout?: OrderCheckout;
   confirmedAt?: string;
+  /** Fase 3B: envío a aceptación (datos SIN etapa ni pago, políticas fijadas, documento ya cifrado). */
+  acceptance?: { data: AcceptanceData; reservationMinutes: number | null; expiresAt: string | null; document: StoredDocument | null };
+  /** Fase 3B: aceptar (pending_acceptance -> confirmed): etapa "confirmado", pago pendiente y plazo de la reserva (null = el de la plataforma). */
+  accept?: { reservationMinutes: number | null };
 }
+
+/** Fase 3B — resultado de registrar el aviso o la respuesta del cliente (una sola vez). */
+export type AcceptanceMarkResult =
+  | { result: "ok" | "sin_cambio"; order: Order }
+  | { result: "conflicto"; status: OrderStatus | null }
+  | { result: "no_encontrado" };
 
 export interface TransitionInput {
   businessId: string;
@@ -69,7 +102,15 @@ export interface TransitionInput {
 
 /** Bloque 27 — una entrada del historial del pedido (inmutable), tal como la ve el panel. */
 export interface OrderHistoryEntry {
-  type: "order.created" | "catalog.order_request.created" | "order.status_changed" | "order.handoff_requested" | "order.stage_changed" | "order.payment_changed";
+  type:
+    | "order.created"
+    | "catalog.order_request.created"
+    | "order.status_changed"
+    | "order.handoff_requested"
+    | "order.stage_changed"
+    | "order.payment_changed"
+    | "order.acceptance_notice_sent"
+    | "order.customer_replied";
   from: string | null;
   to: string | null;
   actor: OrderActor | null;
@@ -195,6 +236,15 @@ export interface OrdersRepository {
    * una copia queda en la auditoría. Un pedido activo no se toca ("activo").
    */
   deleteClosed?(input: { businessId: string; orderId: string; memberId: number }): Promise<"eliminado" | "activo" | "no_encontrado">;
+  /**
+   * Fase 3B — registra UNA vez que salió el aviso obligatorio ("aviso") o que el cliente respondió que sí
+   * ("respuesta", informativo: no acepta nada). Solo en pedidos pendientes de aceptación del negocio.
+   */
+  markAcceptance?(input: { businessId: string; orderId: string; mark: "aviso" | "respuesta"; eventId: string }): Promise<AcceptanceMarkResult>;
+  /** Fase 3B — libera reservas vencidas de pedidos pendientes y vence los pedidos con vencimiento pasado. Sin políticas: 0. */
+  expireAcceptance?(limit: number): Promise<number>;
+  /** Fase 3B — documento del pedido (id interno) del negocio, SOLO enmascarado. null = no tiene. */
+  documentFor?(businessId: string, orderId: string): Promise<{ type: string; last4: string } | null>;
 }
 
 /** Bloque 35 — estados en que un pedido ya está cerrado (se puede eliminar). */
@@ -215,13 +265,26 @@ export function applyChanges(order: Order, to: OrderStatus, changes: OrderChange
     ...(changes.contact !== undefined ? { contact: order.contact ?? changes.contact } : {}),
     ...(changes.checkout !== undefined ? { checkout: changes.checkout } : {}),
     ...(changes.confirmedAt !== undefined ? { confirmedAt: changes.confirmedAt } : {}),
+    ...(changes.acceptance !== undefined
+      ? {
+          acceptance: {
+            ...changes.acceptance.data,
+            noticeSentAt: null,
+            customerReplyAt: null,
+            reservationMinutes: changes.acceptance.reservationMinutes,
+            expiresAt: changes.acceptance.expiresAt,
+          },
+        }
+      : {}),
+    ...(changes.accept !== undefined && order.acceptance ? { checkout: checkoutFromAcceptance(order.acceptance), acceptance: null } : {}),
     updatedAt,
   };
 }
 
 function assertTransition(from: OrderStatus, to: OrderStatus, actor: OrderActor) {
   if (from === to) {
-    if (TERMINAL_STATUSES.has(from) || from === "confirmed" || from === "handoff") throw new InvalidTransition(`actualización no permitida en ${from}`);
+    // Fase 3B: un pendiente de aceptación no se "actualiza" por aquí (el aviso y la respuesta van por markAcceptance).
+    if (TERMINAL_STATUSES.has(from) || from === "confirmed" || from === "handoff" || from === "pending_acceptance") throw new InvalidTransition(`actualización no permitida en ${from}`);
     return;
   }
   if (!canTransition(from, to, actor)) throw new InvalidTransition(`transición no permitida: ${from} -> ${to} (${actor})`);
@@ -239,6 +302,12 @@ const BASE_COLUMNS =
 /** Bloque 27: columnas del checkout (si la migración 20261121 aún no está, se lee sin ellas). */
 const CHECKOUT_COLUMNS = "checkout, cliente_nombre, metodo_pago, estado_pago, tipo_entrega, direccion, ciudad, referencia_entrega, etapa, confirmado_at";
 const COLUMNS = `${BASE_COLUMNS}, ${CHECKOUT_COLUMNS}`;
+/** Fase 3B: columnas de la aceptación (si la migración 20261207000000 aún no está, se lee sin ellas: todo sigue igual). */
+const ACCEPTANCE_COLUMNS =
+  "telefono_contacto, departamento, barrio, oficina_transportadora, aviso_enviado_at, respuesta_cliente_at, aceptacion_reserva_min, aceptacion_vence_at, confirmado_reserva_min";
+const FULL_COLUMNS = `${COLUMNS}, ${ACCEPTANCE_COLUMNS}`;
+/** Escalones de lectura: de la más nueva a la más vieja (una columna inexistente baja un escalón, una vez por proceso). */
+const COLUMN_TIERS = [FULL_COLUMNS, COLUMNS, BASE_COLUMNS] as const;
 
 interface PgError {
   code?: string;
@@ -275,6 +344,25 @@ interface OrderRow {
   referencia_entrega?: string | null;
   etapa?: OrderStage | null;
   confirmado_at?: string | null;
+  telefono_contacto?: string | null;
+  departamento?: string | null;
+  barrio?: string | null;
+  oficina_transportadora?: string | null;
+  aviso_enviado_at?: string | null;
+  respuesta_cliente_at?: string | null;
+  aceptacion_reserva_min?: number | null;
+  aceptacion_vence_at?: string | null;
+  confirmado_reserva_min?: number | null;
+}
+
+/** Fase 3B: los datos nuevos solo se agregan si la fila los trae (los pedidos de siempre quedan idénticos). */
+function extraFromRow(r: OrderRow): Partial<Pick<OrderCheckout, "contactPhone" | "department" | "neighborhood" | "carrierOffice">> {
+  const out: Partial<Pick<OrderCheckout, "contactPhone" | "department" | "neighborhood" | "carrierOffice">> = {};
+  if (r.telefono_contacto) out.contactPhone = r.telefono_contacto;
+  if (r.departamento) out.department = r.departamento;
+  if (r.barrio) out.neighborhood = r.barrio;
+  if (r.oficina_transportadora) out.carrierOffice = r.oficina_transportadora;
+  return out;
 }
 
 function checkoutFromRow(r: OrderRow): OrderCheckout | null {
@@ -288,6 +376,29 @@ function checkoutFromRow(r: OrderRow): OrderCheckout | null {
     city: r.ciudad ?? null,
     deliveryReference: r.referencia_entrega ?? null,
     stage: r.etapa,
+    ...extraFromRow(r),
+  };
+}
+
+/** Fase 3B: checkout SIN etapa (no es venta): pendiente de aceptación o cerrado sin aceptar. */
+function acceptanceFromRow(r: OrderRow): OrderAcceptance | null {
+  if (!r.checkout || r.etapa || !r.cliente_nombre || !r.metodo_pago || !r.tipo_entrega) return null;
+  if (!["pending_acceptance", "cancelled", "rejected", "expired"].includes(r.estado)) return null;
+  return {
+    customerName: r.cliente_nombre,
+    paymentMethod: r.metodo_pago,
+    delivery: r.tipo_entrega,
+    address: r.direccion ?? null,
+    city: r.ciudad ?? null,
+    deliveryReference: r.referencia_entrega ?? null,
+    contactPhone: r.telefono_contacto ?? null,
+    department: r.departamento ?? null,
+    neighborhood: r.barrio ?? null,
+    carrierOffice: r.oficina_transportadora ?? null,
+    noticeSentAt: r.aviso_enviado_at ? iso(r.aviso_enviado_at) : null,
+    customerReplyAt: r.respuesta_cliente_at ? iso(r.respuesta_cliente_at) : null,
+    reservationMinutes: r.aceptacion_reserva_min ?? null,
+    expiresAt: r.aceptacion_vence_at ? iso(r.aceptacion_vence_at) : null,
   };
 }
 
@@ -311,6 +422,7 @@ export function orderFromRow(r: OrderRow): Order {
     confirmation: r.confirmacion ? { id: r.confirmacion.id, total: r.confirmacion.total, unpricedUnits: r.confirmacion.unpriced_units, expiresAt: r.confirmacion.expires_at } : null,
     handoff: r.handoff ? { reason: r.handoff.reason, context: r.handoff.context ?? null, requestedBy: r.handoff.requested_by, at: r.handoff.at } : null,
     checkout: checkoutFromRow(r),
+    ...(acceptanceFromRow(r) ? { acceptance: acceptanceFromRow(r) } : {}),
     confirmedAt: r.confirmado_at ? iso(r.confirmado_at) : null,
     idempotencyKey: r.clave_idempotencia,
     requestFingerprint: r.huella_solicitud,
@@ -349,6 +461,38 @@ function changesToRow(c: OrderChanges): Record<string, unknown> {
     out.etapa = c.checkout.stage;
   }
   if (c.confirmedAt !== undefined) out.confirmado_at = c.confirmedAt;
+  // Fase 3B — envío a aceptación: datos del checkout SIN etapa, pago ni confirmado_at (la BD lo exige).
+  if (c.acceptance !== undefined) {
+    const d = c.acceptance.data;
+    out.checkout = true;
+    out.cliente_nombre = d.customerName;
+    out.metodo_pago = d.paymentMethod;
+    out.tipo_entrega = d.delivery;
+    out.direccion = d.address;
+    out.ciudad = d.city;
+    out.referencia_entrega = d.deliveryReference;
+    out.telefono_contacto = d.contactPhone;
+    out.departamento = d.department;
+    out.barrio = d.neighborhood;
+    out.oficina_transportadora = d.carrierOffice;
+    out.aceptacion_reserva_min = c.acceptance.reservationMinutes;
+    out.aceptacion_vence_at = c.acceptance.expiresAt;
+    // El documento ya viene CIFRADO (documento.ts); va a su tabla en la misma transacción.
+    if (c.acceptance.document) {
+      out.documento = {
+        tipo: c.acceptance.document.type,
+        numero_cifrado: c.acceptance.document.cipherText,
+        ultimos4: c.acceptance.document.last4,
+        borrar_despues: c.acceptance.document.deleteAfter,
+      };
+    }
+  }
+  // Fase 3B — aceptar: la venta empieza aquí (etapa "confirmado", pago pendiente) con el plazo de reserva elegido.
+  if (c.accept !== undefined) {
+    out.etapa = "confirmado";
+    out.estado_pago = "pendiente";
+    out.confirmado_reserva_min = c.accept.reservationMinutes;
+  }
   return out;
 }
 
@@ -412,13 +556,14 @@ function panelFilters<Q extends { in: any; eq: any; gte: any; lt: any; contains:
 export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: () => number = Date.now): OrdersRepository {
   let probe: { value: boolean; at: number } | null = null;
   // Bloque 27: sin la migración 20261121 las columnas del checkout no existen: se lee sin ellas
-  // (los pedidos quedan sin checkout) en vez de romper el motor.
-  let columns = COLUMNS;
+  // (los pedidos quedan sin checkout) en vez de romper el motor. Fase 3B: igual con las de la
+  // aceptación (20261207000000): sin ellas se lee como antes, escalón por escalón.
+  let tier = 0;
   const read = async <T>(run: (cols: string) => PromiseLike<{ data: T; error: PgError | null }>) => {
-    let r = await run(columns);
-    if (r.error && columns !== BASE_COLUMNS && (r.error.code === "42703" || r.error.code === "PGRST204")) {
-      columns = BASE_COLUMNS;
-      r = await run(columns);
+    let r = await run(COLUMN_TIERS[tier]);
+    while (r.error && tier < COLUMN_TIERS.length - 1 && (r.error.code === "42703" || r.error.code === "PGRST204")) {
+      tier++;
+      r = await run(COLUMN_TIERS[tier]);
     }
     return r;
   };
@@ -665,6 +810,48 @@ export function createSupabaseOrdersRepository(supabase: SupabaseClient, now: ()
       }
       return Number(data ?? 0);
     },
+
+    async markAcceptance(input) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_pedido_aceptacion_marca", {
+        p_tenant: input.businessId,
+        p_pedido: input.orderId,
+        p_marca: input.mark,
+        p_evento_id: input.eventId,
+      });
+      if (error) {
+        if (error.code === "22023") throw new InvalidTransition(error.message ?? "marca no permitida");
+        fail("markAcceptance", error);
+      }
+      const r = (data ?? {}) as { resultado?: string; estado?: OrderStatus | null; pedido?: OrderRow };
+      if ((r.resultado === "ok" || r.resultado === "sin_cambio") && r.pedido) return { result: r.resultado, order: orderFromRow(r.pedido) };
+      if (r.resultado === "conflicto") return { result: "conflicto", status: r.estado ?? null };
+      return { result: "no_encontrado" };
+    },
+
+    async expireAcceptance(limit) {
+      const { data, error } = await supabase.rpc("dulabs_catalogo_aceptacion_vencer", { p_limite: limit });
+      if (error) {
+        if (isMissingSchema(error)) return 0;
+        fail("expireAcceptance", error);
+      }
+      return Number(data ?? 0);
+    },
+
+    async documentFor(businessId, orderId) {
+      // SOLO lo enmascarado: el número cifrado nunca se lee desde aquí.
+      const { data, error } = await supabase
+        .from("dulabs_catalogo_pedido_documentos")
+        .select("tipo, ultimos4")
+        .eq("id_tenant", businessId)
+        .eq("pedido_id", orderId)
+        .maybeSingle();
+      if (error) {
+        if (isMissingSchema(error)) return null;
+        fail("documentFor", error);
+      }
+      const r = data as { tipo: string; ultimos4: string } | null;
+      return r ? { type: r.tipo, last4: r.ultimos4 } : null;
+    },
   };
 }
 
@@ -714,7 +901,7 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
   const clock = opts.now ?? Date.now;
 
   /** Ajusta las reservas activas a las líneas: primero VALIDA todo, después aplica (todo o nada). */
-  function reconcile(order: Order) {
+  function reconcile(order: Order, ttlMs: number = RESERVATION_TTL_MS) {
     const inv = opts.inventory;
     if (!inv) return;
     const want = new Map<string, number>();
@@ -753,7 +940,7 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
         inv.setStock(p.id, (inv.stockOf(p.id) ?? 0) - delta);
         if (current) current.quantity = q;
         else
-          reservations.push({ businessId: order.businessId, orderId: order.id, productId: p.id, reference: ref, quantity: q, status: "activa", expiresAt: new Date(clock() + RESERVATION_TTL_MS).toISOString() });
+          reservations.push({ businessId: order.businessId, orderId: order.id, productId: p.id, reference: ref, quantity: q, status: "activa", expiresAt: new Date(clock() + ttlMs).toISOString() });
       });
     }
     if (notSellable.length > 0) throw new ProductNotSellable(notSellable);
@@ -768,6 +955,23 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
         if (s !== null) opts.inventory.setStock(r.productId, s + r.quantity);
       }
       r.status = status;
+    }
+  }
+
+  /** Fase 3B — misma regla que la rama "pendiente de aceptación" del trigger de reglas del checkout. */
+  function applyAcceptanceRules(before: Order, after: Order) {
+    const a = before.acceptance;
+    if (before.status !== "pending_acceptance" || !a) return;
+    const frozen = (o: Order, d: OrderAcceptance | null | undefined) =>
+      JSON.stringify([o.lines, o.total, o.channel, o.contact?.waId ?? null, d?.customerName, d?.paymentMethod, d?.delivery, d?.address, d?.city, d?.deliveryReference, d?.contactPhone, d?.department, d?.neighborhood, d?.carrierOffice, d?.reservationMinutes, d?.expiresAt]);
+    // Al aceptar, los datos pasan al checkout de la venta: se comparan con ese mismo origen.
+    const afterData = after.status === "confirmed" && after.checkout ? { ...a, ...after.checkout } : after.acceptance;
+    if (frozen(before, a) !== frozen(after, afterData)) throw new InvalidTransition(`el pedido ${before.orderId} está pendiente de aceptación: sus productos y datos no se editan`);
+    if (after.status === "confirmed") {
+      if (!after.checkout || after.checkout.stage !== "confirmado" || after.checkout.paymentStatus !== "pendiente" || !after.confirmedAt)
+        throw new InvalidTransition(`aceptar el pedido ${before.orderId} lo deja confirmado, con el pago pendiente`);
+    } else if (after.checkout || after.confirmedAt) {
+      throw new InvalidTransition(`el pedido ${before.orderId} no es una venta: no tiene etapa, pago ni confirmación`);
     }
   }
 
@@ -794,22 +998,47 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
   }
 
   /** Misma regla que el trigger dulabs_catalogo_pedido_reservas_trigger. */
-  function applyReservationRule(before: Order, after: Order) {
+  function applyReservationRule(before: Order, after: Order, acceptedReservationMinutes?: number | null) {
     const linesChanged = JSON.stringify(before.lines) !== JSON.stringify(after.lines);
     if (before.status === after.status && !linesChanged) return;
-    if (after.status === "confirmed") reconcile(after);
-    else if (after.status === "handoff") {
+    if (after.status === "confirmed") {
+      reconcile(after);
+      // Fase 3B: al ACEPTAR, la reserva corre desde la aceptación (plazo del pedido o el de la plataforma).
+      if (before.status === "pending_acceptance") {
+        const ttl = acceptedReservationMinutes ? acceptedReservationMinutes * 60_000 : RESERVATION_TTL_MS;
+        for (const r of reservations) if (r.orderId === after.id && r.status === "activa") r.expiresAt = new Date(clock() + ttl).toISOString();
+      }
+    } else if (after.status === "pending_acceptance") {
+      // Fase 3B: SIN reserva salvo política explícita (nunca las 72 h de los confirmados).
+      const minutes = after.acceptance?.reservationMinutes ?? null;
+      if (minutes !== null) {
+        reconcile(after, minutes * 60_000);
+        for (const r of reservations) if (r.orderId === after.id && r.status === "activa") r.expiresAt = new Date(clock() + minutes * 60_000).toISOString();
+      }
+    } else if (after.status === "handoff") {
       if (linesChanged && reservations.some((r) => r.orderId === after.id && r.status === "activa")) reconcile(after);
     } else if (after.status === "completed") close(after.id, "consumida");
     else close(after.id, "liberada");
   }
 
-  const repo: OrdersRepository & { orders: Order[]; events: OrderEvent[]; reservations: MemoryReservation[]; history: typeof history; deleted: typeof deleted; isAvailable: boolean } = {
+  /** Fase 3B — documentos (igual que la tabla: SOLO cifrados, con los últimos 4). */
+  const documents: Array<{ businessId: string; orderId: string; type: string; cipherText: string; last4: string; deleteAfter: string | null }> = [];
+
+  const repo: OrdersRepository & {
+    orders: Order[];
+    events: OrderEvent[];
+    reservations: MemoryReservation[];
+    history: typeof history;
+    deleted: typeof deleted;
+    documents: typeof documents;
+    isAvailable: boolean;
+  } = {
     orders,
     events,
     reservations,
     history,
     deleted,
+    documents,
     isAvailable: opts.available ?? true,
 
     async available() {
@@ -841,9 +1070,27 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
       if (next.checkout && !["draft", "validated", "pending_confirmation"].includes(next.status)) {
         const c = next.checkout;
         if (!next.confirmedAt || !next.contact || (c.delivery === "domicilio" && (!c.address || !c.city))) throw new Error("check_violation: checkout incompleto");
+        if (c.delivery === "oficina_transportadora" && (!c.carrierOffice || !c.city)) throw new Error("check_violation: oficina incompleta");
       }
+      // Fase 3B — mismas reglas que los CHECK de la BD para "pendiente de aceptación".
+      if (next.status === "pending_acceptance") {
+        const a = next.acceptance;
+        if (!a || next.checkout || next.confirmedAt || !next.contact) throw new Error("check_violation: pendiente de aceptación sin datos o con datos de venta");
+        if (a.delivery === "domicilio" && (!a.address || !a.city)) throw new Error("check_violation: checkout incompleto");
+        if (a.delivery === "oficina_transportadora" && (!a.carrierOffice || !a.city)) throw new Error("check_violation: oficina incompleta");
+        if (a.carrierOffice && a.delivery !== "oficina_transportadora") throw new Error("check_violation: oficina sin entrega en oficina");
+      }
+      const doc = input.changes.acceptance?.document ?? null;
+      if (doc) {
+        if (input.to !== "pending_acceptance") throw new InvalidTransition("el documento solo se registra al enviar el pedido a aceptación");
+        if (next.acceptance?.delivery !== "oficina_transportadora") throw new InvalidTransition("el documento solo existe para un pedido de oficina de transportadora");
+        if (!/^v1:/.test(doc.cipherText)) throw new Error("check_violation: documento sin cifrar");
+        if (documents.some((d) => d.orderId === next.id)) throw new Error("unique_violation: el pedido ya tiene documento");
+      }
+      applyAcceptanceRules(current, next);
       applyCheckoutRules(current, next);
-      applyReservationRule(current, next); // lanza (sin escribir nada) si no alcanza el stock
+      applyReservationRule(current, next, input.changes.accept?.reservationMinutes ?? null); // lanza (sin escribir nada) si no alcanza el stock
+      if (doc) documents.push({ businessId: next.businessId, orderId: next.id, type: doc.type, cipherText: doc.cipherText, last4: doc.last4, deleteAfter: doc.deleteAfter });
       orders[i] = next;
       if (input.event && !events.some((e) => e.event_id === input.event?.event_id)) {
         events.push(clone(input.event));
@@ -921,7 +1168,7 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
       if (!o.checkout) throw new InvalidTransition(`el pedido ${o.orderId} no tiene etapas`);
       if (o.checkout.stage === input.to && o.status === "confirmed") return { result: "sin_cambio", order: clone(o) };
       if (o.checkout.stage !== input.from || o.status !== "confirmed") return { result: "conflicto", stage: o.checkout.stage, status: o.status };
-      if (input.from === "en_preparacion" && input.to === "enviado" && o.checkout.delivery !== "domicilio") throw new InvalidTransition("enviado solo aplica a domicilio");
+      if (input.from === "en_preparacion" && input.to === "enviado" && o.checkout.delivery === "tienda") throw new InvalidTransition("enviado solo aplica a lo que viaja (domicilio u oficina de transportadora)");
       if (input.from === "en_preparacion" && input.to === "entregado" && o.checkout.delivery !== "tienda") throw new InvalidTransition("un domicilio se entrega después de enviarlo");
       const next: Order = { ...o, checkout: { ...o.checkout, stage: input.to }, updatedAt: new Date(clock()).toISOString() };
       orders[i] = next;
@@ -956,6 +1203,8 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
       orders.splice(i, 1);
       for (let j = history.length - 1; j >= 0; j--) if (history[j].businessId === input.businessId && history[j].orderId === o.id) history.splice(j, 1);
       for (let j = reservations.length - 1; j >= 0; j--) if (reservations[j].orderId === o.id) reservations.splice(j, 1);
+      // Fase 3B: el documento se va con el pedido (on delete cascade).
+      for (let j = documents.length - 1; j >= 0; j--) if (documents[j].orderId === o.id) documents.splice(j, 1);
       return "eliminado";
     },
 
@@ -987,6 +1236,48 @@ export function createMemoryOrdersRepository(opts: { available?: boolean; invent
 
     async historyFor(businessId, orderId) {
       return history.filter((h) => h.businessId === businessId && h.orderId === orderId).map((h) => clone(h.entry));
+    },
+
+    async markAcceptance(input) {
+      const i = orders.findIndex((o) => o.businessId === input.businessId && o.orderId === input.orderId);
+      if (i < 0) return { result: "no_encontrado" };
+      const o = orders[i];
+      const a = o.acceptance;
+      if (a && ((input.mark === "aviso" && a.noticeSentAt) || (input.mark === "respuesta" && a.customerReplyAt))) return { result: "sin_cambio", order: clone(o) };
+      if (o.status !== "pending_acceptance" || !a || (input.mark === "respuesta" && !a.noticeSentAt)) return { result: "conflicto", status: o.status };
+      const at = new Date(clock()).toISOString();
+      const next: Order = { ...o, acceptance: { ...a, ...(input.mark === "aviso" ? { noticeSentAt: at } : { customerReplyAt: at }) }, updatedAt: at };
+      orders[i] = next;
+      record(next, { type: input.mark === "aviso" ? "order.acceptance_notice_sent" : "order.customer_replied", from: o.status, to: o.status, actor: "system", memberId: null, reason: null });
+      return { result: "ok", order: clone(next) };
+    },
+
+    async expireAcceptance(limit) {
+      let n = 0;
+      // a) reserva vencida de un pedido pendiente: se libera el stock; el pedido SIGUE pendiente.
+      for (const o of orders) {
+        if (n >= limit) break;
+        if (o.status !== "pending_acceptance") continue;
+        if (!reservations.some((r) => r.orderId === o.id && r.status === "activa" && Date.parse(r.expiresAt) <= clock())) continue;
+        close(o.id, "liberada");
+        n++;
+      }
+      // b) vencimiento del pedido (solo si lo trae).
+      for (const o of [...orders]) {
+        if (n >= limit) break;
+        if (o.status !== "pending_acceptance" || !o.acceptance?.expiresAt || Date.parse(o.acceptance.expiresAt) > clock()) continue;
+        const next = applyChanges(o, "expired", { confirmation: null }, new Date(clock()).toISOString());
+        applyReservationRule(o, next);
+        orders[orders.indexOf(o)] = next;
+        record(next, { type: "order.status_changed", from: "pending_acceptance", to: "expired", actor: "system", memberId: null, reason: "acceptance_expired" });
+        n++;
+      }
+      return n;
+    },
+
+    async documentFor(businessId, orderId) {
+      const d = documents.find((x) => x.businessId === businessId && x.orderId === orderId);
+      return d ? { type: d.type, last4: d.last4 } : null;
     },
   };
   return repo;

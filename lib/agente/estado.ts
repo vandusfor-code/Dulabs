@@ -26,8 +26,12 @@ export const MAX_SHOWN = 10;
 export const MAX_IMAGES_REMEMBERED = 20;
 export const MAX_RECENT_WAMIDS = 10;
 
-/** Bloque 27 — pasos del checkout, en orden (dirección, ciudad y referencia solo con domicilio). */
-export const CHECKOUT_STEPS = ["name", "delivery", "address", "city", "reference", "payment", "summary"] as const;
+/**
+ * Bloque 27 — pasos del checkout, en orden (dirección, ciudad y referencia solo con domicilio).
+ * Fase 3B.4 — pasos del checkout CON ACEPTACIÓN del negocio: teléfono, departamento, barrio, oficina,
+ * documento y "fix" (elegir qué dato corregir en el resumen). El orden lo decide checkout.ts según el perfil.
+ */
+export const CHECKOUT_STEPS = ["name", "delivery", "address", "city", "reference", "payment", "summary", "phone", "department", "neighborhood", "office", "document", "fix"] as const;
 export type CheckoutStep = (typeof CHECKOUT_STEPS)[number];
 
 export const checkoutStateSchema = z
@@ -54,6 +58,18 @@ export const checkoutStateSchema = z
       .strict()
       .nullable()
       .default(null),
+    // --- Fase 3B.4 (opcionales SIN default: solo existen en un checkout con aceptación; los estados de siempre no cambian) ---
+    /** Teléfono de contacto para la entrega (solo dígitos, con indicativo). */
+    phone: z.string().regex(/^[0-9]{7,15}$/).optional(),
+    department: z.string().min(2).max(60).optional(),
+    neighborhood: z.string().min(1).max(120).optional(),
+    /** Oficina de la transportadora (texto del cliente; no hay catálogo de oficinas). */
+    office: z.string().min(2).max(160).optional(),
+    /** Documento SELLADO (cifrado) al recibirlo: el número en claro nunca se guarda aquí. */
+    document: z
+      .object({ type: z.string().regex(/^[a-z][a-z_]{1,29}$/), cipherText: z.string().regex(/^v1:/).max(2_000), last4: z.string().regex(/^[0-9A-Z]{1,4}$/) })
+      .strict()
+      .optional(),
   })
   .strict();
 export type CheckoutState = z.infer<typeof checkoutStateSchema>;
@@ -139,6 +155,12 @@ export const conversationStateSchema = z
     // --- Bloque 29 ---
     /** Turno en que se le pidió la referencia por una foto sin texto: un "sí" justo después pide una asesora. */
     fotoPedidaTurn: z.number().int().min(0).optional(),
+    // --- Fase 3B.4 ---
+    /**
+     * wamid de los mensajes en que el cliente escribió su documento: en el historial que ve el modelo se
+     * reemplazan por "[documento de identidad]" (el documento nunca entra a un prompt). Opcional sin default.
+     */
+    documentoWamids: z.array(z.string().min(1).max(200)).max(20).optional(),
   })
   .strict();
 

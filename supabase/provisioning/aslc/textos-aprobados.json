@@ -1,0 +1,18 @@
+{
+  "_nota": "Textos de Aquí Sí Lo Compras APROBADOS por el negocio. Solo lo que figura aquí con texto está aprobado; null = TEXTO_PENDIENTE (no se rellena con una frase inventada). El aviso obligatorio se conserva EXACTO (747 bytes, SHA-256 c0bf58e071859d51d86f2de4f703faa8f95ea866e644386d40eb9d6d1a75179a); está en JSON con \\n escapados para que ninguna conversión de saltos de línea (CRLF/LF) lo altere. Se carga en cierre.textos.aviso al configurar el cierre con aceptación humana (fase de activación), nunca antes.",
+  "aviso": "⚠️ IMPORTANTE ANTES DE ENVIAR SU PEDIDO:\n\nPor seguridad, actualmente no estamos dejando pedidos en las transportadoras sin reclamar o recibir, ya que hemos tenido pérdidas de mercancía bajo esta modalidad y, adicionalmente, se generan dobles costos de flete.\n\nPor este motivo, al confirmar su pedido, usted acepta recibirlo y reclamarlo cuando la transportadora lo entregue, RECOMENDAMOS TENER LA DISPONIBILIDAD DEL DINERO.\n\n📦 El producto se envía tal como se muestra en las fotos y videos, con las mismas características, especificaciones y accesorios ofrecidos en la publicación.\n\nPor favor, confirme su compra únicamente si está 100% seguro de recibir el pedido. 🙏\n\n¿Me confirmas por favor que estás 100% seguro de recibirlo?",
+  "tras_aviso_confirma": null,
+  "aceptado": null,
+  "rechazado": null,
+  "cancelado": null,
+  "saludo": null,
+  "envios": {
+    "sin_cobertura": null,
+    "cobertura_no_verificable": null,
+    "error_consulta": null,
+    "bogota_texto": null,
+    "bogota_texto_antes_de_las_11_30": null,
+    "bogota_texto_despues_de_las_11_30": null,
+    "resto_con_cobertura_texto": null
+  }
+}

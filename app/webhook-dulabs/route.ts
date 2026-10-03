@@ -35,7 +35,7 @@ import { esTelefonoBloqueado } from "@/lib/blacklist-du";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
 import { createSupabaseAgentConfigStore, loadAgentConfig, type AgentRuntimeConfig } from "@/lib/agente/config";
-import { atenderConAgenteSiAplica, encolarEnBuzonSiAplica, esperaDeRafagaMs, numeroConAgente, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
+import { atenderConAgenteSiAplica, atenderRespuestaTrasAvisoProduccion, encolarEnBuzonSiAplica, esperaDeRafagaMs, numeroConAgente, productionAgentBoundaryDeps, replyToDeMeta } from "@/lib/agente/webhook";
 import { inboxLabel, nonTextPolicy, nonTextReachesAgent } from "@/lib/agente/entrada";
 import { createSupabaseMailboxStore } from "@/lib/agente/buzon";
 import { getSurveyBot, getSession, saveSession } from "@/lib/survey-bot-store";
@@ -993,6 +993,20 @@ async function atenderMensaje(
       console.log(`[webhook-dulabs] IA restringida para "${cliente.nombre_negocio}": remitente no autorizado`);
       return;
     }
+  }
+
+  // FASE 3B.5 — un "sí" del cliente DESPUÉS del aviso obligatorio de un pedido pendiente de aceptación (solo
+  // negocios con aceptación humana): se registra para la persona responsable y, si nadie del equipo le ha
+  // escrito, recibe UNA respuesta fija. NO confirma ninguna venta. Va ANTES de la pausa porque el traspaso a la
+  // persona deja la conversación en pausa. Cualquier otro mensaje, o cualquier duda: sigue su camino de siempre.
+  {
+    const respuestaAviso = await atenderRespuestaTrasAvisoProduccion(supabaseAdmin(), cliente, {
+      waId: telefonoRemitente,
+      destino: destinoWhatsApp,
+      wamid: mensaje.id,
+      text: mensaje.text?.body?.trim() ?? "",
+    });
+    if (respuestaAviso.handled) return;
   }
 
   // Control de pausa por chat (gate de RECEPCIÓN): si el humano ya intervino

@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut, TrendingUp } from "lucide-react";
-import { navItemVisible, navSections } from "./nav";
+import { navItemActivo, navItemVisible, navSections } from "./nav";
 import { useDashboard } from "@/lib/dashboard-session";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useI18n } from "@/lib/i18n";
@@ -27,6 +27,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   const plan = PLANES[resolverPlanId(suscripcion?.plan)];
   const numerosUsados = negocios?.length ?? 0;
+  // Todos los ítems que ESTA persona ve (para elegir el activo más específico entre secciones).
+  const visibles = navSections.filter((section) => !section.soloAdminDulabs || esAdminDulabs).flatMap((section) => section.items.filter((item) => navItemVisible(item, rol, modulos)));
 
   const email = session?.user.email ?? "";
   const iniciales = email.slice(0, 2).toUpperCase();
@@ -78,8 +80,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               {section.items
                 .filter((item) => navItemVisible(item, rol, modulos))
                 .map((item) => {
-                  const active =
-                    item.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(item.href);
+                  const active = navItemActivo(item, pathname, visibles);
                   return (
                     <li key={item.href}>
                       <Link

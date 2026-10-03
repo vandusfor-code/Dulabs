@@ -36,6 +36,7 @@ const TIPO_NOTIF: Record<TipoNotificacion, { es: string; en: string }> = {
   completado: { es: "Completado", en: "Completed" },
   cancelado: { es: "Cancelado", en: "Cancelled" },
   rechazado: { es: "Rechazado", en: "Rejected" },
+  aceptado: { es: "Aceptado", en: "Accepted" },
 };
 const ESTADO_NOTIF: Record<NotificacionVista["estado"], { es: string; en: string; tono: string }> = {
   pendiente: { es: "Pendiente", en: "Pending", tono: "text-mist" },

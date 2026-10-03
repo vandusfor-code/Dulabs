@@ -15,7 +15,7 @@ import { z } from "zod";
 import type { AIProvider, AIProviderId, AIThinkingLevel } from "@/lib/ia-proveedores/contrato";
 import { resolveAIProvider, validateAIProviderConfig, type AIProviderConfigError, type AIProviderFactories } from "@/lib/ia-proveedores/registro";
 import { isAgentToolName, type AgentToolName } from "@/lib/agente/nombres-herramientas";
-import { resolverCheckoutOpciones, resolverVocabulario, type CheckoutOpciones, type Vocabulario } from "@/lib/agente/perfil-negocio";
+import { cierreConAceptacion, funcionesNoDisponibles, resolverCheckoutOpciones, resolverVocabulario, type CheckoutOpciones, type FuncionFase3B, type Vocabulario } from "@/lib/agente/perfil-negocio";
 import type { OrderChannel } from "@/lib/catalogo/pedidos/contrato";
 
 /** Configuración del negocio (confiable: la escribe DuLabs). Acotada: nunca el catálogo. */
@@ -151,6 +151,12 @@ export type AgentConfigInvalidReason =
   | "vocabulary_invalid"
   | "checkout_options_invalid"
   | "checkout_options_missing"
+  /** Fase 3B.9A: el negocio está aprovisionado pero marcado como NO listo para activarse (checkout_opciones.activacion_pendiente). */
+  | "activation_pending"
+  /** Fase 3B: la configuración usa un bloque que el runtime todavía no implementa (nunca a medias). */
+  | "checkout_feature_unavailable"
+  /** Fase 3B.5: el cierre con aceptación humana exige el checkout conversacional (si no, el modelo conservaría confirm_order). */
+  | "checkout_required_for_acceptance"
   | "row_invalid";
 
 export type AgentConfigResult =
@@ -193,8 +199,15 @@ export interface AgentConfigStore {
   getByPhoneNumber(phoneNumberId: string): Promise<AgentConfigRow | null>;
 }
 
-/** Interpreta una fila (puro, sin red). */
-export function parseAgentConfig(raw: unknown, expected: { tenantId: string; phoneNumberId: string }): AgentConfigResult {
+/**
+ * Interpreta una fila (puro, sin red). `opts.funciones3b`: SOLO para pruebas (encender bloques de la Fase 3B
+ * que aún están bloqueados); en producción siempre FUNCIONES_3B_IMPLEMENTADAS.
+ */
+export function parseAgentConfig(
+  raw: unknown,
+  expected: { tenantId: string; phoneNumberId: string },
+  opts: { funciones3b?: Readonly<Record<FuncionFase3B, boolean>> } = {},
+): AgentConfigResult {
   const row = rowSchema.safeParse(raw);
   if (!row.success) return { kind: "invalid", reason: "row_invalid" };
   const r = row.data;
@@ -214,9 +227,16 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
   if (!vocabulary.ok) return { kind: "invalid", reason: "vocabulary_invalid" };
   const options = resolverCheckoutOpciones(r.checkout_opciones);
   if (!options.ok) return { kind: "invalid", reason: "checkout_options_invalid" };
+  // Fase 3B.9A: candado explícito de activación (ver checkoutOpcionesSchema.activacion_pendiente).
+  if (options.opciones?.activacion_pendiente) return { kind: "invalid", reason: "activation_pending" };
+  // Fase 3B: bloques configurados que el runtime aún no atiende => el agente no responde (fail-closed).
+  if (options.opciones && funcionesNoDisponibles(options.opciones, opts.funciones3b).length > 0) return { kind: "invalid", reason: "checkout_feature_unavailable" };
   const checkoutEnabled = r.checkout_conversacional === true;
   // Checkout encendido sin decir qué entregas y pagos ofrece el negocio: no se adivina (fail-closed).
   if (checkoutEnabled && !options.opciones) return { kind: "invalid", reason: "checkout_options_missing" };
+  // Fase 3B.5: la aceptación humana SOLO existe con el checkout conversacional: ahí el backend conduce el cierre y el
+  // modelo NO tiene confirm_order. Sin él, el modelo podría confirmar el pedido sin que una persona lo acepte: no se admite.
+  if (options.opciones && cierreConAceptacion(options.opciones) && !checkoutEnabled) return { kind: "invalid", reason: "checkout_required_for_acceptance" };
   return {
     kind: "ok",
     config: {
@@ -242,10 +262,15 @@ export function parseAgentConfig(raw: unknown, expected: { tenantId: string; pho
   };
 }
 
-export async function loadAgentConfig(store: AgentConfigStore, expected: { tenantId: string; phoneNumberId: string }): Promise<AgentConfigResult> {
+export async function loadAgentConfig(
+  store: AgentConfigStore,
+  expected: { tenantId: string; phoneNumberId: string },
+  /** `funciones3b`: SOLO para pruebas (ver parseAgentConfig). En producción, siempre FUNCIONES_3B_IMPLEMENTADAS. */
+  opts: { funciones3b?: Readonly<Record<FuncionFase3B, boolean>> } = {},
+): Promise<AgentConfigResult> {
   const row = await store.getByPhoneNumber(expected.phoneNumberId);
   if (!row) return { kind: "none" };
-  return parseAgentConfig(row, expected);
+  return parseAgentConfig(row, expected, opts);
 }
 
 /** Construye el proveedor de ESTA configuración (sin fallback). La credencial se lee del entorno del servidor. */

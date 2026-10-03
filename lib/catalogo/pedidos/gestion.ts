@@ -42,6 +42,8 @@ export const ESTADOS_VISIBLES = [
   "vencido",
   /** Pedido anterior al checkout, en manos de una asesora (estado 'handoff' del motor). */
   "con_asesora",
+  /** Fase 3B: pendiente de aceptación del negocio (NO es una venta: nunca se muestra como "confirmado"). */
+  "por_aceptar",
 ] as const;
 export type EstadoVisible = (typeof ESTADOS_VISIBLES)[number];
 
@@ -72,6 +74,7 @@ export function estadoVisible(o: Order): EstadoVisible {
   if (o.status === "cancelled") return "cancelado";
   if (o.status === "rejected") return "rechazado";
   if (o.status === "expired") return "vencido";
+  if (o.status === "pending_acceptance") return "por_aceptar";
   if (o.checkout && ACTIVOS.includes(o.status)) return o.checkout.stage;
   return o.status === "handoff" ? "con_asesora" : "confirmado";
 }
@@ -231,6 +234,8 @@ export function filtrosGestion(params: URLSearchParams, verTelefono: boolean): {
     else if (e === "rechazado") f.statuses = ["rejected"];
     else if (e === "vencido") f.statuses = ["expired"];
     else if (e === "con_asesora") f.statuses = ["handoff"];
+    // Fase 3B: el panel aún no lista pendientes de aceptación (Fase 3B.7); el filtro existe y no mezcla ventas.
+    else if (e === "por_aceptar") f.statuses = ["pending_acceptance"];
     else {
       f.statuses = ["confirmed"];
       f.stages = [e];
