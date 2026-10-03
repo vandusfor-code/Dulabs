@@ -29,7 +29,7 @@ import { z } from "zod";
 import type { AIToolDeclaration } from "@/lib/ia-proveedores/contrato";
 import { formatCop } from "@/lib/business-agent-quote";
 import { ORDER_MAX_QUANTITY } from "@/lib/catalogo/pedido";
-import { REFERENCE_PATTERN } from "@/lib/catalogo/domain";
+import { CATALOG_LIMITS, REFERENCE_PATTERN } from "@/lib/catalogo/domain";
 import { productPathIn, retailPath, wholesalePath, whatsappImagePath } from "@/lib/catalogo/publicacion";
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import { siteUrl } from "@/lib/site-url";
@@ -185,7 +185,12 @@ async function otherChannelOrder(ctx: AgentTurnToolContext, deps: AgentToolsDeps
 
 type ProductView = { reference: string; name: string; description: string | null; category: string | null; material: string | null; color: string | null; unit_price: number | null; currency: string; availability: string; max_quantity: number | null };
 
-const compact = (p: ProductView) => ({ ...p, description: p.description ? p.description.slice(0, 200) : null });
+/**
+ * Lo que el modelo ve de un producto. La descripción llega COMPLETA (el catálogo la acota a CATALOG_LIMITS.description): antes se recortaba a 200
+ * caracteres y el agente no veía la garantía ni parte de lo que incluye un producto con descripción larga (se descubrió con el catálogo de ASLC:
+ * en 7 de 8 productos la garantía quedaba fuera). Con descripciones cortas (Delacour: máximo 100 caracteres) la salida es idéntica a la de siempre.
+ */
+const compact = (p: ProductView) => ({ ...p, description: p.description ? p.description.slice(0, CATALOG_LIMITS.description) : null });
 
 /**
  * Registra lo que el cliente va a ver. Solo una LISTA de opciones reemplaza
