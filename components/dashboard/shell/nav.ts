@@ -17,6 +17,7 @@ import {
   Contact,
   Inbox,
   ShoppingBag,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -28,15 +29,29 @@ export type NavItem = {
   href: string;
   icon: LucideIcon;
   rolesPermitidos?: Rol[]; // undefined = visible a todos los roles
-  /** Solo visible si el tenant tiene este módulo habilitado (dulabs_tenant_modulos). undefined = siempre. */
-  modulo?: ModuloId;
+  /** Solo visible si el tenant tiene este módulo habilitado (dulabs_tenant_modulos). undefined = siempre. Con una lista: TODOS deben estar habilitados. */
+  modulo?: ModuloId | readonly ModuloId[];
 };
 
 /** Visibilidad de un ítem del nav (Sidebar y CommandPalette usan la MISMA regla). Solo presentación: cada endpoint autoriza por su cuenta. */
 export function navItemVisible(item: NavItem, rol: Rol | null, modulos: readonly ModuloId[]): boolean {
   if (item.rolesPermitidos && !(rol && item.rolesPermitidos.includes(rol))) return false;
-  if (item.modulo && !modulos.includes(item.modulo)) return false;
+  if (item.modulo) {
+    const exigidos = typeof item.modulo === "string" ? [item.modulo] : item.modulo;
+    if (!exigidos.every((m) => modulos.includes(m))) return false;
+  }
   return true;
+}
+
+/**
+ * ¿Es este el ítem activo de la ruta? Mantiene el criterio de siempre (prefijo) y solo desempata: si OTRO ítem visible
+ * tiene una ruta más específica que también coincide, el activo es ese (Fase 3B.7: "Por aceptar" vive bajo
+ * /dashboard/pedidos y no debe iluminar también "Pedidos"). Sin ítems anidados visibles nada cambia.
+ */
+export function navItemActivo(item: NavItem, pathname: string, visibles: readonly NavItem[]): boolean {
+  const coincide = (href: string) => (href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href));
+  if (!coincide(item.href)) return false;
+  return !visibles.some((o) => o.href.length > item.href.length && o.href.startsWith(item.href) && coincide(o.href));
 }
 
 export type NavSection = {
@@ -82,6 +97,10 @@ export const navSections: NavSection[] = [
       // Bloque 27 -- pedidos reales (checkout conversacional): solo para negocios con el módulo
       // "pedidos" habilitado (dulabs_tenant_modulos). La API autoriza por su cuenta.
       { label: "Pedidos", labelEn: "Orders", href: "/dashboard/pedidos", icon: ShoppingBag, modulo: "pedidos" },
+      // Fase 3B.7 -- pedidos pendientes de aceptación humana: solo negocios con "pedidos" Y "pedidos_por_aceptar" habilitados
+      // (los demás, p. ej. los que confirman con el botón de siempre, no ven este ítem) y roles que atienden pedidos
+      // (los mismos que exige la API: admin y agente). La API autoriza por su cuenta.
+      { label: "Por aceptar", labelEn: "To accept", href: "/dashboard/pedidos/por-aceptar", icon: ClipboardCheck, modulo: ["pedidos", "pedidos_por_aceptar"], rolesPermitidos: ["admin", "agente"] },
       // Bloque 33 -- clientes del catálogo (un cliente por contacto, con sus pedidos y nota): solo
       // negocios con el módulo "clientes_joyeria". La API autoriza por su cuenta (admin y agente).
       { label: "Clientes", labelEn: "Customers", href: "/dashboard/clientes", icon: Contact, modulo: "clientes_joyeria", rolesPermitidos: ["admin", "agente"] },

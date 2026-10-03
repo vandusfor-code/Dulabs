@@ -14,6 +14,7 @@ import type { PublicationView } from "@/lib/catalogo/service";
 import type { PedidoHistorial, PedidoPanel } from "@/lib/catalogo/pedidos/panel";
 import type { AccionPedido, EstadoVisible, GrupoPedidos, HistorialEntrada, NotificacionVista, PedidoGestion } from "@/lib/catalogo/pedidos/gestion";
 import type { ResultadoNotificacion, TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
+import type { AccionDecision, HistorialPorAceptar, MensajeAlCliente, PedidoPorAceptar, ProcesadoPorAceptar } from "@/lib/catalogo/pedidos/por-aceptar";
 import type { ClienteDetalle, ClienteFila, FilaImportacion, FiltroClientes, Modalidad, NotaCliente } from "@/lib/catalogo/clientes/modelo";
 import type { DeliveryType, OrderChannel, PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 
@@ -195,6 +196,28 @@ export function createCatalogClient(accessToken: string) {
       if (cursor) qs.set("cursor", cursor);
       const q = qs.toString();
       return call(accessToken, q ? `?${q}` : "", {}, PEDIDOS_BASE);
+    },
+
+    /** Fase 3B.5/3B.7 — pedidos pendientes de aceptación del negocio (panel "Por aceptar"), paginados por cursor. */
+    listPorAceptar(c: { limite?: number; cursor?: string | null } = {}): Promise<CatalogResult<{ pedidos: PedidoPorAceptar[]; siguiente: string | null }>> {
+      const qs = new URLSearchParams();
+      if (c.limite) qs.set("limite", String(c.limite));
+      if (c.cursor) qs.set("cursor", c.cursor);
+      const q = qs.toString();
+      return call(accessToken, q ? `/por-aceptar?${q}` : "/por-aceptar", {}, PEDIDOS_BASE);
+    },
+
+    /**
+     * Fase 3B.5/3B.7 — detalle de un pedido pendiente de aceptación (documento solo enmascarado). Si ya se procesó,
+     * `pedido` es null y `procesado` trae su estado actual.
+     */
+    getPorAceptar(pedido: string): Promise<CatalogResult<{ pedido: PedidoPorAceptar | null; procesado: ProcesadoPorAceptar | null; historial: HistorialPorAceptar[] }>> {
+      return call(accessToken, `/${encodeURIComponent(pedido)}/aceptacion`, {}, PEDIDOS_BASE);
+    },
+
+    /** Fase 3B.5 — SOLO una persona autorizada: aceptar (nace la venta) o rechazar / cancelar (sin venta). Idempotente. */
+    decidirPorAceptar(pedido: string, accion: AccionDecision, motivo?: string): Promise<CatalogResult<{ pedido: string; estado: string; repetido: boolean; mensaje_cliente?: MensajeAlCliente | null }>> {
+      return call(accessToken, `/${encodeURIComponent(pedido)}/aceptacion`, { method: "POST", body: JSON.stringify({ accion, ...(motivo ? { motivo } : {}) }) }, PEDIDOS_BASE);
     },
 
     /** Bloque 33 — clientes (un cliente por contacto), filtrados y paginados por el backend. */

@@ -24,6 +24,7 @@ import { z } from "zod";
 import { DELIVERY_TYPES, PAYMENT_METHODS, POLICY_MINUTES_MAX, type AcceptancePolicy, type AcceptedReservation, type DeliveryType, type PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 import { DOCUMENT_RETENTION_DAYS_MAX, DOCUMENT_TYPE_CODE, DOCUMENTO_SIN_TIPO } from "@/lib/catalogo/pedidos/documento";
 import { normalizar } from "@/lib/agente/lenguaje/normalizar";
+import { MARCADORES_PERMITIDOS, plantillaValida, type ClaveTextoDecision } from "@/lib/agente/textos-cliente";
 
 // ---------------------------------------------------------------------------
 // Vocabulario
@@ -75,6 +76,13 @@ export const VOCABULARIO_NEUTRAL: Vocabulario = Object.freeze({
   nombre_comercial: [],
 });
 
+/**
+ * Fase 3B.9A — ¿es el vocabulario NEUTRAL de la plataforma (el de un negocio sin vocabulario configurado)? Los textos por defecto que
+ * mencionan un rubro concreto (el saludo con 💍, los ejemplos de joyería del prompt) solo se usan con un vocabulario que NO es el neutral:
+ * un negocio neutral nunca recibe palabras de otro rubro.
+ */
+export const esVocabularioNeutral = (v: Vocabulario): boolean => JSON.stringify(v) === JSON.stringify(VOCABULARIO_NEUTRAL);
+
 // ---------------------------------------------------------------------------
 // Opciones del checkout
 // ---------------------------------------------------------------------------
@@ -102,6 +110,14 @@ const textoControlado = (max: number) =>
     .min(1)
     .max(max)
     .refine((s) => s.trim() === s && s.trim().length > 0, "sin espacios al inicio ni al final");
+/**
+ * Fase 3B.8 — texto del negocio para el cliente tras una decisión humana (aceptar, rechazar, cancelar). Se envía tal cual; solo
+ * admite los marcadores cerrados de textos-cliente.ts ({pedido} y, en rechazo y cancelación, {motivo}).
+ */
+const plantillaDecision = (clave: ClaveTextoDecision) =>
+  textoControlado(500).refine((s) => plantillaValida(s, MARCADORES_PERMITIDOS[clave]), "solo admite los marcadores {pedido} y, en rechazo y cancelación, {motivo}");
+/** Fase 3B.8 — texto fijo de envíos: sin marcadores (se envía exactamente como está escrito). */
+const textoSinMarcadores = (max: number) => textoControlado(max).refine((s) => plantillaValida(s, []), "este texto no admite llaves {}");
 /** Ciudad o municipio normalizado (minúsculas, sin tildes ni signos) para compararlo con lo que escribe el cliente. */
 const ciudadNormalizada = frase;
 const minutosPolitica = z.number().int().min(1).max(POLICY_MINUTES_MAX);
@@ -172,7 +188,16 @@ const cierreSchema = z.discriminatedUnion("modo", [
       /** D14: ¿se le muestra el número de pedido? */
       mostrar_numero_pedido: z.boolean(),
       /** Aviso obligatorio y respuesta si el cliente confirma después: textos EXACTOS del negocio. */
-      textos: z.object({ aviso: textoControlado(2000), tras_aviso_confirma: textoControlado(500) }).strict(),
+      textos: z
+        .object({
+          aviso: textoControlado(2000),
+          tras_aviso_confirma: textoControlado(500),
+          /** Fase 3B.8 (opcionales: sin ellos NO se le escribe nada al cliente al decidir): lo decide el negocio, nunca un valor por defecto. */
+          aceptado: plantillaDecision("aceptado").optional(),
+          rechazado: plantillaDecision("rechazado").optional(),
+          cancelado: plantillaDecision("cancelado").optional(),
+        })
+        .strict(),
       /** D8: persona responsable (miembro del equipo DEL MISMO negocio), su respaldo y por dónde se le avisa. */
       responsable: z
         .object({
@@ -231,6 +256,17 @@ const enviosSchema = z
           .object({
             ciudades: z.union([z.array(ciudadNormalizada).min(1).max(1200), z.literal("resto_con_cobertura")]),
             texto: textoControlado(300),
+            /**
+             * Fase 3B.6: el rango en DÍAS HÁBILES que el negocio declara (opcional: sin él, solo existe su texto y el
+             * sistema no afirma ningún número). Nunca se convierte en fechas (no hay calendario de festivos confiable).
+             */
+            dias_habiles: z
+              .object({ min: z.number().int().min(0).max(30), max: z.number().int().min(0).max(30) })
+              .strict()
+              .refine((d) => d.min <= d.max, "dias_habiles: min no puede superar a max")
+              .optional(),
+            /** Fase 3B.6: transportadora que el negocio fija para ESTAS ciudades (opcional; sin ella no se promete ninguna). */
+            transportadora: textoControlado(60).optional(),
             corte: corteSchema.optional(),
           })
           .strict(),
@@ -242,6 +278,22 @@ const enviosSchema = z
     ciudad_desconocida_en_checkout: z.enum(["handoff", "continuar"]),
     /** Línea del resumen sobre el envío (texto del negocio). */
     texto_resumen: textoControlado(120).optional(),
+    /** Fase 3B.6: el envío es GRATIS (regla del negocio). Sin esto, el sistema no dice nada del costo del envío. */
+    envio_gratis: z.boolean().optional(),
+    /** Fase 3B.6: transportadora más frecuente del negocio (información, no una promesa para cada ciudad). */
+    transportadora_habitual: textoControlado(60).optional(),
+    /**
+     * Fase 3B.8: lo que se le dice al cliente cuando el motor de envíos no da tiempos (opcionales; sin ellos rige el mensaje
+     * neutro de siempre). Tres situaciones distintas: excluida explícitamente / no verificable / error técnico.
+     */
+    textos: z
+      .object({
+        sin_cobertura: textoSinMarcadores(300).optional(),
+        cobertura_no_verificable: textoSinMarcadores(300).optional(),
+        error_consulta: textoSinMarcadores(300).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -290,6 +342,12 @@ export const checkoutOpcionesSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * Fase 3B.9A — CANDADO de activación: un negocio aprovisionado pero todavía NO listo (faltan el responsable real, textos aprobados,
+     * cobertura…) lleva `activacion_pendiente: true`. Mientras esté, la configuración es INVÁLIDA (el agente no responde, aunque alguien
+     * habilite la fila por error) y NUNCA cae a otro bot. Se quita al activar, reemplazando todo el bloque por la configuración completa.
+     */
+    activacion_pendiente: z.literal(true).optional(),
     // --- Fase 3B.3 (opcionales; ver arriba) ---
     campos: camposSchema.optional(),
     oficina: oficinaSchema.optional(),
@@ -447,11 +505,14 @@ export type FuncionFase3B = (typeof FUNCIONES_FASE_3B)[number];
 /**
  * Bloques de la Fase 3B que el runtime YA atiende.
  *   - campos y oficina: los atiende el checkout (Fase 3B.4).
- *   - cierre_aceptacion_humana: el checkout ya lo implementa (Fase 3B.4), pero queda BLOQUEADO hasta la
- *     Fase 3B.5 (responsable: asignación y aviso) y la 3B.7 (panel "Por aceptar"): sin ellas nadie vería
- *     los pedidos pendientes. Como `campos` y la oficina exigen este cierre, ningún negocio puede operar
- *     el checkout nuevo todavía (las pruebas lo encienden explícitamente).
- *   - envios, handoff_determinista y textos_fijos: Fase 3B.6.
+ *   - cierre_aceptacion_humana: el checkout (Fase 3B.4) y la aceptación humana (Fase 3B.5: responsable,
+ *     asignación, aviso, panel "Por aceptar", aceptar / rechazar, "sí" del cliente) ya existen en el código,
+ *     pero sigue BLOQUEADO a propósito: encenderlo es una decisión explícita del dueño tras revisar la 3B.5
+ *     (junto con el aprovisionamiento, Fase 3B.9). Como `campos` y la oficina exigen este cierre, ningún
+ *     negocio puede operar el checkout nuevo todavía (las pruebas lo encienden explícitamente).
+ *   - envios: Fase 3B.6 (motor de envíos: herramienta consultar_envio, guardián de afirmaciones sobre envíos, derivación
+ *     determinista y cobertura en el checkout).
+ *   - handoff_determinista y textos_fijos: siguen sin implementarse (textos finales: Fase 3B.8).
  *   - documento_varios_tipos: elegir entre varios tipos de documento necesita sus nombres (D4 pendiente).
  *   - oficina_lista: la oficina se recibe como texto (D2); no hay catálogo de oficinas todavía.
  */
@@ -459,7 +520,7 @@ export const FUNCIONES_3B_IMPLEMENTADAS: Readonly<Record<FuncionFase3B, boolean>
   campos: true,
   oficina: true,
   cierre_aceptacion_humana: false,
-  envios: false,
+  envios: true,
   handoff_determinista: false,
   textos_fijos: false,
   documento_varios_tipos: false,

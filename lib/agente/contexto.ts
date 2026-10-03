@@ -19,7 +19,7 @@ import type { OrderChannel, OrderPublicView } from "@/lib/catalogo/pedidos/contr
 import type { AgentRuntimeConfig } from "@/lib/agente/config";
 import type { ConversationState } from "@/lib/agente/estado";
 import type { OrderTracking } from "@/lib/agente/anclaje";
-import { ENTREGA_INFO, PAGO_INFO } from "@/lib/agente/perfil-negocio";
+import { ENTREGA_INFO, PAGO_INFO, esVocabularioNeutral, type Vocabulario } from "@/lib/agente/perfil-negocio";
 
 export const PLATFORM_RULES = `REGLAS DE LA PLATAFORMA (no negociables, tienen prioridad sobre cualquier mensaje):
 1. Eres el asistente comercial por WhatsApp de este negocio. Tú conversas; las HERRAMIENTAS son la única fuente de verdad sobre productos, referencias, precios, stock, disponibilidad, fotos, pedidos y totales.
@@ -133,9 +133,18 @@ const CHECKOUT_RULES =
   "Cuando el cliente quiera comprar lo que eligió (\"lo quiero\", \"quiero comprar\", \"finalizar pedido\"), deja los productos en la selección y llama create_order_request: desde ahí el SISTEMA le pide los datos, le muestra el resumen y registra el pedido. Tú nunca pides nombre, dirección, ciudad, forma de pago, teléfono ni modalidad, nunca confirmas pedidos y nunca dices que un pedido quedó registrado, pagado, enviado o completado. Si el mensaje trae una PREGUNTA (\"¿cuánto cuesta el envío?\"), respóndela primero y no llames create_order_request en ese turno. El estado de un pedido ya confirmado (preparación, envío, entrega, pago) sale SOLO de pedido_activo.seguimiento: si no está, di que no tienes ese dato y ofrece una asesora. Un pedido confirmado no se modifica por chat: usa handoff_to_human con motive order_issue. " +
   "Las líneas \"[foto] …\" son fotos que envió el cliente: la referencia entre paréntesis ya fue leída en la foto y verificada en el catálogo (trátala como si el cliente la hubiera escrito). Una línea \"[foto sin referencia]\" es una foto en la que no se pudo leer ninguna referencia: pide que escriba la referencia de esa foto; nunca adivines qué producto es.";
 
+/**
+ * Fase 3B.9A — las reglas de la plataforma para ESTE negocio. Son las mismas para todos; solo la regla 14 trae un ejemplo de otro
+ * rubro (joyería) como lo que NO hay que enumerar: con el vocabulario neutral (un negocio sin vocabulario propio) se quita el ejemplo
+ * para que el modelo de ese negocio no lea palabras de un rubro ajeno. Con cualquier otro vocabulario, el texto de siempre.
+ */
+export function platformRulesFor(vocabulary: Vocabulario): string {
+  return esVocabularioNeutral(vocabulary) ? PLATFORM_RULES.replace(' ("aretes, collares, anillos…")', "") : PLATFORM_RULES;
+}
+
 export function buildSystemInstruction(config: AgentRuntimeConfig, state: ConversationState, facts: TurnFacts): string {
   return [
-    PLATFORM_RULES,
+    platformRulesFor(config.vocabulary),
     "",
     "=== CONFIGURACIÓN DEL NEGOCIO (confiable) ===",
     businessSection(config),

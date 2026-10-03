@@ -83,6 +83,20 @@ export interface HumanHandoffPort {
   pauseConversation(input: { tenantId: string; contact: OrderContact; reason: string; until?: "released" }): Promise<{ ok: boolean }>;
 }
 
+/**
+ * Fase 3B.5 — a QUIÉN le toca un pedido que pasa a pendiente de aceptación. Lo decide el backend (nunca el
+ * modelo) con la configuración del negocio; el motor solo lo invoca:
+ *   check: ANTES de guardar. Si no hay una persona responsable válida (del mismo negocio y activa), el
+ *          pedido NO se envía a aceptación (fail-closed) y no se escribe nada.
+ *   route: DESPUÉS de guardar (idempotente): asigna la conversación, avisa a la persona y pausa la IA.
+ *          Nunca lanza hacia el cliente: el pedido ya está guardado y visible en "Por aceptar".
+ * Sin enrutador (pruebas del motor solo), todo queda como en la Fase 3B.1.
+ */
+export interface AcceptanceRouter {
+  check(input: { tenantId: string; contact: OrderContact }): Promise<{ ok: true } | { ok: false; code: string }>;
+  route(input: { tenantId: string; order: Order }): Promise<void>;
+}
+
 export interface OrderEngineDeps {
   orders: OrdersRepository;
   catalog: CatalogRepository;
@@ -94,6 +108,8 @@ export interface OrderEngineDeps {
   now?: () => Date;
   /** Fase 3B: cifra el documento de identidad antes de guardarlo (producción: lib/crypto.ts). Sin él, no se guarda ninguno. */
   documentCipher?: DocumentCipher;
+  /** Fase 3B.5: responsable de los pedidos pendientes de aceptación (asignación y aviso). */
+  acceptanceRouter?: AcceptanceRouter;
 }
 
 export interface Evaluation {
@@ -441,7 +457,7 @@ export function createOrderEngine(deps: OrderEngineDeps) {
   }
 
   /** Fase 3B — aviso / respuesta de un pedido pendiente de aceptación de ESTA conversación (una sola vez). */
-  async function markAcceptance(operation: string, mark: "aviso" | "respuesta", input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<Order> {
+  async function markAcceptance(operation: string, mark: "aviso" | "respuesta", input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
     return (
       await traced(operation, input, async () => {
         await requireAvailable();
@@ -458,7 +474,22 @@ export function createOrderEngine(deps: OrderEngineDeps) {
         if (r.result === "conflicto") throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no está pendiente de aceptación${mark === "respuesta" ? " con el aviso enviado" : ""}.`);
         return { order: r.order, result: r.result === "ok" ? ("ok" as const) : ("duplicate" as const) };
       })
-    ).order;
+    );
+  }
+
+  /**
+   * Fase 3B.5 — asigna a la persona responsable, le avisa y pausa la IA (todo idempotente). Se invoca DESPUÉS de
+   * que el aviso obligatorio salió y quedó registrado (el orden que exige el negocio: pedido guardado → aviso →
+   * aviso registrado → asignación y aviso a la persona → IA en silencio). Un fallo aquí NUNCA deshace un pedido
+   * ya guardado: queda visible en "Por aceptar" y repetir el registro del aviso lo repara.
+   */
+  async function routeAcceptance(order: Order): Promise<void> {
+    if (!deps.acceptanceRouter || order.status !== "pending_acceptance") return;
+    try {
+      await deps.acceptanceRouter.route({ tenantId: order.businessId, order });
+    } catch (err) {
+      console.error("[catalogo/pedidos] asignar pedido pendiente de aceptación:", err instanceof Error ? err.message : "?");
+    }
   }
 
   return {
@@ -717,6 +748,15 @@ export function createOrderEngine(deps: OrderEngineDeps) {
           if (order.status !== "pending_confirmation") {
             throw new OrderError("INVALID_TRANSITION", `El pedido ${order.orderId} no está esperando confirmación (estado: ${order.status}).`);
           }
+          // Fase 3B.5: sin una persona responsable válida (del MISMO negocio y activa) no se envía nada a aceptación,
+          // y no se escribe nada (esto va antes de cualquier cambio del pedido). Un reintento de un pedido que ya quedó
+          // pendiente (arriba) no la vuelve a exigir: el pedido ya existe. La asignación, el aviso a la persona y la
+          // pausa de la IA NO van aquí: van DESPUÉS de que el aviso obligatorio salió y quedó registrado
+          // (recordAcceptanceNotice), en ese orden.
+          if (deps.acceptanceRouter) {
+            const responsable = await deps.acceptanceRouter.check({ tenantId: input.tenantId, contact: input.contact });
+            if (!responsable.ok) throw new OrderError("UNAVAILABLE", "Por ahora no hay una persona del equipo disponible para recibir este pedido.");
+          }
           if (!order.confirmation || order.confirmation.id !== input.confirmationId) {
             throw new OrderError("CONFIRMATION_MISMATCH", "Esa confirmación no corresponde a la propuesta vigente del pedido.");
           }
@@ -825,12 +865,31 @@ export function createOrderEngine(deps: OrderEngineDeps) {
 
     /** FASE 3B — registra (una vez) que salió el aviso obligatorio de un pedido pendiente de aceptación. */
     async recordAcceptanceNotice(input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<Order> {
-      return markAcceptance("record_acceptance_notice", "aviso", input);
+      const { order } = await markAcceptance("record_acceptance_notice", "aviso", input);
+      // Fase 3B.5: el aviso YA salió y quedó registrado => ahora se asigna a la persona responsable, se le avisa y la
+      // IA calla. Con "ok" y con "duplicate" (reintento: repara una asignación que se cortó); idempotente.
+      await routeAcceptance(order);
+      return order;
     },
 
     /** FASE 3B — registra (una vez) que el cliente respondió que sí después del aviso. INFORMATIVO: no acepta ni confirma nada. */
     async recordCustomerReply(input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<Order> {
+      return (await markAcceptance("record_customer_reply", "respuesta", input)).order;
+    },
+
+    /**
+     * FASE 3B.5 — igual que recordCustomerReply, pero dice si ESTA llamada fue la que lo registró ("ok") o ya
+     * estaba registrado ("duplicate"): así la respuesta automática al "sí" sale UNA sola vez aunque lleguen
+     * dos mensajes a la vez. Sigue siendo informativo: no acepta, no reserva y no confirma nada.
+     */
+    async recordCustomerReplyOnce(input: { tenantId: string; contact: OrderContact; orderId: string; requestId?: string }): Promise<{ order: Order; result: "ok" | "duplicate" }> {
       return markAcceptance("record_customer_reply", "respuesta", input);
+    },
+
+    /** FASE 3B.5 — el pedido pendiente de aceptación MÁS RECIENTE de esta conversación (null = no hay). Solo lectura, solo de este negocio. */
+    async pendingAcceptanceFor(input: { tenantId: string; contact: OrderContact }): Promise<Order | null> {
+      await requireAvailable();
+      return deps.orders.latestForContact(input.tenantId, input.contact, ["pending_acceptance"]);
     },
 
     /**
@@ -1070,6 +1129,38 @@ export function createOrderEngine(deps: OrderEngineDeps) {
       const orders = await deps.orders.listForBusiness(tenantId, ["pending_confirmation", "confirmed", "handoff"], limit);
       const reservations = await deps.orders.reservationsFor(tenantId, orders.map((o) => o.id));
       return orders.map((order) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) }));
+    },
+
+    /**
+     * Fase 3B.5 — pedidos del negocio PENDIENTES DE ACEPTACIÓN (panel "Por aceptar"), más recientes primero.
+     * Solo de ESE negocio. No vence nada ni cambia nada: es lectura.
+     */
+    async listPendingAcceptance(tenantId: string, limit = 100): Promise<Array<{ order: Order; reservations: ReservationSummary[] }>> {
+      await requireAvailable();
+      const orders = await deps.orders.listForBusiness(tenantId, ["pending_acceptance"], limit);
+      const reservations = await deps.orders.reservationsFor(tenantId, orders.map((o) => o.id));
+      return orders.map((order) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) }));
+    },
+
+    /**
+     * Fase 3B.7 — los pendientes de aceptación DEL negocio, de a `limit` por página con cursor (el mismo keyset del
+     * historial: creación y número público, más recientes primero). Sin tope silencioso: `next` es el cursor de la
+     * página siguiente (null si no hay más). Solo lectura; no cambia nada.
+     */
+    async listPendingAcceptancePage(
+      tenantId: string,
+      input: { cursor: OrderCursor | null; limit: number },
+    ): Promise<{ items: Array<{ order: Order; reservations: ReservationSummary[] }>; next: OrderCursor | null }> {
+      await requireAvailable();
+      const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
+      const rows = await deps.orders.listClosed(tenantId, { statuses: ["pending_acceptance"], before: input.cursor, limit: limit + 1 });
+      const page = rows.slice(0, limit);
+      const reservations = await deps.orders.reservationsFor(tenantId, page.map((r) => r.order.id));
+      const last = page.at(-1);
+      return {
+        items: page.map(({ order }) => ({ order, reservations: reservations.filter((r) => r.orderId === order.id) })),
+        next: rows.length > limit && last ? { createdAt: last.createdAtRaw, orderId: last.order.orderId } : null,
+      };
     },
 
     /**

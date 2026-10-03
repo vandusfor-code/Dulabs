@@ -27,6 +27,8 @@ export const AGENT_TOOL_NAMES = [
   // Navegación de resultados: página siguiente de la última búsqueda y "algo parecido" (Bloque 10)
   "more_products",
   "similar_products",
+  // Fase 3B.6: cobertura, transportadora y tiempo de entrega de un envío (motor determinista del backend; solo con reglas de envío configuradas)
+  "consultar_envio",
 ] as const;
 
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];

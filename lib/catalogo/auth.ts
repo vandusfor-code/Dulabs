@@ -29,7 +29,9 @@ export const CATALOG_MODULE = "catalogo" as const;
 export const ORDERS_MODULE = "pedidos" as const;
 /** Bloque 33: módulo "Clientes" del catálogo (un cliente por contacto). Se habilita por negocio. */
 export const CLIENTS_MODULE = "clientes_joyeria" as const;
-export type CatalogModule = typeof CATALOG_MODULE | typeof ORDERS_MODULE | typeof CLIENTS_MODULE;
+/** Fase 3B.7: "Por aceptar" (pedidos pendientes de aceptación humana). Se habilita por negocio, aparte de "pedidos". */
+export const POR_ACEPTAR_MODULE = "pedidos_por_aceptar" as const;
+export type CatalogModule = typeof CATALOG_MODULE | typeof ORDERS_MODULE | typeof CLIENTS_MODULE | typeof POR_ACEPTAR_MODULE;
 export const CATALOG_READ_ROLES: readonly Rol[] = ["admin", "agente", "lectura"];
 export const CATALOG_WRITE_ROLES: readonly Rol[] = ["admin"];
 export const CATALOG_ORDER_ROLES: readonly Rol[] = ["admin", "agente"];
@@ -60,7 +62,9 @@ export function decideCatalogAccess(input: { role: Rol; mode: CatalogAccessMode;
           ? "El módulo Pedidos no está habilitado para tu cuenta."
           : input.module === CLIENTS_MODULE
             ? "El módulo Clientes no está habilitado para tu cuenta."
-            : "El módulo Catálogo no está habilitado para tu cuenta.",
+            : input.module === POR_ACEPTAR_MODULE
+              ? "El módulo Por aceptar no está habilitado para tu cuenta."
+              : "El módulo Catálogo no está habilitado para tu cuenta.",
     };
   }
   return { allowed: true };

@@ -9,7 +9,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // "marca_referencia" (Bloque 29): la referencia estampada en las fotos del catálogo; no tiene menú propio.
 // "notificaciones_pedidos" (Bloque 31): avisos por WhatsApp de cada cambio de estado de un pedido; no tiene menú.
 // "clientes_joyeria" (Bloque 33): Dashboard → Clientes del catálogo (un cliente por contacto, con sus pedidos y nota).
-export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria"] as const;
+// "pedidos_por_aceptar" (Fase 3B.7): Dashboard → Pedidos → Por aceptar (pedidos que una PERSONA del negocio debe aceptar o rechazar).
+//   Se habilita aparte de "pedidos" (negocios con aceptación humana): sin esta fila el menú, la página y la API no existen para el negocio.
+export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria", "pedidos_por_aceptar"] as const;
 export type ModuloId = (typeof MODULOS)[number];
 
 export function esModuloId(valor: unknown): valor is ModuloId {

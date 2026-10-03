@@ -80,6 +80,7 @@ import {
   type Vocabulario,
 } from "@/lib/agente/perfil-negocio";
 import { leerDepartamento } from "@/lib/agente/lenguaje/departamentos";
+import { textoDeEnvio } from "@/lib/agente/textos-cliente";
 import { normalizarCelular } from "@/lib/catalogo/clientes/modelo";
 import { maskDocument, sealDocument, type DocumentCipher } from "@/lib/catalogo/pedidos/documento";
 import type { AcceptancePolicy } from "@/lib/catalogo/pedidos/contrato";
@@ -471,6 +472,26 @@ export function pagoNoOfrecido(text: string, o: CheckoutOpciones): PaymentMethod
     if (!ofrecidos.includes(metodo) && PAGO[metodo].some((f) => t.includes(` ${f} `))) return metodo;
   }
   return null;
+}
+
+/**
+ * Fase 3B.9A — pago ANTICIPADO (anticipo, adelanto, abono, "pagar antes"…). Solo es "no ofrecido" cuando el negocio no ofrece ningún
+ * medio que se pague antes del envío (transferencia o link de pago): un negocio solo contra entrega o en tienda no recibe anticipos.
+ */
+const ANTICIPO = /\b(anticipo|anticipos|anticipado|anticipada|adelanto|adelantado|adelantada|abono|abonar|abono inicial|por adelantado|pagar antes|pago antes|pagarte antes|separar con|dejar sena|una sena|la sena)\b/;
+
+/**
+ * Respuesta FIJA (sin modelo) a quien pide un medio de pago que el negocio NO ofrece (Nequi, Daviplata, transferencia, link de pago,
+ * anticipo…) FUERA del checkout. null = el mensaje no pide eso. Sale de la configuración del negocio (sus métodos ofrecidos o su texto
+ * de "pago no disponible"): nunca nombra un método que el negocio no ofrece como disponible, ni datos de cuentas.
+ */
+export function respuestaPagoNoOfrecido(text: string, o: CheckoutOpciones): string | null {
+  const metodo = pagoNoOfrecido(text, o);
+  if (metodo) return checkoutOptionTexts(o).paymentUnavailable(metodo, null);
+  const ofrecidos = pagosPara(o, null);
+  if (ofrecidos.includes("transferencia") || ofrecidos.includes("link_pago")) return null;
+  if (!ANTICIPO.test(normalizar(text))) return null;
+  return o.mensajes?.pago_no_disponible ?? `Por ahora no manejamos pagos anticipados 🙏 Puedes pagar con ${listaO(ofrecidos.map((p) => PAGO_INFO[p].palabra).map(negrita))}.`;
 }
 
 /** Texto sin números largos (para una pregunta hecha en el paso del documento: el documento nunca va al modelo). */
@@ -1528,7 +1549,7 @@ export async function continueCheckout(
           const cobertura = await io.cityCoverage(ciudad).catch(() => "sin_certeza" as const);
           if (cobertura === "sin_certeza") {
             const paused = await io.handOff("ciudad sin certeza de cobertura").catch(() => false);
-            if (paused) return done({ ...state, handoffTurn: io.turn }, await io.sendText(ACEPTACION_MESSAGES.coverageHandoff), "coverage_handoff", true);
+            if (paused) return done({ ...state, handoffTurn: io.turn }, await io.sendText(textoDeEnvio(opciones.envios, "cobertura_no_verificable") ?? ACEPTACION_MESSAGES.coverageHandoff), "coverage_handoff", true);
           }
         }
         return move(save({ city: ciudad, ...(departamento && opciones.campos?.departamento ? { department: departamento } : {}) }));

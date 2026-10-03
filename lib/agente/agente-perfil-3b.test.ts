@@ -221,11 +221,12 @@ describe("Fase 3B.3 · fail-closed: ningún bloque se enciende a medias", () => 
   it("Fase 3B.4: campos y oficina ya los atiende el checkout; el cierre con aceptación sigue BLOQUEADO (faltan 3B.5 y 3B.7)", () => {
     assert.deepEqual(
       Object.entries(FUNCIONES_3B_IMPLEMENTADAS).filter(([, v]) => v).map(([k]) => k).sort(),
-      ["campos", "oficina"],
+      // Fase 3B.6: el motor de envíos ya lo atiende el runtime (herramienta, guardián, derivación y checkout).
+      ["campos", "envios", "oficina"],
     );
     const o = valido(COMPLETO);
     // (COMPLETO trae dos tipos de documento: elegir entre varios también espera D4.)
-    assert.deepEqual(funcionesNoDisponibles(o).sort(), ["cierre_aceptacion_humana", "documento_varios_tipos", "envios", "handoff_determinista", "textos_fijos"].sort());
+    assert.deepEqual(funcionesNoDisponibles(o).sort(), ["cierre_aceptacion_humana", "documento_varios_tipos", "handoff_determinista", "textos_fijos"].sort());
     assert.deepEqual(config(o), { kind: "invalid", reason: "checkout_feature_unavailable" });
     // Sin cierre por aceptación, campos y oficina ni siquiera son válidos (con el botón "Confirmar" se perderían).
     invalido({ ...CHECKOUT_OPCIONES_LEGADO, campos: { barrio: true } }, "campos sin aceptación");
@@ -235,7 +236,6 @@ describe("Fase 3B.3 · fail-closed: ningún bloque se enciende a medias", () => 
     const conOficina = { entregas: ["domicilio", "oficina_transportadora"], pagos: [{ metodo: "contra_entrega" }], cierre: CIERRE_COMPLETO };
     const solo: Array<[FuncionFase3B[], unknown]> = [
       [["cierre_aceptacion_humana"], { ...base, cierre: CIERRE_COMPLETO }],
-      [["envios"], { ...base, envios: ENVIOS }],
       [["handoff_determinista"], { ...CHECKOUT_OPCIONES_LEGADO, handoff: { motivos_deterministas: ["queja"] } }],
       [["textos_fijos"], { ...CHECKOUT_OPCIONES_LEGADO, textos: { ubicacion: "x" } }],
       [["cierre_aceptacion_humana", "documento_varios_tipos"], { ...conOficina, oficina: OFICINA }],

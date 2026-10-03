@@ -20,7 +20,12 @@
  */
 import type { DeliveryType, Order } from "@/lib/catalogo/pedidos/contrato";
 
-export const TIPOS_NOTIFICACION = ["pago_recibido", "en_preparacion", "enviado", "entregado", "completado", "cancelado", "rechazado"] as const;
+/**
+ * Fase 3B.8: "aceptado" (el equipo aceptó un pedido pendiente de aceptación) se suma a los de siempre. Su texto, y el de
+ * "rechazado"/"cancelado" de un pedido que pasó por la aceptación, lo define el NEGOCIO (checkout_opciones.cierre.textos): el
+ * módulo nunca los genera por su cuenta (ver mensajes-decision.ts). Requiere la migración 20261208000000 (CHECK de la tabla).
+ */
+export const TIPOS_NOTIFICACION = ["pago_recibido", "en_preparacion", "enviado", "entregado", "completado", "cancelado", "rechazado", "aceptado"] as const;
 export type TipoNotificacion = (typeof TIPOS_NOTIFICACION)[number];
 
 export type EstadoNotificacion = "pendiente" | "enviando" | "enviada" | "fallida" | "ventana_vencida" | "desconocido" | "omitida";
@@ -123,6 +128,9 @@ export function mensajeNotificacion(tipo: TipoNotificacion, d: DatosMensaje): st
       return `${saludo(d.nombre, false)}\n\nTe informamos que tu pedido ${ref} fue cancelado.\n\nSi tienes alguna inquietud, responde este mensaje y una asesora te ayudará.`;
     case "rechazado":
       return `${saludo(d.nombre, false)}\n\nTe informamos que tu pedido ${ref} no pudo continuar y fue rechazado.\n\nSi necesitas ayuda, responde este mensaje y una asesora te atenderá.`;
+    case "aceptado":
+      // El texto de la aceptación es del negocio; el módulo genérico no inventa uno.
+      throw new Error("el texto de 'aceptado' lo define el negocio");
   }
 }
 
@@ -211,7 +219,15 @@ function resumen(r: RegistroNotificacion, repetida: boolean): ResultadoNotificac
  */
 export async function notificarTransicion(
   deps: NotificadorDeps,
-  input: { tenantId: string; tipo: TipoNotificacion; antes: Order | null; despues: Order; miembroId: number | null },
+  input: {
+    tenantId: string;
+    tipo: TipoNotificacion;
+    antes: Order | null;
+    despues: Order;
+    miembroId: number | null;
+    /** Fase 3B.8: texto EXACTO que decidió el negocio (sin él, la plantilla de siempre). Se envía una sola vez por (pedido, tipo). */
+    texto?: string;
+  },
 ): Promise<ResultadoNotificacion> {
   const log = deps.log ?? (() => {});
   const { store } = deps;
@@ -234,7 +250,7 @@ export async function notificarTransicion(
     if (!reserva) return { estado: "no_disponible" };
     // Ya existía: doble clic, recarga, reintento o dos pestañas. NUNCA se vuelve a enviar aquí.
     if (!reserva.creada) return resumen(reserva.registro, true);
-    return await intentarEnvio(deps, input.tenantId, o, reserva.registro, false);
+    return await intentarEnvio(deps, input.tenantId, o, reserva.registro, false, input.texto);
   } catch (err) {
     log({ log: "pedido_notificacion", result: "error", pedido: o.orderId, tipo: input.tipo, detalle: err instanceof Error ? err.message.slice(0, 120) : "?" });
     return { estado: "no_disponible" };
@@ -242,7 +258,7 @@ export async function notificarTransicion(
 }
 
 /** Envía (o decide no enviar) sobre una fila que ESTA ejecución tiene en "enviando". */
-async function intentarEnvio(deps: NotificadorDeps, tenantId: string, o: Order, r: RegistroNotificacion, repetida: boolean): Promise<ResultadoNotificacion> {
+async function intentarEnvio(deps: NotificadorDeps, tenantId: string, o: Order, r: RegistroNotificacion, repetida: boolean, textoDelNegocio?: string): Promise<ResultadoNotificacion> {
   const { store, enviador } = deps;
   const now = deps.now ?? Date.now;
   const log = deps.log ?? (() => {});
@@ -261,7 +277,7 @@ async function intentarEnvio(deps: NotificadorDeps, tenantId: string, o: Order, 
   if (!canal.token) return cerrar({ estado: "omitida", motivo: "sin_token" });
   const ventana = ventanaConversacion(await store.ultimoEntrante(contacto.phoneNumberId, contacto.waId), now());
   if (!ventana.abierta) return cerrar({ estado: "ventana_vencida", motivo: "ventana_vencida" });
-  const texto = mensajeNotificacion(r.tipo, { nombre: o.checkout?.customerName ?? null, pedido: o.orderId, entrega: o.checkout?.delivery ?? null, negocio: canal.nombreNegocio });
+  const texto = textoDelNegocio ?? mensajeNotificacion(r.tipo, { nombre: o.checkout?.customerName ?? null, pedido: o.orderId, entrega: o.checkout?.delivery ?? null, negocio: canal.nombreNegocio });
   try {
     const { messageId } = await enviador.enviar(canal, contacto.waId, texto);
     await enviador.registrar(canal, contacto.waId, texto, messageId).catch(() => undefined);
@@ -283,6 +299,7 @@ export function sigueVigente(tipo: TipoNotificacion, o: Order): boolean {
   if (tipo === "completado") return o.status === "completed";
   if (tipo === "cancelado") return o.status === "cancelled";
   if (tipo === "rechazado") return o.status === "rejected";
+  if (tipo === "aceptado") return o.status === "confirmed" || o.status === "completed";
   return o.status === "confirmed" && o.checkout?.stage === tipo;
 }
 
@@ -299,6 +316,11 @@ export async function reintentarNotificacion(
   const filas = await deps.store.listar(input.tenantId, input.pedido.id);
   const r = filas.find((f) => f.tipo === input.tipo);
   if (!r) return { estado: "no_reintentable", motivo: "No hay una notificación de ese tipo para este pedido." };
+  // Fase 3B.8: el texto de una decisión sobre un pedido pendiente de aceptación es del negocio (el módulo genérico no lo tiene).
+  // Reenviar aquí mandaría la plantilla de siempre en vez del texto configurado: no se reintenta desde este camino.
+  if (input.tipo === "aceptado" || (input.pedido.acceptance && (input.tipo === "rechazado" || input.tipo === "cancelado"))) {
+    return { estado: "no_reintentable", motivo: "Este mensaje usa el texto configurado del negocio y no se reenvía desde aquí." };
+  }
   if (r.estado === "enviada") return { estado: "no_reintentable", motivo: "Esa notificación ya fue enviada." };
   if (!sigueVigente(input.tipo, input.pedido)) return { estado: "no_reintentable", motivo: "El pedido ya cambió de estado: esa notificación ya no aplica." };
   if (!(REINTENTABLES as readonly string[]).includes(r.estado)) return { estado: "no_reintentable", motivo: "La notificación se está enviando en este momento." };

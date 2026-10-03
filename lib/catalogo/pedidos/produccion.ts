@@ -14,6 +14,9 @@ import type { IntakeDeps } from "@/lib/catalogo/pedidos/intake";
 import { createOrderEngine, type HumanHandoffPort, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import { createSupabaseOrdersRepository } from "@/lib/catalogo/pedidos/repositorio";
 import { cifrarSecreto } from "@/lib/crypto";
+import { createSupabaseAgentConfigStore } from "@/lib/agente/config";
+import { canalPanel, createAcceptanceRouter, createSupabaseAsignacionesStore, crearLectorConfigAceptacion } from "@/lib/agente/aceptacion-humana";
+import { createSupabaseMiembrosStore } from "@/lib/agente/responsable";
 
 /** Igual que transferir_soporte del Flow: la IA calla 24 h en ESE chat (la asesora la devuelve antes desde el Inbox). */
 const PAUSA_HANDOFF_MS = 24 * 60 * 60 * 1000;
@@ -47,13 +50,24 @@ export function productionOrderEngine(supabase: SupabaseClient): OrderEngine | n
   if (cached?.supabase === supabase) return cached.engine;
   const key = orderSigningKey();
   if (!key) return null;
+  const handoff = supabaseHandoffPort(supabase);
   const engine = createOrderEngine({
     orders: createSupabaseOrdersRepository(supabase),
     catalog: createSupabaseCatalogRepository(supabase),
     key,
-    handoff: supabaseHandoffPort(supabase),
+    handoff,
     // Fase 3B: el documento de identidad se cifra (AES-256-GCM, TOKEN_ENCRYPTION_KEY) antes de guardarlo.
     documentCipher: { encrypt: cifrarSecreto },
+    // Fase 3B.5: un pedido solo pasa a "pendiente de aceptación" si hay una persona responsable válida del MISMO
+    // negocio; entonces se asigna la conversación, se le avisa (hoy: panel) y la IA calla. Sin aceptación humana
+    // configurada (todos los negocios de hoy) este enrutador nunca se invoca.
+    acceptanceRouter: createAcceptanceRouter({
+      config: crearLectorConfigAceptacion(createSupabaseAgentConfigStore(supabase)),
+      miembros: createSupabaseMiembrosStore(supabase),
+      asignaciones: createSupabaseAsignacionesStore(supabase),
+      notificador: { canales: { panel: canalPanel } },
+      handoff,
+    }),
   });
   cached = { supabase, engine };
   return engine;

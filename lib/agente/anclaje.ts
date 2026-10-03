@@ -18,6 +18,7 @@
  * activo ya confirmado). Sin eso, la respuesta no sale: nunca "pedido confirmado" sin venta.
  */
 import type { DeliveryType, PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
+import { checkShippingClaims, type ShippingEvidence } from "@/lib/agente/envios-anclaje";
 
 const REF = /\b([A-Z]{1,6}-\d{6,}|DL-ORD-[0-9A-HJKMNP-TV-Z]{6})\b/g;
 const PESOS = /(?:\$|COP\s?)\s?(\d{1,3}(?:[.,]\d{3})+|\d+)(?![\d.,]*\s*mil)/gi;
@@ -54,6 +55,11 @@ export interface Evidence {
   /** Bloque 28 (auditoría final): update_cart se BLOQUEÓ en el turno (y ninguno salió bien): nada cambió en la selección. */
   cartBlocked?: boolean;
   cartWritten?: boolean;
+  /**
+   * Fase 3B.6: solo existe en un negocio con reglas de envío. Todo lo que el texto diga sobre envíos (tiempos, cobertura,
+   * costo, transportadora, garantías) debe estar respaldado por lo que consultar_envio devolvió en este turno.
+   */
+  shipping?: ShippingEvidence;
 }
 
 /**
@@ -169,7 +175,7 @@ export function addCustomerEvidence(text: string, ev: Evidence): void {
 /** "Listo, te lo agregué / te separé…": afirmar un cambio en la selección. */
 const CARRITO_CLAIM = /(?:^|[\s¡!.,])(?:listo|agregu[eé]|a[nñ]ad[ií]|separ[eé]|te separ[eé]|actualic[eé]|te dej[eé]|qued[oó] (?:agregad|en tu|list)|ya (?:est[aá]|qued[oó]) en tu)/i;
 
-export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation" | "order_status" | "cart"; value: string };
+export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation" | "order_status" | "cart" | "shipping"; value: string };
 
 export function checkGrounding(text: string, ev: Evidence): { ok: boolean; violations: GroundingViolation[] } {
   const violations: GroundingViolation[] = [];
@@ -211,5 +217,7 @@ export function checkGrounding(text: string, ev: Evidence): { ok: boolean; viola
   if (claimed.modificado && !ev.orderWritten) add({ kind: "order_status", value: "pedido modificado" });
   // Bloque 28 (auditoría final): la selección NO cambió (la herramienta se bloqueó): no se dice "listo / agregué".
   if (ev.cartBlocked && !ev.cartWritten && CARRITO_CLAIM.test(withoutUrls)) add({ kind: "cart", value: "selección sin cambios" });
+  // Fase 3B.6: lo que se diga de envíos (tiempos, cobertura, costo, transportadora) solo si el motor de envíos lo respalda.
+  if (ev.shipping?.active) for (const v of checkShippingClaims(withoutUrls, ev.shipping.facts)) add({ kind: "shipping", value: v });
   return { ok: violations.length === 0, violations };
 }
