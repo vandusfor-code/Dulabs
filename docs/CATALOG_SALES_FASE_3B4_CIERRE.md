@@ -1,5 +1,8 @@
 # catalog_sales · Fase 3B.4 — Cierre y congelamiento
 
+> **Estado vigente:** este documento describe el cierre de ESA fase; frases como «sin commit», «sin aplicar» o `cierre_aceptacion_humana = false` eran ciertas entonces.
+> Qué está aplicado hoy en producción y cómo se activa ASLC: [`CATALOG_SALES_FASE_3B9D.md`](CATALOG_SALES_FASE_3B9D.md).
+
 Checkout con aceptación del negocio (perfil tipo "Aquí Sí Lo Compras"), de punta a punta en memoria.
 Estado: **congelada y lista para revisión** (sin push, sin merge, sin activación).
 

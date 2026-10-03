@@ -1,7 +1,29 @@
-# Aprovisionamiento de Aquí Sí Lo Compras (Fase 3B.9A) — sin activar
+# Aprovisionamiento y activación de Aquí Sí Lo Compras (Fases 3B.9A y 3B.9D)
 
 Esta carpeta NO es de migraciones (vive fuera de `supabase/migrations` a propósito): son scripts que el dueño revisa y corre a mano en el SQL Editor de
 Supabase. Ninguno se ejecutó en producción desde el código. Todos se probaron en un Postgres local efímero (pglite) con datos ficticios.
+
+**Estado en producción (2026-10-03):** aplicados la migración `20261208` y el `02`. Los scripts `03` a `10` NO están aplicados. Runbook completo, QA de 16 casos y límites
+conocidos: `docs/CATALOG_SALES_FASE_3B9D.md`. Orden: `08` (opcional) → `03` → desplegar el código → catálogo → `05` → QA → `06`. Siempre disponibles: `07` (freno),
+`10` (reanudar tras el freno), `09` (cambiar responsable).
+
+### Activación (3B.9D) — paso a paso
+
+| Paso | Archivo | Qué hace | Escribe |
+|---|---|---|---|
+| 1 (opcional) | `08_ver_equipo_solo_lectura.sql` | Lista al equipo de ASLC y marca quién sirve como responsable (activo + rol admin/agente). Sin correos. | no |
+| 2 | `03_configurar_completo_sin_activar.sql` | Carga la configuración COMPLETA (sin el candado) y las políticas del negocio, y enciende el checkout conversacional. **Se editan solo 2 líneas** (`v_responsable`, `v_respaldo`). La fila sigue deshabilitada y la IA pausada. Verifica el aviso obligatorio byte a byte (SHA-256) dentro de la base. | sí |
+| 3 | (código) | Desplegar el código con `cierre_aceptacion_humana = true` (merge a `main`). Las variables de Vercel solo aplican a despliegues nuevos. | — |
+| 4 | `05_activacion_controlada.sql` | Habilita el agente, enciende el audio y quita la pausa, **solo si la IA sigue restringida** a números de prueba. Se niega si `notificaciones_pedidos` está encendido. | sí |
+| 5 | `06_abrir_al_publico.sql` | Quita la restricción (abre al público). Solo con la etapa controlada en marcha, tras el QA. | sí |
+| siempre | `07_freno_de_emergencia.sql` | Pausa la IA al instante (una sentencia). | sí |
+| siempre | `10_reanudar_tras_freno.sql` | Quita SOLO la pausa; la restricción queda como estaba (controlado o público). Nunca es la primera activación. | sí |
+| siempre | `09_cambiar_responsable.sql` | Cambia el responsable con la fila ya habilitada. | sí |
+
+Los archivos `03` y `05` a `10` los GENERA `lib/agente/activacion-aslc.ts` (`npx tsx scripts/generar-aprovisionamiento-aslc.ts`); no se editan a mano y una prueba verifica
+que cada archivo es exactamente la salida del generador.
+
+### Aprovisionamiento (3B.9A) — ya aplicado
 
 | Orden | Archivo | Qué hace | Escribe |
 |---|---|---|---|
@@ -10,7 +32,7 @@ Supabase. Ninguno se ejecutó en producción desde el código. Todos se probaron
 | 2 | `02_aprovisionar_sin_activar.sql` | Crea la fila del agente DESHABILITADA (con candado de activación) y habilita los módulos `catalogo`, `pedidos` y `pedidos_por_aceptar`. Generado por `scripts/generar-aprovisionamiento-aslc.ts`; no se edita a mano. | sí |
 | 3 | `01_…` otra vez | Estado final: todas las `comprobaciones` en `true`; solo cambia la huella de módulos de ASLC. | no |
 | — | `04_revertir_aprovisionamiento.sql` | Reversa del 02 (se niega a borrar una fila que alguien habilitó o cambió). | sí |
-| — | `scripts/verificar-aslc-solo-lectura.mts` | Verificación de **solo lectura** desde el repo (service role, solo `select`): `npx tsx --env-file=.env.local scripts/verificar-aslc-solo-lectura.mts --etapa=inicial` (antes del 02) o `--etapa=aprovisionado` (después). Imprime el estado sin secretos, una huella de los demás negocios (no debe cambiar) y un checklist; termina con código 1 si falla. Reemplaza pegar el resultado del 01 cuando se corre desde el repo. | no |
+| — | `scripts/verificar-aslc-solo-lectura.mts` | Verificación de **solo lectura** desde el repo (service role, solo `select`): `npx tsx --env-file=.env.local scripts/verificar-aslc-solo-lectura.mts --etapa=inicial` (antes del 02), `aprovisionado` (después del 02), `configurado` (después del 03), `controlado` (después del 05) o `publico` (después del 06). Imprime el estado sin secretos, una huella de los demás negocios (no debe cambiar) y un checklist; termina con código 1 si falla. Juzga la fila con el parser y las compuertas REALES del runtime. Reemplaza pegar el resultado del 01 cuando se corre desde el repo. | no |
 | — | `textos-aprobados.json` | Lo único aprobado por el negocio en textos (el aviso, EXACTO) y lo que sigue pendiente (`null`). | no |
 
 ## Reglas
@@ -22,6 +44,6 @@ Supabase. Ninguno se ejecutó en producción desde el código. Todos se probaron
   mensajes. Habilita `catalogo` porque sin ese módulo el negocio no puede cargar sus productos (panel, API, importación y publicación del catálogo).
 - La fila queda con `habilitado = false` **y** `checkout_opciones.activacion_pendiente = true` (candado): aunque alguien habilite la fila por error,
   la configuración es inválida y el agente calla. Con la fila el webhook entrega todo mensaje al agente antes de Flow / Business Agent / legacy.
-- La activación (fase posterior, con tu autorización expresa) reemplaza `checkout_opciones` por la configuración COMPLETA (sin el candado), carga la
-  credencial `GEMINI_KEY_ASLC` en Vercel (solo producción), cambia `FUNCIONES_3B_IMPLEMENTADAS.cierre_aceptacion_humana` a `true` en el código,
-  enciende `transcripcion_audio` si las pruebas reales salieron bien y, al final, `habilitado = true` y quita `ia_pausada`.
+- La activación (con la autorización expresa del dueño) es: `03` (configuración COMPLETA, sin el candado), `GEMINI_KEY_ASLC` en Vercel (solo producción; aplica al
+  siguiente despliegue), `FUNCIONES_3B_IMPLEMENTADAS.cierre_aceptacion_humana = true` en el código (3B.9D), y `05` (`habilitado = true`, `transcripcion_audio = true` y quita
+  `ia_pausada`, sin tocar `ia_restringida_a`); al final `06` abre al público tras el QA.

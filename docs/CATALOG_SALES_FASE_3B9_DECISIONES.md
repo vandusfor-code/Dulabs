@@ -1,7 +1,11 @@
 # Aquí Sí Lo Compras — hoja de decisiones para poner el agente en operación (3B.9)
 
-Fecha: 2026-10-03. Estado: **nada de esto está cargado en producción**. Cada fila dice qué falta, quién lo decide y qué recomienda DuLabs. Donde hay recomendación,
-responder "OK" la acepta; cualquier otra respuesta la reemplaza. Los textos son **PROPUESTAS**: nada sale a un cliente sin que el dueño los apruebe.
+Fecha: 2026-10-03. Cada fila dice qué falta, quién lo decide y qué recomienda DuLabs. Donde hay recomendación, responder "OK" la acepta; cualquier otra respuesta la reemplaza.
+Los textos son **PROPUESTAS**: nada sale a un cliente sin que el dueño los apruebe.
+
+> **Actualización (2026-10-03, fase 3B.9D):** B1 y B3 están HECHOS (el script 02 y la migración 20261208 ya se aplicaron; `GEMINI_KEY_ASLC` ya está en Vercel → Production y rige desde el siguiente
+> despliegue). Para no frenar la entrega, las recomendaciones de la sección 3 se **ADOPTARON de forma provisional** en `lib/agente/activacion-aslc.ts` y se cargan con el script 03 (aún NO aplicado):
+> siguen pendientes de aprobación del cliente y se pueden cambiar. Ver el runbook `CATALOG_SALES_FASE_3B9D.md`.
 
 ## 1. Ya definido por el cliente (no hay que volver a preguntar)
 
@@ -18,9 +22,9 @@ responder "OK" la acepta; cualquier otra respuesta la reemplaza. Los textos son 
 
 | # | Qué falta | Quién | Detalle |
 |---|---|---|---|
-| B1 | **Autorizar el aprovisionamiento (script 02)** | Dueño de DuLabs | Crea la fila del agente DESHABILITADA y habilita 3 módulos. Probado en base local. No cambia la pausa ni la restricción de la IA. |
+| B1 | **Autorizar el aprovisionamiento (script 02)** — **HECHO** | Dueño de DuLabs | Crea la fila del agente DESHABILITADA y habilita 3 módulos. Probado en base local y aplicado. No cambia la pausa ni la restricción de la IA. |
 | B2 | **Cuál es la línea de WhatsApp del agente** | Cliente | En la base, el número conectado a Meta termina en **…8509**; el negocio informó uno que termina en **…5088**, que en el Inbox solo aparece como un interlocutor (cliente). ¿Cuál atiende el agente? Debe ser el que esté conectado por Coexistence. |
-| B3 | **Clave de Gemini propia: `GEMINI_KEY_ASLC`** | Dueño de DuLabs | No existe en Vercel (solo Delacour y las de la plataforma). Crear una clave en Google AI Studio y cargarla en Vercel → Production con ese nombre exacto. Sin ella el agente calla. |
+| B3 | **Clave de Gemini propia: `GEMINI_KEY_ASLC`** — **HECHO** | Dueño de DuLabs | Cargada en Vercel → Production con ese nombre exacto (verificado por nombre, sin ver el valor). Vercel aplica las variables solo a despliegues NUEVOS: rige desde el siguiente. Sin ella el agente calla. |
 | B4 | **La persona responsable (Patricia)** | Cliente | Crear su usuario en Dashboard → Equipo (hoy el único miembro es el administrador). Datos: nombre real, rol y, si la hay, una persona de respaldo. El sistema valida que sea del mismo negocio y esté activa. |
 | B5 | **Correo del negocio** | Cliente | Hay dos versiones del correo en circulación (se confirman por el chat; no se publican en el repositorio). Ningún código lo usa todavía. |
 
@@ -45,7 +49,11 @@ responder "OK" la acepta; cualquier otra respuesta la reemplaza. Los textos son 
 | — | Aviso a la responsable | **Hoy solo en el panel** (conversación asignada + lista "Por aceptar"). Correo y WhatsApp NO están implementados. | Decidir si el panel basta o se implementa correo/WhatsApp (desarrollo adicional). |
 | — | Regla de confianza ("¿es una estafa?") | Se carga como **política para el modelo** (`negocio.politicas`, ver §4); se prueba con Gemini real en el QA | El texto fijo `textos.confianza` NO se puede usar hoy (bloque `textos` sin implementar: invalida la configuración). Una política no tiene guardián determinista. |
 
-## 4. Textos al cliente — PROPUESTAS (sin aprobar; ninguna está cargada)
+## 4. Textos al cliente — PROPUESTAS (sin aprobar por el cliente)
+
+Con el script 03 se cargan, **provisionalmente**: la respuesta al "sí" tras el aviso, los textos de envío (Bogotá antes / después de las 11:30 y resto del país) y las políticas para el modelo.
+**NO se cargan** (quedan como propuesta): saludo, pedido aceptado / rechazado / cancelado (solo saldrían con el módulo `notificaciones_pedidos`, que se mantiene apagado) y los textos de
+ciudad sin cobertura, cobertura no verificable y error de envío (rigen los mensajes neutros de siempre).
 
 Reglas del sistema: se envían tal cual; `{pedido}` y, solo en rechazo y cancelación, `{motivo}`; sin espacios al inicio ni al final.
 
@@ -66,7 +74,7 @@ Reglas del sistema: se envían tal cual; `{pedido}` y, solo en rechazo y cancela
 
 Las dos políticas aplican tu regla: comercio serio, pago contraentrega, "solicitar" una nota y **sin prometer** que la transportadora deje abrir el paquete. Como son una guía para el modelo y no un texto fijo, se verifican con Gemini real en el QA.
 
-**Validado contra el esquema real (2026-10-03):** con todas las recomendaciones de este documento y SIN los bloques `handoff` y `textos`, la configuración completa es válida (≈3,8 KB, el límite de la BD es 32 KB) y la única compuerta que queda cerrada es `cierre_aceptacion_humana`, que se abre en la activación.
+**Validado contra el esquema real (2026-10-03):** con todas las recomendaciones de este documento y SIN los bloques `handoff` y `textos`, la configuración completa es válida (≈3,8 KB, el límite de la BD es 32 KB) y la única compuerta que quedaba cerrada, `cierre_aceptacion_humana`, se abrió en la fase 3B.9D.
 
 Sobre `{motivo}` (rechazo y cancelación): el panel **obliga** a la persona a escribir un motivo (3 a 300 caracteres) y le avisa que el cliente lo va a leer. Si el motivo trae
 7 o más dígitos seguidos (parece un documento o teléfono), NO se envía nada al cliente y el panel le pide escribirle desde el Inbox. Si un texto no está configurado, tampoco se envía nada.

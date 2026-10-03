@@ -222,12 +222,14 @@ describe("3B.8 · configuración: textos opcionales, estrictos y sin valores por
     assert.equal(vacio?.textoTrasAviso, "Respuesta de prueba", "la respuesta al 'sí' sigue siendo la de la 3B.5");
   });
 
-  it("configurar los textos NO enciende el cierre con aceptación humana: sigue bloqueado hasta la activación (3B.9)", () => {
-    assert.equal(FUNCIONES_3B_IMPLEMENTADAS.cierre_aceptacion_humana, false);
+  it("configurar los textos NO abre ni cierra la compuerta del cierre con aceptación humana: es una constante del código (abierta desde la 3B.9D), no de la configuración", () => {
+    // Fixture: la compuerta de ANTES de la 3B.9D (cerrada). Con ella, la misma configuración no era utilizable.
+    const CERRADA = { ...FUNCIONES_3B_IMPLEMENTADAS, cierre_aceptacion_humana: false };
     const opciones = (resolverCheckoutOpciones(conTextos({ aceptado: "A {pedido}" })) as { opciones: CheckoutOpciones }).opciones;
-    assert.ok(funcionesNoDisponibles(opciones).includes("cierre_aceptacion_humana"));
-    const r = parseAgentConfig(fila(A, PN_A, conTextos({ aceptado: "A {pedido}" }), AGENT_TOOL_NAMES, { checkout_conversacional: true }), { tenantId: A.tenantId, phoneNumberId: PN_A });
-    assert.notEqual(r.kind, "ok", "con la compuerta cerrada la configuración no es utilizable");
+    assert.ok(funcionesNoDisponibles(opciones, CERRADA).includes("cierre_aceptacion_humana"));
+    assert.ok(!funcionesNoDisponibles(opciones).includes("cierre_aceptacion_humana"), "con la compuerta REAL el cierre ya no bloquea");
+    const r = parseAgentConfig(fila(A, PN_A, conTextos({ aceptado: "A {pedido}" }), AGENT_TOOL_NAMES, { checkout_conversacional: true }), { tenantId: A.tenantId, phoneNumberId: PN_A }, { funciones3b: CERRADA });
+    assert.notEqual(r.kind, "ok", "con la compuerta de antes la configuración no era utilizable");
   });
 
   it("textoDeEnvio: el texto del negocio o null (entonces rige el mensaje neutro de siempre)", () => {

@@ -1,5 +1,8 @@
 # catalog_sales · Fase 3B.8 — Textos finales y comunicación con el cliente
 
+> **Estado vigente:** este documento describe el cierre de ESA fase; frases como «sin commit», «sin aplicar» o `cierre_aceptacion_humana = false` eran ciertas entonces.
+> Qué está aplicado hoy en producción y cómo se activa ASLC: [`CATALOG_SALES_FASE_3B9D.md`](CATALOG_SALES_FASE_3B9D.md).
+
 Estado: implementada y verificada (sin commit, sin push, sin activar). **Ninguna migración ejecutada; ningún SQL contra producción.** Se escribió
 UNA migración (sin aplicar) y su rollback, probados solo en un Postgres local efímero. ASLC sigue pausado, restringido a su número de prueba y con
 `cierre_aceptacion_humana = false`; Patricia no se creó; el catálogo real no se cargó.
