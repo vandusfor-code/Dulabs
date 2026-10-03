@@ -1,5 +1,8 @@
 # catalog_sales · Fase 3B.5 — Aceptación humana: cierre técnico
 
+> **Estado vigente:** este documento describe el cierre de ESA fase; frases como «sin commit», «sin aplicar» o `cierre_aceptacion_humana = false` eran ciertas entonces.
+> Qué está aplicado hoy en producción y cómo se activa ASLC: [`CATALOG_SALES_FASE_3B9D.md`](CATALOG_SALES_FASE_3B9D.md).
+
 Estado: **cerrada técnicamente** (sin commit, sin push, sin activar). Sin migraciones ni SQL.
 
 ## Flujo y orden (no se invierte)

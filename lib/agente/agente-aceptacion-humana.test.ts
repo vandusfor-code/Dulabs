@@ -43,7 +43,9 @@ import { runAgentTurn } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore } from "@/lib/agente/clasificacion";
 import type { HistoryRow } from "@/lib/agente/contexto";
 import { ACEPTACION_BUTTONS } from "@/lib/agente/checkout";
-import { CHECKOUT_OPCIONES_LEGADO, FUNCIONES_FASE_3B, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
+import { CHECKOUT_OPCIONES_LEGADO, FUNCIONES_3B_IMPLEMENTADAS, FUNCIONES_FASE_3B, politicaDeAceptacion, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
+import { CREDENCIAL_GEMINI_ASLC, HERRAMIENTAS_ASLC } from "@/lib/agente/aprovisionamiento";
+import { DECISIONES_ASLC, configuracionCompletaAslc, negocioCompletoAslc } from "@/lib/agente/activacion-aslc";
 import { createMemoryMiembrosStore, type MiembroEquipo } from "@/lib/agente/responsable";
 import {
   canalPanel,
@@ -926,6 +928,8 @@ const OPCIONES_E2E = {
   },
 };
 const TODAS = Object.fromEntries(FUNCIONES_FASE_3B.map((f) => [f, true])) as Record<FuncionFase3B, boolean>;
+/** La compuerta tal como estaba ANTES de 3B.9D: todo lo implementado, pero con el cierre por aceptación humana aún cerrado. Es lo que protege a un número que lo configure sin que la compuerta lo permita. */
+const CERRADA: Readonly<Record<FuncionFase3B, boolean>> = { ...FUNCIONES_3B_IMPLEMENTADAS, cierre_aceptacion_humana: false };
 
 describe("3B.5 · de punta a punta por el runtime real", () => {
   let stateStore: ConversationStateStore;
@@ -1481,10 +1485,19 @@ describe("3B.5 cierre · barrera del agente: con un pedido pendiente (con aviso)
     assert.equal(n.build, 0);
   });
 
-  it("PRODUCCIÓN: con la compuerta cerrada la configuración con aceptación es inválida => el agente no responde y NO cae a otro bot", async () => {
-    const { deps, n } = frontera(filaGuard(OPCIONES_E2E, true), { conTodas: false, pendingAcceptance: async () => ({ pending: false, noticeSent: false }) });
+  it("con la compuerta CERRADA la configuración con aceptación es inválida => el agente no responde y NO cae a otro bot", async () => {
+    const { deps, n } = frontera(filaGuard(OPCIONES_E2E, true), { conTodas: false, funciones3b: CERRADA, pendingAcceptance: async () => ({ pending: false, noticeSent: false }) });
     assert.deepEqual(await atenderConAgenteSiAplica(entrada, deps), { handled: true, outcome: "invalid_config", reason: "checkout_feature_unavailable" });
     assert.equal(n.build, 0);
+  });
+
+  it("PRODUCCIÓN (compuerta REAL, ya abierta en 3B.9D): la misma configuración es válida y el turno sigue; la barrera del pedido pendiente sigue mandando", async () => {
+    const abierta = frontera(filaGuard(OPCIONES_E2E, true), { conTodas: false, pendingAcceptance: async () => ({ pending: false, noticeSent: false }) });
+    assert.deepEqual(await atenderConAgenteSiAplica(entrada, abierta.deps), { handled: true, outcome: "unavailable", reason: "runtime_deps_unavailable" });
+    assert.equal(abierta.n.build, 1, "la configuración es válida: se construye el agente");
+    const pendiente = frontera(filaGuard(OPCIONES_E2E, true), { conTodas: false, pendingAcceptance: async () => ({ pending: true, noticeSent: true }) });
+    assert.deepEqual(await atenderConAgenteSiAplica(entrada, pendiente.deps), { handled: true, outcome: "pending_acceptance" });
+    assert.equal(pendiente.n.build, 0);
   });
 
   it("Delacour (opciones de siempre): la barrera NUNCA se consulta y el turno sigue exactamente como antes", async () => {
@@ -1531,8 +1544,13 @@ describe("3B.5 cierre · la configuración con aceptación humana EXIGE el check
     assert.equal(ok.kind === "ok" && ok.config.checkoutEnabled, true);
   });
 
-  it("en producción (compuerta cerrada) sigue 'checkout_feature_unavailable' (el cierre ni siquiera puede configurarse)", () => {
-    for (const c of [false, true]) assert.deepEqual(parseAgentConfig(filaCfg(c), esperado), { kind: "invalid", reason: "checkout_feature_unavailable" });
+  it("con la compuerta CERRADA sigue 'checkout_feature_unavailable' (el cierre ni siquiera puede configurarse)", () => {
+    for (const c of [false, true]) assert.deepEqual(parseAgentConfig(filaCfg(c), esperado, { funciones3b: CERRADA }), { kind: "invalid", reason: "checkout_feature_unavailable" });
+  });
+
+  it("en producción (compuerta REAL, abierta en 3B.9D) el cierre se puede configurar, pero SOLO con el checkout conversacional", () => {
+    assert.equal(parseAgentConfig(filaCfg(true), esperado).kind, "ok");
+    for (const c of [false, undefined]) assert.deepEqual(parseAgentConfig(filaCfg(c), esperado), { kind: "invalid", reason: "checkout_required_for_acceptance" }, String(c));
   });
 
   it("Delacour (opciones de siempre, con o sin checkout conversacional) no cambia: sigue siendo válida", () => {
@@ -1648,5 +1666,135 @@ describe("3B.5 cierre · concurrencia: lo que garantiza la BD, no un 'primero co
     assert.ok(final.status === "rejected" || final.status === "cancelled");
     assert.equal(pedidos.history.filter((h) => h.orderId === orden.id && (h.entry.to === "rejected" || h.entry.to === "cancelled")).length, 1);
     assert.equal(final.confirmedAt, null);
+  });
+});
+
+// ===========================================================================
+// 3B.9D · la configuración REAL de ASLC (la que carga el 03) de punta a punta en el motor
+// ===========================================================================
+
+describe("3B.9D · la configuración REAL de ASLC (la que carga el 03) funciona de punta a punta en el motor", () => {
+  const AVISO_ASLC = (JSON.parse(readFileSync(join(process.cwd(), "supabase", "provisioning", "aslc", "textos-aprobados.json"), "utf8")) as { aviso: string }).aviso;
+
+  /** La fila tal como queda tras 02 + 03 + 05 (habilitada), leída por el parser REAL del runtime con las compuertas REALES (el cierre ya está abierto). */
+  function configReal(over: { respaldo?: number | null } = {}): AgentRuntimeConfig {
+    const row: AgentConfigRow = {
+      id_tenant: A.tenantId,
+      phone_number_id: PN_A,
+      tipo: "catalog_sales",
+      habilitado: true,
+      proveedor: "gemini",
+      modelo: "gemini-3.6-flash",
+      credencial_ref: CREDENCIAL_GEMINI_ASLC,
+      nivel_razonamiento: null,
+      herramientas: [...HERRAMIENTAS_ASLC],
+      canal: "retail",
+      negocio: negocioCompletoAslc(),
+      vocabulario: null,
+      checkout_opciones: configuracionCompletaAslc({ aviso: AVISO_ASLC, miembroId: RESPONSABLE_A, respaldoMiembroId: over.respaldo ?? null }),
+      checkout_conversacional: true,
+      meta_token_plataforma: false,
+      transcripcion_audio: true,
+    };
+    const r = parseAgentConfig(row, { tenantId: A.tenantId, phoneNumberId: PN_A });
+    assert.equal(r.kind, "ok", JSON.stringify(r));
+    return (r as { config: AgentRuntimeConfig }).config;
+  }
+  /** Instala la configuración de aceptación DERIVADA de la fila real (la misma función que usa producción) y devuelve la política del motor. */
+  function instalar(over: { respaldo?: number | null } = {}) {
+    const real = configReal(over);
+    const aceptacion = leerConfigAceptacion(real);
+    assert.ok(aceptacion, "ASLC usa la aceptación humana");
+    configs.set(`${A.tenantId}|${PN_A}`, aceptacion);
+    return { real, aceptacion, policy: politicaDeAceptacion(real.checkoutOptions!)! };
+  }
+
+  it("domicilio: la política real (reserva 12 h, vencimiento 24 h) llega al motor; el pedido queda pendiente con el aviso, asignado a la responsable y la IA en silencio", async () => {
+    const { policy } = instalar();
+    const { orden } = await pendiente({ policy, qty: 2 });
+    assert.equal(orden.status, "pending_acceptance");
+    assert.ok(orden.acceptance?.noticeSentAt, "el aviso quedó registrado");
+    assert.equal(orden.acceptance?.reservationMinutes, DECISIONES_ASLC.reservaMinutos);
+    assert.equal(Date.parse(orden.acceptance!.expiresAt!) - reloj, DECISIONES_ASLC.vencimientoMinutos * MIN);
+    const reservas = pedidos.reservations.filter((r) => r.orderId === orden.id && r.status === "activa");
+    assert.equal(reservas.length, 1, "mientras espera, el stock queda reservado");
+    assert.equal(Date.parse(reservas[0].expiresAt) - reloj, DECISIONES_ASLC.reservaMinutos * MIN);
+    assert.equal(asign.filas.get(`${PN_A}|${ANA.waId}`), RESPONSABLE_A);
+    assert.deepEqual(pausas, [{ waId: ANA.waId, until: "released" }], "la IA queda en silencio hasta que una persona la libere");
+    assert.ok(linea.indexOf("asignada") !== -1 && linea.indexOf("asignada") < linea.indexOf("pausa"), "asignación antes de la pausa");
+    assert.equal(llamadas.confirmOrder, 0);
+  });
+
+  it("la responsable acepta (acceptOrder, nunca confirmOrder); con 'responsable_y_admins' un administrador también; un agente que no es la responsable, no", async () => {
+    const { policy, aceptacion } = instalar({ respaldo: null });
+    assert.equal(aceptacion.aceptan, "responsable_y_admins");
+    const { orden: uno } = await pendiente({ policy });
+    const sinPermiso = await decidir(ctxA({ miembroId: AGENTE_A, esAdmin: false }), uno.orderId, "aceptar");
+    assert.equal(sinPermiso.status, 403, "un agente que no es la responsable ni el respaldo no decide");
+    assert.equal(pedidos.orders.find((o) => o.id === uno.id)?.status, "pending_acceptance");
+    const porResponsable = await decidir(ctxA({ miembroId: RESPONSABLE_A, esAdmin: false }), uno.orderId, "aceptar");
+    assert.equal(porResponsable.status, 200, JSON.stringify(porResponsable.body));
+    assert.equal(pedidos.orders.find((o) => o.id === uno.id)?.status, "confirmed");
+    const { orden: dos } = await pendiente({ policy, contact: { phoneNumberId: PN_A, waId: "573001110004" } });
+    const porAdmin = await decidir(ctxA({ miembroId: ADMIN_A, esAdmin: true }), dos.orderId, "aceptar");
+    assert.equal(porAdmin.status, 200, "con 'responsable_y_admins' un administrador también acepta");
+    assert.equal(llamadas.acceptOrder, 2);
+    assert.equal(llamadas.confirmOrder, 0, "confirmOrder NUNCA se ejecuta: la IA no confirma pedidos");
+    assert.equal(await engine.hasPurchase({ tenantId: A.tenantId, contact: ANA }), true, "solo ahora cuenta como venta");
+  });
+
+  it("retiro en oficina: el documento se guarda cifrado con retención de 30 días y el panel solo lo muestra enmascarado; rechazar exige motivo y no deja venta", async () => {
+    const { policy } = instalar();
+    assert.deepEqual(policy.document, { kind: "required_for_office", allowedTypes: ["no_especificado"], retention: { kind: "days", days: DECISIONES_ASLC.documentoRetencionDias } });
+    const { orden } = await pendiente({ policy, checkout: OFICINA, document: { type: "no_especificado", number: DOC } });
+    assert.equal(orden.status, "pending_acceptance");
+    const [doc] = pedidos.documents.filter((d) => d.orderId === orden.id);
+    assert.ok(doc, "el documento quedó guardado");
+    assert.ok(!doc.cipherText.includes("1020345678"), "cifrado: el número no está en claro");
+    assert.equal(Date.parse(doc.deleteAfter!) - reloj, DECISIONES_ASLC.documentoRetencionDias * 24 * 60 * MIN, "se borra a los 30 días");
+    const respuesta = await leer(await listarPorAceptar(ctxA()));
+    const [v] = respuesta.body.data!.pedidos as PedidoPorAceptar[];
+    assert.deepEqual(v.documento, { tipo: "no_especificado", enmascarado: "•••• 5678" });
+    assert.ok(!JSON.stringify(respuesta.body).includes("1020345678") && !JSON.stringify(respuesta.body).includes(DOC));
+    const sinMotivo = await decidir(ctxA(), orden.orderId, "rechazar");
+    assert.equal(sinMotivo.status, 400, "rechazar exige motivo");
+    const rechazo = await decidir(ctxA(), orden.orderId, "rechazar", "No tenemos ese producto disponible");
+    assert.equal(rechazo.status, 200);
+    assert.equal(pedidos.orders.find((o) => o.id === orden.id)?.status, "rejected");
+    assert.equal(llamadas.acceptOrder, 0);
+    assert.equal(await engine.hasPurchase({ tenantId: A.tenantId, contact: ANA }), false, "un pedido rechazado no es una venta");
+  });
+
+  it("el 'sí' del cliente tras el aviso recibe UNA respuesta fija (la de ASLC) y NO cambia el pedido; si una persona ya escribió (caso 15) la IA no responde; sin texto de decisión no se escribe nada", async () => {
+    const { policy, aceptacion } = instalar();
+    assert.ok(aceptacion.textoTrasAviso.startsWith("¡Gracias por confirmar!"));
+    assert.deepEqual(aceptacion.textosDecision, { aceptado: null, rechazado: null, cancelado: null }, "sin texto configurado, aceptar / rechazar / cancelar no le escriben nada al cliente");
+    const { orden } = await pendiente({ policy });
+    const enviados: string[] = [];
+    const deps = (personaEscribio: boolean): RespuestaAvisoDeps => ({
+      config: lector,
+      engine,
+      humanWroteSince: async () => personaEscribio,
+      sendText: async (t) => {
+        enviados.push(t);
+        return { sent: true };
+      },
+      log: () => {},
+    });
+    const r = await atenderRespuestaTrasAviso({ tenantId: A.tenantId, phoneNumberId: ANA.phoneNumberId, waId: ANA.waId, text: "Sí, estoy 100% seguro de recibirlo" }, deps(false));
+    assert.deepEqual(r, { handled: true, accion: "respondida" });
+    assert.deepEqual(enviados, [aceptacion.textoTrasAviso]);
+    const o = pedidos.orders.find((x) => x.id === orden.id)!;
+    assert.equal(o.status, "pending_acceptance", "el 'sí' no cambia el estado");
+    assert.equal(o.confirmedAt, null, "ni crea una venta");
+    assert.equal(llamadas.acceptOrder + llamadas.confirmOrder, 0);
+    assert.equal(await engine.hasPurchase({ tenantId: A.tenantId, contact: ANA }), false);
+    // Caso 15: la responsable ya le escribió al cliente antes del "sí": se registra, pero la IA NO responde.
+    const otro = { phoneNumberId: PN_A, waId: "573001110006" };
+    const { orden: o2 } = await pendiente({ policy, contact: otro });
+    enviados.length = 0;
+    assert.deepEqual(await atenderRespuestaTrasAviso({ tenantId: A.tenantId, phoneNumberId: otro.phoneNumberId, waId: otro.waId, text: "Sí" }, deps(true)), { handled: true, accion: "registrada_sin_respuesta" });
+    assert.equal(enviados.length, 0, "la IA no responde si una persona ya escribió");
+    assert.ok(pedidos.orders.find((x) => x.id === o2.id)?.acceptance?.customerReplyAt, "el 'sí' queda registrado para la responsable");
   });
 });

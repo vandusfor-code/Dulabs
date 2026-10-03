@@ -113,6 +113,9 @@ const fila = (checkout_opciones: unknown): AgentConfigRow => ({
   meta_token_plataforma: false,
 });
 const config = (o: unknown) => parseAgentConfig(fila(o), { tenantId: TENANT_A, phoneNumberId: "100000000000009" });
+/** La compuerta de ANTES de la Fase 3B.9D (cierre con aceptación humana bloqueado): sirve para probar que un solo bloque no implementado basta para bloquear. */
+const CERRADA: Readonly<Record<FuncionFase3B, boolean>> = { ...FUNCIONES_3B_IMPLEMENTADAS, cierre_aceptacion_humana: false };
+const configCerrada = (o: unknown) => parseAgentConfig(fila(o), { tenantId: TENANT_A, phoneNumberId: "100000000000009" }, { funciones3b: CERRADA });
 
 // ===========================================================================
 
@@ -218,15 +221,15 @@ describe("Fase 3B.3 · sin valores comerciales por defecto: cada decisión es ob
 });
 
 describe("Fase 3B.3 · fail-closed: ningún bloque se enciende a medias", () => {
-  it("Fase 3B.4: campos y oficina ya los atiende el checkout; el cierre con aceptación sigue BLOQUEADO (faltan 3B.5 y 3B.7)", () => {
+  it("Fase 3B.9D: campos, oficina, envíos y el cierre con aceptación ya los atiende el runtime; handoff determinista, textos fijos y varios tipos de documento NO", () => {
     assert.deepEqual(
       Object.entries(FUNCIONES_3B_IMPLEMENTADAS).filter(([, v]) => v).map(([k]) => k).sort(),
-      // Fase 3B.6: el motor de envíos ya lo atiende el runtime (herramienta, guardián, derivación y checkout).
-      ["campos", "envios", "oficina"],
+      // Fase 3B.6: el motor de envíos. Fase 3B.9D: se abre el cierre con aceptación humana (3B.4, 3B.5, 3B.7 y 3B.8 ya existían).
+      ["campos", "cierre_aceptacion_humana", "envios", "oficina"],
     );
     const o = valido(COMPLETO);
     // (COMPLETO trae dos tipos de documento: elegir entre varios también espera D4.)
-    assert.deepEqual(funcionesNoDisponibles(o).sort(), ["cierre_aceptacion_humana", "documento_varios_tipos", "handoff_determinista", "textos_fijos"].sort());
+    assert.deepEqual(funcionesNoDisponibles(o).sort(), ["documento_varios_tipos", "handoff_determinista", "textos_fijos"].sort());
     assert.deepEqual(config(o), { kind: "invalid", reason: "checkout_feature_unavailable" });
     // Sin cierre por aceptación, campos y oficina ni siquiera son válidos (con el botón "Confirmar" se perderían).
     invalido({ ...CHECKOUT_OPCIONES_LEGADO, campos: { barrio: true } }, "campos sin aceptación");
@@ -241,14 +244,18 @@ describe("Fase 3B.3 · fail-closed: ningún bloque se enciende a medias", () => 
       [["cierre_aceptacion_humana", "documento_varios_tipos"], { ...conOficina, oficina: OFICINA }],
       [["cierre_aceptacion_humana", "oficina_lista"], { ...conOficina, oficina: { ...OFICINA, documento: { modo: "no_pedir" }, seleccion: { tipo: "lista", oficinas: ["Oficina Centro"] } } }],
     ];
+    // Con la compuerta de ANTES de la 3B.9D (cierre cerrado), cada bloque no implementado bloquea por sí solo ("uno solo basta").
     for (const [f, opciones] of solo) {
-      assert.deepEqual(funcionesNoDisponibles(valido(opciones)).sort(), [...f].sort(), f.join("+"));
-      assert.deepEqual(config(opciones), { kind: "invalid", reason: "checkout_feature_unavailable" }, f.join("+"));
+      assert.deepEqual(funcionesNoDisponibles(valido(opciones), CERRADA).sort(), [...f].sort(), f.join("+"));
+      assert.deepEqual(configCerrada(opciones), { kind: "invalid", reason: "checkout_feature_unavailable" }, f.join("+"));
+      // Con las compuertas REALES bloquean solo los bloques que de verdad faltan (el cierre con aceptación ya no).
+      assert.deepEqual(funcionesNoDisponibles(valido(opciones)).sort(), f.filter((x) => x !== "cierre_aceptacion_humana").sort(), f.join("+"));
     }
     // Un tipo de documento (o "sin especificar", D4): ya lo atiende el checkout.
     for (const tipos of [["cc"], "sin_especificar"] as const) {
       const ok = valido({ ...conOficina, oficina: { ...OFICINA, documento: { ...OFICINA.documento, tipos } } });
-      assert.deepEqual(funcionesNoDisponibles(ok), ["cierre_aceptacion_humana"], JSON.stringify(tipos));
+      assert.deepEqual(funcionesNoDisponibles(ok, CERRADA), ["cierre_aceptacion_humana"], JSON.stringify(tipos));
+      assert.deepEqual(funcionesNoDisponibles(ok), [], JSON.stringify(tipos));
     }
   });
 

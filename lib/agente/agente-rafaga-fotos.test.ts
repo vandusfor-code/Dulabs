@@ -225,7 +225,7 @@ describe("B30 · botones sin freno de ráfaga", () => {
     const iFreno = src.indexOf("esperaDeRafagaMs({ agenteListo, esBoton: botonDelAgente(mensaje) !== null })");
     const iMasReciente = src.indexOf("const { data: masReciente }");
     assert.ok(iTyping > 0 && iTyping < iFreno && iFreno < iMasReciente);
-    assert.match(src, /if \(tokenMeta && !agenteListo\) \{\n\s+await marcarLeidoConTyping/);
+    assert.match(src, /if \(tokenMeta && !agenteListo\) \{\r?\n\s+await marcarLeidoConTyping/);
     assert.doesNotMatch(src, /setTimeout\(resolve, 2500\)/, "la espera fija quedó en un solo lugar (esperaDeRafagaMs)");
   });
 });

@@ -1,23 +1,29 @@
 /**
  * FASE 3B.9 — VERIFICACIÓN DE SOLO LECTURA del estado de Aquí Sí Lo Compras en producción.
  *
- *   npx tsx --env-file=.env.local scripts/verificar-aslc-solo-lectura.mts [--etapa=inicial|aprovisionado]
+ *   npx tsx --env-file=.env.local scripts/verificar-aslc-solo-lectura.mts [--etapa=inicial|aprovisionado|configurado|controlado|publico]
  *
  * SOLO `select` (nunca insert/update/delete/upsert/rpc: una prueba lo verifica). No imprime secretos: tokens y WABA solo como "existe",
  * números como "…últimos4". Sin `--etapa` solo informa; con `--etapa` evalúa el checklist de esa etapa y termina con código 1 si algo falla:
  *   inicial        antes de correr 02_aprovisionar_sin_activar.sql (sin fila de agente, sin módulos).
  *   aprovisionado  después del 02: fila deshabilitada con candado, 3 módulos, IA pausada, nada más.
+ *   configurado    después del 03: configuración COMPLETA cargada (sin candado), válida con las compuertas REALES del runtime, aviso byte a byte,
+ *                  responsable activa con rol que puede decidir pedidos; la fila sigue DESHABILITADA y la IA pausada.
+ *   controlado     después del 05: agente habilitado, IA activa SOLO para los números de prueba (ia_restringida_a).
+ *   publico        después del 06: agente habilitado, IA activa y SIN restricción (cualquier cliente).
  * `huella_otros_negocios` y `huella_agentes_otros` sirven para comparar ANTES y DESPUÉS: no deben cambiar (Delacour y demás, intactos).
  */
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { CREDENCIAL_GEMINI_ASLC, IDENTIDAD_ASLC_PRODUCCION } from "@/lib/agente/aprovisionamiento";
+import { ETAPAS_ASLC, comprobacionesDeEtapa, type EtapaAslc } from "@/lib/agente/activacion-aslc";
+import { IDENTIDAD_ASLC_PRODUCCION } from "@/lib/agente/aprovisionamiento";
 
-const etapa = process.argv.find((a) => a.startsWith("--etapa="))?.slice("--etapa=".length) ?? null;
-if (etapa !== null && etapa !== "inicial" && etapa !== "aprovisionado") {
-  console.error("--etapa debe ser 'inicial' o 'aprovisionado'");
+const etapaPedida = process.argv.find((a) => a.startsWith("--etapa="))?.slice("--etapa=".length) ?? null;
+if (etapaPedida !== null && !(ETAPAS_ASLC as readonly string[]).includes(etapaPedida)) {
+  console.error(`--etapa debe ser una de: ${ETAPAS_ASLC.join(", ")}`);
   process.exit(2);
 }
+const etapa = etapaPedida as EtapaAslc | null;
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !key) {
@@ -28,6 +34,7 @@ const supabase = createClient(url, key);
 const { idTenant, phoneNumberId, patronNombre } = IDENTIDAD_ASLC_PRODUCCION;
 const ult4 = (s: string | null | undefined) => (s ? `…${String(s).slice(-4)}` : null);
 const huella = (lineas: string[]) => createHash("md5").update([...lineas].sort().join("|")).digest("hex");
+const lista = (csv: unknown) => String(csv ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 const falla = (m: string, e: { code?: string; message: string } | null): never => {
   console.error(`ERROR leyendo ${m}: ${e?.code ?? ""} ${e?.message ?? ""}`);
   process.exit(2);
@@ -54,8 +61,8 @@ const salida: Record<string, unknown> = {
         telefono_registrado: ult4(aslc.telefono_negocio),
         estado_conexion: aslc.estado_conexion,
         ia_pausada: aslc.ia_pausada,
-        ia_restringida_a: String(aslc.ia_restringida_a ?? "").split(",").map((x) => x.trim()).filter(Boolean).map(ult4),
-        numeros_bloqueados: String(aslc.ia_numeros_bloqueados ?? "").split(",").map((x) => x.trim()).filter(Boolean).length,
+        ia_restringida_a: lista(aslc.ia_restringida_a).map(ult4),
+        numeros_bloqueados: lista(aslc.ia_numeros_bloqueados).length,
         flow_activo: aslc.flow_activo,
       }
     : null,
@@ -94,6 +101,9 @@ if (aslc) {
     activacion_pendiente: a.checkout_opciones?.activacion_pendiente ?? null,
     pagos: (a.checkout_opciones?.pagos ?? []).map((p: { metodo: string }) => p.metodo),
     entregas: a.checkout_opciones?.entregas ?? null,
+    cierre: a.checkout_opciones?.cierre?.modo ?? null,
+    responsable_miembro_id: a.checkout_opciones?.cierre?.responsable?.miembro_id ?? null,
+    respaldo_miembro_id: a.checkout_opciones?.cierre?.responsable?.respaldo_miembro_id ?? null,
   }));
   salida.agentes_otros = otros.map((a) => ({ id_tenant: a.id_tenant, phone_final: ult4(a.phone_number_id), habilitado: a.habilitado, credencial_ref: a.credencial_ref }));
   salida.huella_agentes_otros = huella(otros.map((a) => JSON.stringify([a.id_tenant, a.phone_number_id, a.habilitado, a.credencial_ref, a.checkout_conversacional, a.transcripcion_audio, a.meta_token_plataforma, a.checkout_opciones])));
@@ -105,11 +115,11 @@ if (aslc) {
   const modsAslc = mods.filter((m) => m.id_tenant === idTenant);
   salida.modulos_aslc = modsAslc.map((m) => ({ modulo: m.modulo, habilitado: m.habilitado })).sort((a, b) => a.modulo.localeCompare(b.modulo));
   salida.huella_otros_negocios = huella(mods.filter((m) => m.id_tenant !== idTenant).map((m) => `${m.id_tenant}:${m.modulo}:${m.habilitado}`));
-  const habilitado = (mod: string) => modsAslc.some((m) => m.modulo === mod && m.habilitado === true);
 
   // 4) Equipo (sin correos) y catálogo (solo conteos).
   const { data: equipo, error: e4 } = await supabase.from("dulabs_miembros_equipo").select("id, rol, estado, nombre").eq("tenant_id", idTenant);
   salida.equipo = e4 ? `ERROR ${e4.code}` : equipo;
+  const miembros = e4 ? [] : (equipo ?? []);
   const cuenta = async (tabla: string, estado?: string) => {
     const base = supabase.from(tabla).select("*", { count: "exact", head: true }).eq("id_tenant", idTenant);
     const { count, error } = await (estado ? base.eq("estado", estado) : base);
@@ -122,31 +132,11 @@ if (aslc) {
     notificaciones: await cuenta("dulabs_catalogo_pedido_notificaciones"),
   };
 
-  // Checklists por etapa.
-  checks.ia_pausada = aslc.ia_pausada === true;
-  checks.sin_agente_habilitado = !agenteAslc.some((a) => a.habilitado === true);
-  checks.notificaciones_pedidos_apagado = !habilitado("notificaciones_pedidos");
-  if (etapa === "inicial") {
-    checks.sin_fila_de_agente = agenteAslc.length === 0;
-    checks.sin_modulos = modsAslc.length === 0;
-  }
-  if (etapa === "aprovisionado") {
-    const a = agenteAslc[0];
-    checks.una_fila_de_agente = agenteAslc.length === 1;
-    checks.fila_deshabilitada_con_candado =
-      !!a &&
-      a.habilitado === false &&
-      a.checkout_opciones?.activacion_pendiente === true &&
-      a.credencial_ref === CREDENCIAL_GEMINI_ASLC &&
-      a.checkout_conversacional === false &&
-      a.transcripcion_audio === false &&
-      a.meta_token_plataforma === false &&
-      a.vocabulario === null &&
-      !(a.herramientas ?? []).includes("confirm_order");
-    checks.solo_contra_entrega = !!a && JSON.stringify((a.checkout_opciones?.pagos ?? []).map((p: { metodo: string }) => p.metodo)) === JSON.stringify(["contra_entrega"]);
-    checks.modulos_catalogo_pedidos_por_aceptar = habilitado("catalogo") && habilitado("pedidos") && habilitado("pedidos_por_aceptar");
-    checks.credencial_no_compartida = !otros.some((o) => o.credencial_ref === CREDENCIAL_GEMINI_ASLC);
-  }
+  // Checklist de la etapa: lo calcula una función PURA y probada (lib/agente/activacion-aslc.ts), con el parser y las compuertas reales del runtime.
+  Object.assign(
+    checks,
+    comprobacionesDeEtapa(etapa, { iaPausada: aslc.ia_pausada, iaRestringidaA: aslc.ia_restringida_a, agenteAslc, agentesOtros: otros, modulosAslc: modsAslc, equipo: miembros }),
+  );
 }
 
 salida.comprobaciones = checks;

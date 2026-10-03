@@ -34,7 +34,7 @@ import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { runAgentTurn } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore } from "@/lib/agente/clasificacion";
 import { ACEPTACION_BUTTONS, ACEPTACION_MESSAGES, CHECKOUT_BUTTONS, leerTelefono, niegaDocumento, parseResumenAceptacion, pideOficina } from "@/lib/agente/checkout";
-import { CHECKOUT_OPCIONES_LEGADO, FUNCIONES_FASE_3B, checkoutOpcionesSchema, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
+import { CHECKOUT_OPCIONES_LEGADO, FUNCIONES_3B_IMPLEMENTADAS, FUNCIONES_FASE_3B, checkoutOpcionesSchema, funcionesNoDisponibles, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
 import { leerDepartamento } from "@/lib/agente/lenguaje/departamentos";
 import { cifrarSecreto, descifrarSecreto } from "@/lib/crypto";
 
@@ -84,6 +84,8 @@ const OPCIONES_ASLC = {
 };
 /** Las pruebas encienden explícitamente lo que en producción sigue bloqueado (cierre con aceptación: falta 3B.5 y 3B.7). */
 const TODAS = Object.fromEntries(FUNCIONES_FASE_3B.map((f) => [f, true])) as Record<FuncionFase3B, boolean>;
+/** La compuerta tal como estaba en producción ANTES de 3B.9D: lo implementado, con el cierre por aceptación humana aún cerrado. */
+const CERRADA: Readonly<Record<FuncionFase3B, boolean>> = { ...FUNCIONES_3B_IMPLEMENTADAS, cierre_aceptacion_humana: false };
 
 let mem: ReturnType<typeof createInMemoryCatalogRepository>;
 let admin: ReturnType<typeof createCatalogService>;
@@ -655,9 +657,10 @@ describe("3B.4 · seguridad del estado", () => {
     assert.ok(!sent.slice(antes).includes(AVISO), "el aviso no se repite");
   });
 
-  it("en PRODUCCIÓN el cierre con aceptación sigue bloqueado (faltan 3B.5 y 3B.7): la configuración es inválida", () => {
+  it("con la compuerta del cierre CERRADA (producción hasta 3B.9D) la configuración con aceptación es inválida; la compuerta REAL ya no la bloquea (se abrió en 3B.9D)", () => {
     const row = fila();
-    assert.deepEqual(parseAgentConfig(row, { tenantId: A.tenantId, phoneNumberId: PN_A }), { kind: "invalid", reason: "checkout_feature_unavailable" });
+    assert.deepEqual(parseAgentConfig(row, { tenantId: A.tenantId, phoneNumberId: PN_A }, { funciones3b: CERRADA }), { kind: "invalid", reason: "checkout_feature_unavailable" });
+    assert.ok(!funcionesNoDisponibles(checkoutOpcionesSchema.parse(OPCIONES_ASLC)).includes("cierre_aceptacion_humana"), "la compuerta real del cierre está abierta");
   });
 });
 

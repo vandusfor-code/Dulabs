@@ -198,7 +198,7 @@ describe("3B.9A · fila base de ASLC: deshabilitada, con candado y sin nada de o
     assert.equal(o.mensajes, undefined, "ningún texto de Delacour (duda, pago no disponible…)");
   });
 
-  it("DESHABILITADA => el agente no corre; HABILITADA por error => INVÁLIDA por el candado (calla); sin el candado y con el cierre, el bloqueo de la compuerta sigue", () => {
+  it("DESHABILITADA => el agente no corre; HABILITADA por error => INVÁLIDA por el candado (calla); sin el candado y con el cierre, la compuerta (abierta desde la 3B.9D) ya no bloquea", () => {
     const esperado = { tenantId: T_ASLC, phoneNumberId: PN_ASLC };
     assert.deepEqual(parseAgentConfig(filaDeBase(), esperado), { kind: "disabled" });
     assert.deepEqual(parseAgentConfig(filaDeBase({ habilitado: true }), esperado), { kind: "invalid", reason: "activation_pending" });
@@ -206,12 +206,13 @@ describe("3B.9A · fila base de ASLC: deshabilitada, con candado y sin nada de o
     const { activacion_pendiente: _c, ...sinCandado } = opcionesBaseAslc();
     void _c;
     assert.equal(parseAgentConfig(filaDeBase({ habilitado: true, checkout_opciones: sinCandado }), esperado).kind, "ok");
-    // Con el cierre por aceptación humana y la compuerta REAL (cerrada): inválida (no se enciende a medias).
-    assert.equal(FUNCIONES_3B_IMPLEMENTADAS.cierre_aceptacion_humana, false);
-    const conCierre = { ...sinCandado, checkout_conversacional: true };
-    void conCierre;
-    const r = parseAgentConfig(filaDeBase({ habilitado: true, checkout_conversacional: true, checkout_opciones: { ...sinCandado, cierre: CIERRE_DE_PRUEBA, campos: { nombre_completo: true } } }), esperado);
-    assert.deepEqual(r, { kind: "invalid", reason: "checkout_feature_unavailable" });
+    // Con el cierre por aceptación humana: con la compuerta de ANTES (cerrada; fixture) era inválida (no se enciende a medias); con la REAL (ABIERTA
+    // desde la 3B.9D) es válida: ahora lo que protege la fila hasta la activación es el candado, habilitado = false y la pausa de la IA.
+    assert.equal(FUNCIONES_3B_IMPLEMENTADAS.cierre_aceptacion_humana, true);
+    const CERRADA = { ...FUNCIONES_3B_IMPLEMENTADAS, cierre_aceptacion_humana: false };
+    const filaConCierre = filaDeBase({ habilitado: true, checkout_conversacional: true, checkout_opciones: { ...sinCandado, cierre: CIERRE_DE_PRUEBA, campos: { nombre_completo: true } } });
+    assert.deepEqual(parseAgentConfig(filaConCierre, esperado, { funciones3b: CERRADA }), { kind: "invalid", reason: "checkout_feature_unavailable" });
+    assert.equal(parseAgentConfig(filaConCierre, esperado).kind, "ok");
   });
 
   it("una fila de OTRO negocio para el número de ASLC (o al revés) es inválida (tenant_mismatch): nunca se mezclan", () => {
@@ -293,6 +294,7 @@ describe("3B.9A · SQL de aprovisionamiento: lo generado, solo lo previsto, y la
     assert.ok(src.includes("IDENTIDAD_ASLC_PRODUCCION"), "reutiliza la identidad verificada (sin ids duplicados a mano)");
     assert.ok(/--etapa=/.test(src) && /process\.exit\(1\)/.test(src), "con --etapa evalúa un checklist y falla con código 1");
   });
+
 });
 
 // ===========================================================================
@@ -581,8 +583,9 @@ describe("3B.9A · FAIL-CLOSED: ASLC nunca cae a un agente legacy (Flow, Busines
     assert.equal(f.calls.errors[0].reason, "activation_pending");
   });
 
-  it("configuración completa con la compuerta REAL cerrada (falta la activación): inválida y callada", async () => {
-    const f = fronteraDeps(createMemoryAgentConfigStore([filaPrueba()]));
+  it("configuración completa con la compuerta de ANTES (cerrada): inválida y callada (nunca otro bot)", async () => {
+    const CERRADA = { ...FUNCIONES_3B_IMPLEMENTADAS, cierre_aceptacion_humana: false };
+    const f = fronteraDeps(createMemoryAgentConfigStore([filaPrueba()]), { funciones3b: CERRADA });
     assert.deepEqual(await atenderConAgenteSiAplica(entrada, f.d), { handled: true, outcome: "invalid_config", reason: "checkout_feature_unavailable" });
     assert.deepEqual(f.calls.sent, []);
   });

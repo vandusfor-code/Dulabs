@@ -1,5 +1,8 @@
 # catalog_sales · Fase 3B.7 — Panel operativo "Por aceptar" y gestión humana
 
+> **Estado vigente:** este documento describe el cierre de ESA fase; frases como «sin commit», «sin aplicar» o `cierre_aceptacion_humana = false` eran ciertas entonces.
+> Qué está aplicado hoy en producción y cómo se activa ASLC: [`CATALOG_SALES_FASE_3B9D.md`](CATALOG_SALES_FASE_3B9D.md).
+
 Estado: implementada y verificada (sin commit, sin push, sin activar). **Sin migraciones ni SQL.** ASLC sigue pausado,
 restringido a su número de prueba y con `cierre_aceptacion_humana = false`; Patricia no se creó y el catálogo real no se cargó.
 

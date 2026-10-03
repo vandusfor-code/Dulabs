@@ -506,10 +506,11 @@ export type FuncionFase3B = (typeof FUNCIONES_FASE_3B)[number];
  * Bloques de la Fase 3B que el runtime YA atiende.
  *   - campos y oficina: los atiende el checkout (Fase 3B.4).
  *   - cierre_aceptacion_humana: el checkout (Fase 3B.4) y la aceptación humana (Fase 3B.5: responsable,
- *     asignación, aviso, panel "Por aceptar", aceptar / rechazar, "sí" del cliente) ya existen en el código,
- *     pero sigue BLOQUEADO a propósito: encenderlo es una decisión explícita del dueño tras revisar la 3B.5
- *     (junto con el aprovisionamiento, Fase 3B.9). Como `campos` y la oficina exigen este cierre, ningún
- *     negocio puede operar el checkout nuevo todavía (las pruebas lo encienden explícitamente).
+ *     asignación, aviso, panel "Por aceptar", aceptar / rechazar, "sí" del cliente). Estuvo BLOQUEADO a propósito
+ *     hasta la Fase 3B.9D, que la ABRE. Abrirla NO activa a ningún negocio: solo opera el checkout nuevo el que
+ *     tiene su configuración completa (sin el candado activacion_pendiente), su fila de agente habilitada y su IA
+ *     sin pausa; ASLC lo hace en etapas controladas (supabase/provisioning/aslc/05 y 06). Un negocio sin bloque
+ *     `cierre` (Delacour) no cambia.
  *   - envios: Fase 3B.6 (motor de envíos: herramienta consultar_envio, guardián de afirmaciones sobre envíos, derivación
  *     determinista y cobertura en el checkout).
  *   - handoff_determinista y textos_fijos: siguen sin implementarse (textos finales: Fase 3B.8).
@@ -519,7 +520,7 @@ export type FuncionFase3B = (typeof FUNCIONES_FASE_3B)[number];
 export const FUNCIONES_3B_IMPLEMENTADAS: Readonly<Record<FuncionFase3B, boolean>> = Object.freeze({
   campos: true,
   oficina: true,
-  cierre_aceptacion_humana: false,
+  cierre_aceptacion_humana: true,
   envios: true,
   handoff_determinista: false,
   textos_fijos: false,

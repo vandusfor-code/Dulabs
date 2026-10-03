@@ -1,5 +1,8 @@
 # catalog_sales · Fase 3B.9A — Aprovisionamiento de Aquí Sí Lo Compras (sin activar)
 
+> **Estado vigente:** este documento describe el cierre de ESA fase; frases como «sin commit», «sin aplicar» o `cierre_aceptacion_humana = false` eran ciertas entonces.
+> Qué está aplicado hoy en producción y cómo se activa ASLC: [`CATALOG_SALES_FASE_3B9D.md`](CATALOG_SALES_FASE_3B9D.md).
+
 Estado: **código, SQL y pruebas listos; NADA aplicado en producción.** Sin commit, push ni merge. ASLC sigue pausado y restringido; el cierre con aceptación
 humana sigue apagado (constante del código `FUNCIONES_3B_IMPLEMENTADAS.cierre_aceptacion_humana = false`); Patricia no se creó; el catálogo real no se cargó;
 ningún mensaje se envió a ningún cliente.
