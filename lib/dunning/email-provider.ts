@@ -21,13 +21,15 @@ export interface NotificacionEmail {
   asunto: string;
   textoPlano: string;
   html: string;
+  /** Remitente propio de este correo (opcional): sin él, el de siempre (DUNNING_EMAIL_FROM o DuLabs <facturacion@dulabs.co>). */
+  remitente?: string;
 }
 
 export type ResultadoEnvioEmail = { enviado: true; proveedor: "resend" } | { enviado: false; motivo: string };
 
 async function enviarConResend(notificacion: NotificacionEmail): Promise<ResultadoEnvioEmail> {
   const apiKey = process.env.RESEND_API_KEY;
-  const remitente = process.env.DUNNING_EMAIL_FROM ?? "DuLabs <facturacion@dulabs.co>";
+  const remitente = notificacion.remitente ?? process.env.DUNNING_EMAIL_FROM ?? "DuLabs <facturacion@dulabs.co>";
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",

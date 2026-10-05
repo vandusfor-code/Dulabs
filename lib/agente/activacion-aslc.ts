@@ -15,6 +15,8 @@
  *        10  reanudar tras el freno            -> quita SOLO la pausa y deja la restricción como estaba (controlado o público)
  *        11  ajustar comportamiento            -> con la fila ya habilitada: estilo, políticas e información oficial del negocio, texto tras el "sí", transportadora
  *        09  cambiar de responsable            -> con la fila ya habilitada (p. ej. cuando exista la persona real)
+ *        12  avisos de decisión al cliente     -> textos de aceptado / rechazado / cancelado + módulo avisos_decision_pedidos (SIN los avisos genéricos de cada etapa)
+ *        13  aviso por correo a la responsable -> además del panel, un correo (solo el número de pedido y el enlace) cuando un pedido espera su aceptación
  *      Cada uno es UNA sola sentencia (un bloque DO atómico) con guardas: si una falla, no queda nada. Este código nunca toca una base.
  *
  * Qué NO hace: no activa nada por sí mismo, no crea personas (el responsable es un id que el dueño pone y la base verifica), no enciende
@@ -24,6 +26,8 @@ import { createHash } from "node:crypto";
 import { businessConfigSchema, parseAgentConfig, type BusinessConfig } from "@/lib/agente/config";
 import { CREDENCIAL_GEMINI_ASLC, DATOS_APROBADOS_ASLC, IDENTIDAD_ASLC_PRODUCCION } from "@/lib/agente/aprovisionamiento";
 import { checkoutOpcionesSchema, type CheckoutOpciones, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
+import { MARCADORES_PERMITIDOS, plantillaValida } from "@/lib/agente/textos-cliente";
+import type { ModuloId } from "@/lib/tenant-modulos";
 
 // ---------------------------------------------------------------------------
 // El aviso obligatorio: EXACTO
@@ -71,8 +75,8 @@ export const DECISIONES_ASLC = Object.freeze({
 
 /**
  * Textos al cliente PROPUESTOS (no son del negocio). Sin ninguno de los opcionales el sistema usa sus mensajes neutros de siempre, por eso NO se
- * configuran los de aceptado / rechazado / cancelado (solo saldrían con el módulo notificaciones_pedidos, que mandaría también avisos genéricos de
- * otro negocio) ni los de envíos sin cobertura / no verificable / error (rige el traspaso y el mensaje neutro).
+ * configuran los de envíos sin cobertura / no verificable / error (rige el traspaso y el mensaje neutro). Los de aceptado / rechazado / cancelado (Fase 3B.9E)
+ * SÍ se proponen: salen con el módulo avisos_decision_pedidos, que NO enciende los avisos genéricos de otro negocio (notificaciones_pedidos sigue apagado).
  */
 export const TEXTOS_ASLC = Object.freeze({
   /** Respuesta ÚNICA al "sí" del cliente tras el aviso (el pedido ya quedó con una persona; el "sí" no confirma nada). */
@@ -91,6 +95,15 @@ export const TEXTOS_ASLC = Object.freeze({
   bogotaAntes: "Envío gratis. Tu pedido, hecho antes de las 11:30 a. m., puede tener entrega el mismo día.",
   bogotaDespues: "Envío gratis. Como tu pedido se hace después de las 11:30 a. m., el tiempo exacto de entrega depende de la ciudad y la transportadora.",
   restoTexto: "Envío gratis. Normalmente de 2 a 3 días hábiles, según la ciudad y la transportadora.",
+  /**
+   * Mensajes al cliente tras la decisión de una persona sobre su pedido (Fase 3B.9E). PROPUESTOS por DuLabs, no del negocio: sin nombres de personas, sin fechas,
+   * despacho, stock ni alternativas prometidas y sin {motivo} (lo escribe el equipo para el equipo y no siempre existe: con {motivo} y sin motivo no se envía
+   * nada). Solo repiten lo que el negocio ya dijo (pago contraentrega y tener el dinero disponible). Si el negocio aprueba otros, van en textos-aprobados.json
+   * (aceptado / rechazado / cancelado) y tienen prioridad. Solo salen con el módulo avisos_decision_pedidos y dentro de la ventana de 24 h de WhatsApp.
+   */
+  avisoAceptado: "¡Buenas noticias! 🎉 Tu pedido {pedido} fue aceptado. Recuerda que el pago es contraentrega: ten el dinero disponible cuando lo recibas. Si tienes alguna duda, escríbenos por este mismo chat.",
+  avisoRechazado: "Hola 👋 Lamentamos informarte que tu pedido {pedido} no pudo ser aceptado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos.",
+  avisoCancelado: "Hola 👋 Tu pedido {pedido} fue cancelado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos.",
 });
 
 /**
@@ -140,11 +153,34 @@ export interface TextosAprobadosAslc {
   ubicacion: string;
   /** Respuesta del negocio a un cliente que desconfía o pregunta si es una estafa. */
   desconfianza: string;
+  /** Opcionales (Fase 3B.9E): si el negocio aprueba sus propios mensajes de decisión, van aquí y tienen prioridad sobre la propuesta de TEXTOS_ASLC. */
+  aceptado?: string | null;
+  rechazado?: string | null;
+  cancelado?: string | null;
+}
+
+/** Lanza si un mensaje de decisión aprobado (opcional) no es una plantilla válida: texto, sin espacios en los bordes, ≤ 500 caracteres y solo con {pedido} (y {motivo} en rechazo y cancelación). */
+function verificarTextosDeDecision(t: Pick<TextosAprobadosAslc, "aceptado" | "rechazado" | "cancelado">): void {
+  for (const k of ["aceptado", "rechazado", "cancelado"] as const) {
+    const v = t[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== "string" || v.trim().length === 0 || v !== v.trim() || v.length > 500 || !plantillaValida(v, MARCADORES_PERMITIDOS[k])) {
+      throw new Error("textos-aprobados.json: '" + k + "' debe ser un texto de hasta 500 caracteres, sin espacios en los bordes y solo con los marcadores permitidos");
+    }
+  }
+}
+
+/** Lo que el negocio aprobó para las decisiones (solo las claves con texto): el resto lo cubre la propuesta de TEXTOS_ASLC. */
+export function decisionDe(t: Pick<TextosAprobadosAslc, "aceptado" | "rechazado" | "cancelado">): { aceptado?: string; rechazado?: string; cancelado?: string } {
+  const r: { aceptado?: string; rechazado?: string; cancelado?: string } = {};
+  for (const k of ["aceptado", "rechazado", "cancelado"] as const) if (typeof t[k] === "string") r[k] = t[k] as string;
+  return r;
 }
 
 /** Lanza si falta alguno de los textos aprobados, está vacío o trae espacios en los bordes; el aviso se verifica byte a byte. */
 export function verificarTextosAprobados(t: TextosAprobadosAslc): void {
   verificarAviso(t.aviso);
+  verificarTextosDeDecision(t);
   for (const k of ["tras_aviso_confirma", "ubicacion", "desconfianza"] as const) {
     const v = t[k];
     if (typeof v !== "string" || v.trim().length === 0 || v !== v.trim()) throw new Error(`textos-aprobados.json: '${k}' debe ser un texto no vacío y sin espacios en los bordes`);
@@ -163,6 +199,8 @@ export interface EntradaConfiguracion {
   /** Id (dulabs_miembros_equipo.id) de la persona responsable: un miembro ACTIVO de ASLC con rol admin o agente. */
   miembroId: number;
   respaldoMiembroId?: number | null;
+  /** Mensajes de decisión aprobados por el negocio (de textos-aprobados.json); sin ellos, la propuesta de TEXTOS_ASLC. */
+  decision?: { aceptado?: string; rechazado?: string; cancelado?: string };
 }
 
 /** checkout_opciones COMPLETO (sin el candado activacion_pendiente), validado con el esquema del runtime. */
@@ -187,7 +225,13 @@ export function configuracionCompletaAslc(e: EntradaConfiguracion): CheckoutOpci
       modo: "aceptacion_humana",
       validacion_resumen: "boton_datos_correctos",
       mostrar_numero_pedido: d.mostrarNumeroPedido,
-      textos: { aviso: e.aviso, tras_aviso_confirma: e.trasAvisoConfirma ?? t.trasAvisoConfirma },
+      textos: {
+        aviso: e.aviso,
+        tras_aviso_confirma: e.trasAvisoConfirma ?? t.trasAvisoConfirma,
+        aceptado: e.decision?.aceptado ?? t.avisoAceptado,
+        rechazado: e.decision?.rechazado ?? t.avisoRechazado,
+        cancelado: e.decision?.cancelado ?? t.avisoCancelado,
+      },
       responsable: { miembro_id: e.miembroId, respaldo_miembro_id: e.respaldoMiembroId ?? null, canales: ["panel"] },
       aceptan: d.aceptan,
       reserva: { tipo: "ttl", minutos: d.reservaMinutos },
@@ -329,7 +373,7 @@ const DECLARE_ACTIVACION = `  v_tenant uuid;
 /** 03 — configuración completa, SIN activar. */
 export function generarSqlConfiguracionCompleta(textos: TextosAprobadosAslc): string {
   verificarTextosAprobados(textos);
-  const config = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1 });
+  const config = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1, decision: decisionDe(textos) });
   const jsonConfig = JSON.stringify(config, null, 2);
   const jsonNegocio = JSON.stringify(negocioCompletoAslc(textos), null, 2);
   if (jsonConfig.includes("$cfg$") || jsonNegocio.includes("$neg$")) throw new Error("el JSON contiene un delimitador reservado del script");
@@ -632,7 +676,7 @@ export function generarSqlAjustarComportamiento(textos: TextosAprobadosAslc): st
   const jsonNegocio = JSON.stringify(negocioCompletoAslc(textos), null, 2);
   const transportadora = DATOS_APROBADOS_ASLC.transportadoraHabitual;
   // Lo que el 03 de hoy carga es la verdad: si algo no coincide, no se genera un script que deje la fila distinta.
-  const vigente = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1 });
+  const vigente = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1, decision: decisionDe(textos) });
   const trasAvisoVigente = vigente.cierre?.modo === "aceptacion_humana" ? vigente.cierre.textos.tras_aviso_confirma : undefined;
   if (vigente.oficina?.transportadora !== transportadora || vigente.envios?.transportadora_habitual !== transportadora || trasAvisoVigente !== textos.tras_aviso_confirma || !vigente.envios?.tiempos) {
     throw new Error("el ajuste no coincide con la configuración completa vigente");
@@ -706,6 +750,174 @@ end $$;
 `;
 }
 
+/** Módulo que enciende SOLO el mensaje al cliente tras aceptar / rechazar / cancelar (no los avisos genéricos de cada etapa del pedido). */
+export const MODULO_AVISOS_DECISION: ModuloId = "avisos_decision_pedidos";
+
+/**
+ * 12 — avisos al cliente tras la decisión de una persona (aceptar, rechazar, cancelar un pedido pendiente de aceptación). Con la configuración completa ya
+ * cargada: guarda los tres textos en checkout_opciones.cierre.textos y enciende el módulo avisos_decision_pedidos. NO enciende notificaciones_pedidos (que
+ * mandaría también los avisos genéricos de cada etapa del pedido, con plantillas de la plataforma) y exige que siga apagado. Se puede repetir.
+ */
+export function generarSqlAvisosDeDecision(textos: TextosAprobadosAslc): string {
+  verificarTextosAprobados(textos);
+  const vigente = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1, decision: decisionDe(textos) });
+  const cierre = vigente.cierre;
+  if (cierre?.modo !== "aceptacion_humana" || !cierre.textos.aceptado || !cierre.textos.rechazado || !cierre.textos.cancelado) throw new Error("la configuración vigente no trae los tres mensajes de decisión");
+  const { aceptado, rechazado, cancelado } = cierre.textos;
+  if (aceptado.includes("$ac$") || rechazado.includes("$re$") || cancelado.includes("$ca$")) throw new Error("un texto contiene un delimitador reservado del script");
+  return `${ENCABEZADO_COMUN("AVISOS AL CLIENTE TRAS ACEPTAR, RECHAZAR O CANCELAR UN PEDIDO (AQUÍ SÍ LO COMPRAS)")}
+--
+-- TEXTOS PROPUESTOS por DuLabs (no son del negocio): léelos abajo antes de correr. Si el negocio prefiere otros, se ponen en textos-aprobados.json
+-- (aceptado / rechazado / cancelado) y este archivo se regenera. Solo admiten el marcador {pedido} (el número público del pedido): ni datos del cliente ni
+-- un motivo escrito por el equipo. No prometen fechas, despacho, stock ni alternativas.
+--
+-- QUÉ HACE (todo o nada, con la fila ya habilitada o no):
+--   1. Guarda los tres textos en checkout_opciones.cierre.textos (aceptado, rechazado, cancelado) de la fila del agente de ASLC.
+--   2. Enciende el módulo avisos_decision_pedidos de ASLC: SOLO el mensaje tras una decisión de la persona del equipo, dentro de la ventana de 24 h de
+--      WhatsApp, una sola vez por pedido y decisión, con el número y el token de ASLC. No cambia el estado de ningún pedido.
+-- QUÉ NO HACE: no enciende notificaciones_pedidos (avisos genéricos de cada etapa con plantillas de la plataforma: sigue apagado y este script se niega a
+--   correr si alguien lo encendió), no toca ia_pausada, ia_restringida_a, habilitado, el aviso obligatorio, la persona responsable ni otros negocios.
+-- Se puede repetir sin efectos nuevos.
+--
+-- REVERSA: apagar SOLO el módulo (los textos quedan guardados y sin uso):
+--   update public.dulabs_tenant_modulos set habilitado = false, updated_at = now()
+--    where id_tenant = '${TENANT}'::uuid and modulo = '${MODULO_AVISOS_DECISION}';
+
+do $$
+declare
+  v_tenant uuid;
+  v_phone text;
+  v_filas integer;
+  v_aceptado text := $ac$${aceptado}$ac$;
+  v_rechazado text := $re$${rechazado}$re$;
+  v_cancelado text := $ca$${cancelado}$ca$;
+begin
+${SQL_PASO_IDENTIDAD}
+
+  -- La fila del agente: UNA, con la credencial propia y la configuración completa cargada (sin candado, con el cierre por aceptación humana).
+  select count(*) into v_filas from public.dulabs_agente_runtime_config
+   where ${SQL_CONDICION_FILA_DE_PARTIDA} and checkout_opciones -> 'activacion_pendiente' is null and coalesce(checkout_opciones #>> '{cierre,modo}', '') = 'aceptacion_humana';
+  if v_filas <> 1 then
+    raise exception 'se esperaba la fila del agente de ASLC con la configuración completa cargada (sin candado y con el cierre por aceptación humana): corre antes 03_configurar_completo_sin_activar.sql; hay %', v_filas;
+  end if;
+
+  -- El aviso obligatorio sigue EXACTO (este script no lo toca; se comprueba por si alguien lo cambió).
+  if not exists (select 1 from public.dulabs_agente_runtime_config where ${SQL_CONDICION_FILA_DE_PARTIDA} and encode(sha256(convert_to(checkout_opciones #>> '{cierre,textos,aviso}', 'UTF8')), 'hex') = '${AVISO_OFICIAL_SHA256}') then
+    raise exception 'el aviso obligatorio guardado NO es el aprobado: no se ajusta nada';
+  end if;
+
+  -- notificaciones_pedidos debe seguir APAGADO: encendido mandaría también los avisos genéricos de cada etapa del pedido (plantillas de la plataforma).
+  if exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = 'notificaciones_pedidos' and habilitado) then
+    raise exception 'el módulo notificaciones_pedidos está encendido para ASLC: apágalo antes (mandaría avisos genéricos de otro negocio)';
+  end if;
+
+  update public.dulabs_agente_runtime_config
+     set checkout_opciones = jsonb_set(jsonb_set(jsonb_set(checkout_opciones,
+           '{cierre,textos,aceptado}', to_jsonb(v_aceptado)),
+           '{cierre,textos,rechazado}', to_jsonb(v_rechazado)),
+           '{cierre,textos,cancelado}', to_jsonb(v_cancelado)),
+         updated_at = now()
+   where ${SQL_CONDICION_FILA_DE_PARTIDA};
+  get diagnostics v_filas = row_count;
+  if v_filas <> 1 then
+    raise exception 'no se pudo actualizar exactamente UNA fila del agente (%): abortando', v_filas;
+  end if;
+
+  insert into public.dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+  values (v_tenant, '${MODULO_AVISOS_DECISION}', true)
+  on conflict (id_tenant, modulo) do update set habilitado = true, updated_at = now();
+
+  -- Comprobación final dentro de la misma sentencia.
+  if not exists (
+    select 1 from public.dulabs_agente_runtime_config
+     where ${SQL_CONDICION_FILA_DE_PARTIDA}
+       and checkout_opciones #>> '{cierre,textos,aceptado}' = v_aceptado
+       and checkout_opciones #>> '{cierre,textos,rechazado}' = v_rechazado
+       and checkout_opciones #>> '{cierre,textos,cancelado}' = v_cancelado
+       and checkout_opciones -> 'activacion_pendiente' is null
+  ) then
+    raise exception 'la fila del agente de ASLC no quedó como se esperaba: abortando';
+  end if;
+  if not exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = '${MODULO_AVISOS_DECISION}' and habilitado) then
+    raise exception 'el módulo ${MODULO_AVISOS_DECISION} no quedó encendido: abortando';
+  end if;
+  if exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = 'notificaciones_pedidos' and habilitado) then
+    raise exception 'notificaciones_pedidos quedó encendido: abortando';
+  end if;
+end $$;
+`;
+}
+
+/**
+ * 13 — además del panel, un correo a la persona responsable cuando un pedido espera su aceptación (cierre.responsable.canales = ["panel", "correo"]).
+ * El correo solo lleva el número público del pedido y el enlace al panel (nada del cliente). EXIGE que la persona responsable tenga un correo: sin él el
+ * runtime marcaría la configuración como inválida y el agente callaría, así que el script se niega a cambiar nada. Se puede repetir; reversa en el encabezado.
+ */
+export function generarSqlAvisoPorCorreo(): string {
+  return `${ENCABEZADO_COMUN("AVISO POR CORREO A LA PERSONA RESPONSABLE DE AQUÍ SÍ LO COMPRAS")}
+--
+-- Cuando el cliente confirma su pedido, la conversación se le asigna a la persona responsable y el pedido aparece en Pedidos → Por aceptar (panel). Este script
+-- agrega un correo a esa persona (solo el número de pedido y el enlace al panel; ningún dato del cliente), para que no dependa de estar mirando el panel.
+--
+-- QUÉ HACE: cambia SOLO checkout_opciones.cierre.responsable.canales de la fila del agente de ASLC a ["panel", "correo"].
+-- GUARDAS (todo o nada): la fila con la configuración completa cargada; la persona responsable ACTIVA, con rol admin o agente y CON un correo válido
+--   (sin correo la configuración quedaría inválida y el agente callaría: por eso se niega).
+-- QUÉ NO HACE: no toca ia_pausada, ia_restringida_a, habilitado, módulos, textos ni otros negocios, y no envía nada por sí mismo. El correo sale por Resend
+--   (RESEND_API_KEY ya existe en producción); sin la clave el correo simplemente no sale y el panel sigue igual. Remitente opcional: PEDIDOS_EMAIL_FROM.
+-- Se puede repetir sin efectos nuevos.
+--
+-- REVERSA (volver a solo el panel):
+--   update public.dulabs_agente_runtime_config
+--      set checkout_opciones = jsonb_set(checkout_opciones, '{cierre,responsable,canales}', '["panel"]'::jsonb), updated_at = now()
+--    where ${SQL_CONDICION_FILA_DE_PARTIDA.replace(/v_phone/g, `'${PHONE}'`).replace(/v_tenant/g, `'${TENANT}'::uuid`)};
+
+do $$
+declare
+  v_tenant uuid;
+  v_phone text;
+  v_filas integer;
+  v_opciones jsonb;
+  v_responsable bigint;
+begin
+${SQL_PASO_IDENTIDAD}
+
+  select checkout_opciones into v_opciones from public.dulabs_agente_runtime_config
+   where ${SQL_CONDICION_FILA_DE_PARTIDA} and checkout_opciones -> 'activacion_pendiente' is null and coalesce(checkout_opciones #>> '{cierre,modo}', '') = 'aceptacion_humana';
+  if v_opciones is null then
+    raise exception 'se esperaba la fila del agente de ASLC con la configuración completa cargada (sin candado y con el cierre por aceptación humana): corre antes 03_configurar_completo_sin_activar.sql';
+  end if;
+
+  -- La persona responsable: ACTIVA, con rol que decide y CON un correo válido (sin correo, el runtime marcaría la configuración como inválida y el agente callaría).
+  v_responsable := (v_opciones #>> '{cierre,responsable,miembro_id}')::bigint;
+  if not exists (
+    select 1 from public.dulabs_miembros_equipo
+     where id = v_responsable and tenant_id = v_tenant and estado = 'activo' and ${ROLES_QUE_DECIDEN}
+       and btrim(coalesce(email, '')) ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$'
+  ) then
+    raise exception 'la persona responsable configurada (%) no es un miembro ACTIVO de ASLC con rol admin o agente y un correo válido: no se cambia nada', v_responsable;
+  end if;
+
+  update public.dulabs_agente_runtime_config
+     set checkout_opciones = jsonb_set(checkout_opciones, '{cierre,responsable,canales}', '["panel","correo"]'::jsonb), updated_at = now()
+   where ${SQL_CONDICION_FILA_DE_PARTIDA};
+  get diagnostics v_filas = row_count;
+  if v_filas <> 1 then
+    raise exception 'no se pudo actualizar exactamente UNA fila del agente (%): abortando', v_filas;
+  end if;
+
+  -- Comprobación final dentro de la misma sentencia.
+  if not exists (
+    select 1 from public.dulabs_agente_runtime_config
+     where ${SQL_CONDICION_FILA_DE_PARTIDA}
+       and checkout_opciones #> '{cierre,responsable,canales}' = '["panel","correo"]'::jsonb
+       and checkout_opciones -> 'activacion_pendiente' is null
+  ) then
+    raise exception 'la fila del agente de ASLC no quedó como se esperaba: abortando';
+  end if;
+end $$;
+`;
+}
+
 /** Los archivos que genera este módulo (nombre -> contenido). Los textos aprobados vienen de textos-aprobados.json (el código no trae ninguno). */
 export function archivosDeActivacion(textos: TextosAprobadosAslc): Readonly<Record<string, string>> {
   return Object.freeze({
@@ -717,6 +929,8 @@ export function archivosDeActivacion(textos: TextosAprobadosAslc): Readonly<Reco
     "09_cambiar_responsable.sql": generarSqlCambiarResponsable(),
     "10_reanudar_tras_freno.sql": generarSqlReanudarTrasFreno(),
     "11_ajustar_comportamiento.sql": generarSqlAjustarComportamiento(textos),
+    "12_avisos_de_decision.sql": generarSqlAvisosDeDecision(textos),
+    "13_aviso_por_correo.sql": generarSqlAvisoPorCorreo(),
   });
 }
 

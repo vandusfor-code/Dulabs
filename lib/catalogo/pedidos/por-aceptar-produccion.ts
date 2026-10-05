@@ -7,9 +7,9 @@
  * Pedidos). El negocio sale de la sesión; la ruta nunca lo recibe del cliente.
  *
  * Fase 3B.8: el gancho alDecidir conecta cada decisión aplicada con lib/catalogo/pedidos/mensajes-decision.ts, que SOLO le escribe
- * al cliente si el negocio configuró el texto de esa decisión, tiene activo el módulo "notificaciones_pedidos", el número es suyo
- * y la ventana de 24 h está abierta; y lo hace una sola vez por (pedido, decisión). Hoy nada de eso se cumple para ningún negocio
- * (el cierre con aceptación humana sigue apagado), así que en producción no sale ningún mensaje.
+ * al cliente si el negocio configuró el texto de esa decisión, tiene activo el módulo "avisos_decision_pedidos" (Fase 3B.9E: solo estos
+ * mensajes) o "notificaciones_pedidos" (como siempre), el número es suyo y la ventana de 24 h está abierta; y lo hace una sola vez por
+ * (pedido, decisión). Un negocio sin ninguno de esos módulos no recibe ningún mensaje.
  */
 import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";

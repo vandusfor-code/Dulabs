@@ -32,7 +32,9 @@ import { OrderError, createOrderEngine, type CheckoutData, type OrderEngine } fr
 import { createMemoryOrdersRepository } from "@/lib/catalogo/pedidos/repositorio";
 import { memoryOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
 import type { AcceptancePolicy, Order } from "@/lib/catalogo/pedidos/contrato";
-import { decidirPorAceptar, detallePorAceptar, listarPorAceptar, type PedidoPorAceptar, type PorAceptarCtx } from "@/lib/catalogo/pedidos/por-aceptar";
+import { decidirPorAceptar, detallePorAceptar, listarPorAceptar, type DecisionPorAceptar, type PedidoPorAceptar, type PorAceptarCtx } from "@/lib/catalogo/pedidos/por-aceptar";
+import { createMemoryNotificacionesStore, type EnviadorWhatsapp } from "@/lib/catalogo/pedidos/notificaciones";
+import { aMensajeAlCliente, enviarMensajeDecision } from "@/lib/catalogo/pedidos/mensajes-decision";
 import type { PanelFuentes } from "@/lib/catalogo/pedidos/panel";
 import { createSimulatedProvider, type SimulatedStep } from "@/lib/ia-proveedores/simulado";
 import { createMemoryAgentConfigStore, parseAgentConfig, type AgentConfigRow, type AgentRuntimeConfig } from "@/lib/agente/config";
@@ -45,7 +47,7 @@ import type { HistoryRow } from "@/lib/agente/contexto";
 import { ACEPTACION_BUTTONS } from "@/lib/agente/checkout";
 import { CHECKOUT_OPCIONES_LEGADO, FUNCIONES_3B_IMPLEMENTADAS, FUNCIONES_FASE_3B, politicaDeAceptacion, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
 import { CREDENCIAL_GEMINI_ASLC, HERRAMIENTAS_ASLC } from "@/lib/agente/aprovisionamiento";
-import { DECISIONES_ASLC, configuracionCompletaAslc, negocioCompletoAslc } from "@/lib/agente/activacion-aslc";
+import { DECISIONES_ASLC, TEXTOS_ASLC, configuracionCompletaAslc, negocioCompletoAslc } from "@/lib/agente/activacion-aslc";
 import { createMemoryMiembrosStore, type MiembroEquipo } from "@/lib/agente/responsable";
 import {
   canalPanel,
@@ -1765,10 +1767,10 @@ describe("3B.9D · la configuración REAL de ASLC (la que carga el 03) funciona 
     assert.equal(await engine.hasPurchase({ tenantId: A.tenantId, contact: ANA }), false, "un pedido rechazado no es una venta");
   });
 
-  it("el 'sí' del cliente tras el aviso recibe UNA respuesta fija (la de ASLC) y NO cambia el pedido; si una persona ya escribió (caso 15) la IA no responde; sin texto de decisión no se escribe nada", async () => {
+  it("el 'sí' del cliente tras el aviso recibe UNA respuesta fija (la de ASLC) y NO cambia el pedido; si una persona ya escribió (caso 15) la IA no responde", async () => {
     const { policy, aceptacion } = instalar();
     assert.ok(aceptacion.textoTrasAviso.startsWith("¡Gracias por confirmar!"));
-    assert.deepEqual(aceptacion.textosDecision, { aceptado: null, rechazado: null, cancelado: null }, "sin texto configurado, aceptar / rechazar / cancelar no le escriben nada al cliente");
+    assert.deepEqual(aceptacion.textosDecision, { aceptado: TEXTOS_ASLC.avisoAceptado, rechazado: TEXTOS_ASLC.avisoRechazado, cancelado: TEXTOS_ASLC.avisoCancelado }, "los tres mensajes de decisión (propuesta de la Fase 3B.9E) están configurados");
     const { orden } = await pendiente({ policy });
     const enviados: string[] = [];
     const deps = (personaEscribio: boolean): RespuestaAvisoDeps => ({
@@ -1796,5 +1798,42 @@ describe("3B.9D · la configuración REAL de ASLC (la que carga el 03) funciona 
     assert.deepEqual(await atenderRespuestaTrasAviso({ tenantId: A.tenantId, phoneNumberId: otro.phoneNumberId, waId: otro.waId, text: "Sí" }, deps(true)), { handled: true, accion: "registrada_sin_respuesta" });
     assert.equal(enviados.length, 0, "la IA no responde si una persona ya escribió");
     assert.ok(pedidos.orders.find((x) => x.id === o2.id)?.acceptance?.customerReplyAt, "el 'sí' queda registrado para la responsable");
+  });
+
+  it("3B.9E: aceptar / rechazar / cancelar le escriben al cliente el texto de ASLC con su número de pedido, sin el motivo del equipo, y una sola vez por decisión", async () => {
+    const { policy } = instalar();
+    const almacen = createMemoryNotificacionesStore({ habilitados: [A.tenantId], canales: { [PN_A]: { tenantId: A.tenantId, phoneNumberId: PN_A, token: "token-de-prueba", nombreNegocio: "Tienda de prueba" } }, now: () => reloj });
+    const enviados: string[] = [];
+    const enviador: EnviadorWhatsapp = {
+      enviar: async (_canal, _telefono, texto) => {
+        enviados.push(texto);
+        return { messageId: `wamid.${enviados.length}` };
+      },
+      registrar: async () => {},
+    };
+    const alDecidir = async (d: DecisionPorAceptar) => aMensajeAlCliente(await enviarMensajeDecision({ engine, config: lector, notificador: { store: almacen.store, enviador, now: () => reloj, log: () => {} }, log: () => {} }, d));
+    const contactos = [ANA, { phoneNumberId: PN_A, waId: "573001110007" }, { phoneNumberId: PN_A, waId: "573001110008" }];
+    // Los tres clientes escribieron hace 5 minutos (la ventana de 24 h de WhatsApp está abierta).
+    for (const c of contactos) almacen.entrante(PN_A, c.waId, new Date(reloj - 5 * MIN).toISOString());
+    const aceptable = await pendiente({ policy, contact: contactos[0] });
+    const rechazable = await pendiente({ policy, contact: contactos[1] });
+    const cancelable = await pendiente({ policy, contact: contactos[2] });
+    const motivo = "Sin stock del color pedido";
+    const a = await decidir(ctxA(undefined, { alDecidir }), aceptable.orden.orderId, "aceptar");
+    const r = await decidir(ctxA(undefined, { alDecidir }), rechazable.orden.orderId, "rechazar", motivo);
+    const c = await decidir(ctxA(undefined, { alDecidir }), cancelable.orden.orderId, "cancelar", motivo);
+    assert.deepEqual([a.status, r.status, c.status], [200, 200, 200]);
+    assert.deepEqual(enviados, [
+      TEXTOS_ASLC.avisoAceptado.replace("{pedido}", aceptable.orden.orderId),
+      TEXTOS_ASLC.avisoRechazado.replace("{pedido}", rechazable.orden.orderId),
+      TEXTOS_ASLC.avisoCancelado.replace("{pedido}", cancelable.orden.orderId),
+    ]);
+    assert.ok(!enviados.join("\n").includes(motivo), "el motivo que escribe el equipo es para el equipo: no sale al cliente");
+    assert.equal(pedidos.orders.find((o) => o.id === aceptable.orden.id)?.status, "confirmed");
+    assert.equal(pedidos.orders.find((o) => o.id === rechazable.orden.id)?.status, "rejected");
+    assert.equal(pedidos.orders.find((o) => o.id === cancelable.orden.id)?.status, "cancelled");
+    // Decisión repetida: el cliente NO recibe un segundo mensaje.
+    await decidir(ctxA(undefined, { alDecidir }), aceptable.orden.orderId, "aceptar");
+    assert.equal(enviados.length, 3, "una sola vez por pedido y decisión");
   });
 });

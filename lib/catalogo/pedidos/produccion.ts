@@ -17,6 +17,7 @@ import { cifrarSecreto } from "@/lib/crypto";
 import { createSupabaseAgentConfigStore } from "@/lib/agente/config";
 import { canalPanel, createAcceptanceRouter, createSupabaseAsignacionesStore, crearLectorConfigAceptacion } from "@/lib/agente/aceptacion-humana";
 import { createSupabaseMiembrosStore } from "@/lib/agente/responsable";
+import { crearCanalCorreo } from "@/lib/agente/aviso-responsable-correo";
 
 /** Igual que transferir_soporte del Flow: la IA calla 24 h en ESE chat (la asesora la devuelve antes desde el Inbox). */
 const PAUSA_HANDOFF_MS = 24 * 60 * 60 * 1000;
@@ -65,7 +66,8 @@ export function productionOrderEngine(supabase: SupabaseClient): OrderEngine | n
       config: crearLectorConfigAceptacion(createSupabaseAgentConfigStore(supabase)),
       miembros: createSupabaseMiembrosStore(supabase),
       asignaciones: createSupabaseAsignacionesStore(supabase),
-      notificador: { canales: { panel: canalPanel } },
+      // Fase 3B.9E: el correo solo se usa si el negocio lo configuró (cierre.responsable.canales incluye "correo"); sin eso, solo el panel, como siempre.
+      notificador: { canales: { panel: canalPanel, correo: crearCanalCorreo() } },
       handoff,
     }),
   });

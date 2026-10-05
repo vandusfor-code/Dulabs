@@ -11,7 +11,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // "clientes_joyeria" (Bloque 33): Dashboard → Clientes del catálogo (un cliente por contacto, con sus pedidos y nota).
 // "pedidos_por_aceptar" (Fase 3B.7): Dashboard → Pedidos → Por aceptar (pedidos que una PERSONA del negocio debe aceptar o rechazar).
 //   Se habilita aparte de "pedidos" (negocios con aceptación humana): sin esta fila el menú, la página y la API no existen para el negocio.
-export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria", "pedidos_por_aceptar"] as const;
+// "avisos_decision_pedidos" (Fase 3B.9E): SOLO el mensaje al cliente tras aceptar / rechazar / cancelar un pedido pendiente de aceptación, con el texto que
+//   configuró el propio negocio (checkout_opciones.cierre.textos). No enciende los avisos genéricos de cada etapa del pedido ("notificaciones_pedidos"),
+//   que usan plantillas de la plataforma y no son de ningún negocio en particular. No tiene menú.
+export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria", "pedidos_por_aceptar", "avisos_decision_pedidos"] as const;
 export type ModuloId = (typeof MODULOS)[number];
 
 export function esModuloId(valor: unknown): valor is ModuloId {

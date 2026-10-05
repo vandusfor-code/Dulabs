@@ -505,6 +505,8 @@ components/dashboard/pedidos/por-aceptar.dom.test.tsx
 lib/agente/agente-textos-3b8.test.ts
 lib/catalogo/pedidos/mensajes-decision-b38.test.ts
 lib/agente/aprovisionamiento-aslc.test.ts
+lib/catalogo/pedidos/avisos-decision-modulo.test.ts
+lib/agente/aviso-responsable-correo.test.ts
 lib/agente/activacion-aslc.test.ts
 app/api/dashboard/conversaciones/atencion-humana.test.ts
 lib/publibordados/observador/observador.test.ts

@@ -18,6 +18,7 @@ import {
   AVISO_OFICIAL_BYTES,
   AVISO_OFICIAL_SHA256,
   DECISIONES_ASLC,
+  MODULO_AVISOS_DECISION,
   ESTILO_ASLC,
   ETAPAS_ASLC,
   POLITICAS_ASLC,
@@ -26,9 +27,12 @@ import {
   archivosDeActivacion,
   comprobacionesDeEtapa,
   configuracionCompletaAslc,
+  decisionDe,
   generarSqlAbrirAlPublico,
   generarSqlActivacionControlada,
   generarSqlAjustarComportamiento,
+  generarSqlAvisoPorCorreo,
+  generarSqlAvisosDeDecision,
   generarSqlConfiguracionCompleta,
   generarSqlFrenoDeEmergencia,
   generarSqlReanudarTrasFreno,
@@ -44,6 +48,7 @@ import {
 import { FUNCIONES_3B_IMPLEMENTADAS, FUNCIONES_FASE_3B, funcionesNoDisponibles, politicaDeAceptacion, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
 import { HANDOFF_MOTIVES } from "@/lib/agente/intencion";
 import { checkShippingClaims } from "@/lib/agente/envios-anclaje";
+import { marcadoresDe, renderizarTextoDecision } from "@/lib/agente/textos-cliente";
 import { resolverEnvio } from "@/lib/agente/envios";
 
 const leer = (ruta: string) => readFileSync(join(process.cwd(), ruta), "utf8").replace(/\r\n/g, "\n");
@@ -151,15 +156,16 @@ describe("3B.9D · la configuración completa de ASLC", () => {
     }
   });
 
-  it("NO usa los bloques que el runtime no implementa (handoff, textos) ni textos de decisión / envíos: la única compuerta es la del cierre, y está ABIERTA", () => {
+  it("NO usa los bloques que el runtime no implementa (handoff, textos) ni textos de envíos: la única compuerta es la del cierre, y está ABIERTA", () => {
     const c = config();
     assert.equal(c.handoff, undefined);
     assert.equal(c.textos, undefined);
     assert.equal(c.envios?.textos, undefined);
     if (c.cierre?.modo === "aceptacion_humana") {
-      assert.equal(c.cierre.textos.aceptado, undefined);
-      assert.equal(c.cierre.textos.rechazado, undefined);
-      assert.equal(c.cierre.textos.cancelado, undefined);
+      // Fase 3B.9E: los tres mensajes de decisión SÍ se configuran (propuesta); solo salen con el módulo avisos_decision_pedidos.
+      assert.equal(c.cierre.textos.aceptado, TEXTOS_ASLC.avisoAceptado);
+      assert.equal(c.cierre.textos.rechazado, TEXTOS_ASLC.avisoRechazado);
+      assert.equal(c.cierre.textos.cancelado, TEXTOS_ASLC.avisoCancelado);
     }
     assert.deepEqual(funcionesNoDisponibles(c), [], "con las compuertas REALES nada queda bloqueado");
     assert.deepEqual(funcionesNoDisponibles(c, CERRADA), ["cierre_aceptacion_humana"], "con la compuerta de antes, el cierre era lo único que la bloqueaba");
@@ -341,7 +347,7 @@ describe("3B.9D · la fila que dejan 02 + 03 + 05, leída por el parser REAL del
     assert.equal(aceptacion.textoTrasAviso, TEXTOS.tras_aviso_confirma);
     assert.equal(aceptacion.siYaRespondioPersona, "no_responder");
     assert.equal(aceptacion.notaEnvio, TEXTOS_ASLC.notaEnvioPanel);
-    assert.deepEqual(aceptacion.textosDecision, { aceptado: null, rechazado: null, cancelado: null }, "sin texto configurado no se le escribe nada al cliente");
+    assert.deepEqual(aceptacion.textosDecision, { aceptado: TEXTOS_ASLC.avisoAceptado, rechazado: TEXTOS_ASLC.avisoRechazado, cancelado: TEXTOS_ASLC.avisoCancelado }, "los tres mensajes de decisión (propuesta) quedan configurados; solo salen con el módulo avisos_decision_pedidos");
   });
 
   it("con la compuerta de ANTES (cerrada) la misma fila sería inválida y callaría; y con el candado del 02 también (nunca otro bot)", () => {
@@ -372,14 +378,14 @@ describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => 
   const repo = (nombre: string) => leer(`supabase/provisioning/aslc/${nombre}`);
 
   it("cada archivo del repositorio es EXACTAMENTE lo que genera el código (nada escrito a mano que se desvíe)", () => {
-    assert.deepEqual(Object.keys(archivos), ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "08_ver_equipo_solo_lectura.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql"]);
+    assert.deepEqual(Object.keys(archivos), ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "08_ver_equipo_solo_lectura.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql"]);
     for (const [nombre, sql] of Object.entries(archivos)) assert.equal(repo(nombre), sql, nombre);
     assert.equal(repo("02_aprovisionar_sin_activar.sql"), generarSqlAprovisionamiento(), "el 02 (YA aplicado en producción) no cambió");
   });
 
   it("todos identifican a ASLC con la MISMA identidad que el 02 (tenant + phone_number_id + nombre; nunca telefono_negocio)", () => {
     assert.ok(generarSqlAprovisionamiento().includes(SQL_IDENTIDAD));
-    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql"]) {
+    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql"]) {
       assert.ok(archivos[nombre].includes(SQL_IDENTIDAD), nombre);
     }
     assert.ok(archivos["08_ver_equipo_solo_lectura.sql"].includes(`tenant_id::text = '${IDENTIDAD_ASLC_PRODUCCION.idTenant}'`));
@@ -458,7 +464,7 @@ describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => 
   });
 
   it("cada script con guardas es UNA sola sentencia (un bloque DO atómico), sin begin;/commit; explícitos que podrían dejar una transacción abierta en el editor", () => {
-    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql"]) {
+    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql"]) {
       const sql = archivos[nombre];
       assert.equal((sql.match(/^do \$\$$/gm) ?? []).length, 1, `${nombre}: un solo bloque DO`);
       assert.ok(/^end \$\$;$/m.test(sql), `${nombre}: termina el bloque`);
@@ -647,5 +653,114 @@ describe("3B.9D · verificación por etapas: el veredicto de cada etapa sale de 
     const src = leer("scripts/verificar-aslc-solo-lectura.mts");
     assert.ok(/import \{[^}]*comprobacionesDeEtapa[^}]*\} from "@\/lib\/agente\/activacion-aslc"/.test(src));
     assert.ok(!/parseAgentConfig/.test(src), "el script no duplica la lógica: la lleva la función probada");
+  });
+});
+
+// ===========================================================================
+// 6. Fase 3B.9E · avisos al cliente tras aceptar / rechazar / cancelar (módulo propio, sin los avisos genéricos de cada etapa)
+// ===========================================================================
+
+describe("3B.9E · los mensajes de decisión de ASLC y el script 12", () => {
+  const archivos = archivosDeActivacion(TEXTOS);
+  const PEDIDO = "DL-ORD-ABC234";
+  const config = () => configuracionCompletaAslc({ aviso: AVISO, trasAvisoConfirma: TEXTOS.tras_aviso_confirma, miembroId: RESPONSABLE });
+  const textosDe = (c: ReturnType<typeof config>) => {
+    assert.equal(c.cierre?.modo, "aceptacion_humana");
+    return c.cierre?.modo === "aceptacion_humana" ? c.cierre.textos : null;
+  };
+
+  it("la configuración completa trae los tres textos (propuesta de DuLabs) y el runtime los lee como textos del negocio", () => {
+    const t = textosDe(config());
+    assert.equal(t?.aceptado, TEXTOS_ASLC.avisoAceptado);
+    assert.equal(t?.rechazado, TEXTOS_ASLC.avisoRechazado);
+    assert.equal(t?.cancelado, TEXTOS_ASLC.avisoCancelado);
+    const parseada = parseAgentConfig(fila({ habilitado: true }), esperado);
+    assert.equal(parseada.kind, "ok", JSON.stringify(parseada));
+    const leida = parseada.kind === "ok" ? leerConfigAceptacion(parseada.config) : null;
+    assert.ok(leida, "la configuración de aceptación se lee");
+    assert.deepEqual(leida?.textosDecision, { aceptado: TEXTOS_ASLC.avisoAceptado, rechazado: TEXTOS_ASLC.avisoRechazado, cancelado: TEXTOS_ASLC.avisoCancelado });
+  });
+
+  it("cada texto se completa con el número de pedido, solo admite {pedido} y no promete nada ni trae datos de otro negocio, nombres ni cifras largas", () => {
+    for (const [clave, texto] of [["aceptado", TEXTOS_ASLC.avisoAceptado], ["rechazado", TEXTOS_ASLC.avisoRechazado], ["cancelado", TEXTOS_ASLC.avisoCancelado]] as const) {
+      const r = renderizarTextoDecision(clave, texto, { pedido: PEDIDO, motivo: null });
+      assert.ok(r.ok, clave);
+      if (r.ok) assert.ok(r.texto.includes(PEDIDO) && !/[{}]/.test(r.texto), clave);
+      assert.deepEqual(marcadoresDe(texto), ["pedido"], clave + ": solo {pedido} (sin {motivo}: no depende de lo que escriba el equipo)");
+      assert.ok(texto.length <= 500 && texto === texto.trim(), clave);
+      assert.doesNotMatch(texto, AJENO, clave + ": nada de otro negocio");
+      assert.doesNotMatch(texto, /Patricia|asesora/i, clave + ": ningún nombre de persona");
+      assert.doesNotMatch(texto, /\d{4,}/, clave + ": sin cifras");
+      assert.doesNotMatch(texto, /\b(hoy|ma[ñn]ana|pronto|despach|garantiz|reposici|alternativa)/i, clave + ": sin promesas de fechas, despacho, stock ni alternativas");
+    }
+    assert.match(TEXTOS_ASLC.avisoAceptado, /contraentrega/);
+  });
+
+  it("lo que aprueba el negocio (textos-aprobados.json) tiene prioridad sobre la propuesta; una plantilla inválida se rechaza", () => {
+    const propio = { aceptado: "Aceptado {pedido} (texto del negocio)", rechazado: "Rechazado {pedido}: {motivo}" };
+    const t = textosDe(configuracionCompletaAslc({ aviso: AVISO, miembroId: RESPONSABLE, decision: decisionDe({ ...propio, cancelado: null }) }));
+    assert.equal(t?.aceptado, propio.aceptado);
+    assert.equal(t?.rechazado, propio.rechazado);
+    assert.equal(t?.cancelado, TEXTOS_ASLC.avisoCancelado, "lo que no aprobó sigue con la propuesta");
+    for (const malo of ["{nombre} fue aceptado", " con espacio al inicio", "llave suelta {pedido", "x".repeat(501), ""]) {
+      assert.throws(() => verificarTextosAprobados({ ...TEXTOS, aceptado: malo }), /aceptado/, JSON.stringify(malo.slice(0, 20)));
+    }
+    assert.doesNotThrow(() => verificarTextosAprobados({ ...TEXTOS, aceptado: null, rechazado: undefined }));
+    assert.match(generarSqlAvisosDeDecision({ ...TEXTOS, aceptado: propio.aceptado }), /Aceptado \{pedido\} \(texto del negocio\)/);
+  });
+
+  it("12: escribe SOLO los tres textos del cierre y enciende SOLO avisos_decision_pedidos; no toca pausa, restricción, habilitado, aviso, responsable ni notificaciones_pedidos", () => {
+    const sql = archivos["12_avisos_de_decision.sql"];
+    const sin = sinLit(sql);
+    assert.deepEqual([...sin.matchAll(/\bupdate\s+(public\.\w+)/g)].map((m) => m[1]), ["public.dulabs_agente_runtime_config"]);
+    assert.deepEqual([...sin.matchAll(/\binsert\s+into\s+(public\.\w+)/g)].map((m) => m[1]), ["public.dulabs_tenant_modulos"]);
+    assert.deepEqual([...sql.matchAll(/^\s+'(\{[a-z_,]+\})', to_jsonb/gm)].map((m) => m[1]), ["{cierre,textos,aceptado}", "{cierre,textos,rechazado}", "{cierre,textos,cancelado}"]);
+    assert.ok(!/habilitado\s*=\s*(true|false)\s+where|ia_pausada\s*=|ia_restringida_a\s*=|transcripcion_audio\s*=|checkout_conversacional\s*=|delete\s+from|truncate|drop\s|alter\s/i.test(sin), "no cambia el estado de la IA");
+    const upd = /update public\.dulabs_agente_runtime_config[\s\S]*?get diagnostics/.exec(sql)?.[0] ?? "";
+    assert.ok(upd.length > 0 && !/responsable|miembro_id|,aviso\}/.test(upd), "el UPDATE no toca a la persona responsable ni el aviso");
+    const ins = /insert into public\.dulabs_tenant_modulos[\s\S]*?habilitado = true, updated_at = now\(\);/.exec(sql)?.[0] ?? "";
+    assert.ok(ins.includes("'" + MODULO_AVISOS_DECISION + "'") && !/notificaciones_pedidos/.test(ins), "el módulo que enciende es solo avisos_decision_pedidos");
+    assert.equal(MODULO_AVISOS_DECISION, "avisos_decision_pedidos");
+    for (const guarda of ["'activacion_pendiente' is null", AVISO_OFICIAL_SHA256, "corre antes 03_configurar_completo_sin_activar.sql", "modulo = 'notificaciones_pedidos' and habilitado", "no quedó encendido", "quedó encendido: abortando"]) {
+      assert.ok(sql.includes(guarda), guarda);
+    }
+    assert.equal(generarSqlAvisosDeDecision(TEXTOS), sql);
+  });
+
+  it("12: los textos del SQL son EXACTAMENTE los de la configuración completa (03) y una sola sentencia atómica, repetible", () => {
+    const sql = archivos["12_avisos_de_decision.sql"];
+    const t = textosDe(config());
+    const sacar = (marca: string) => new RegExp("\\$" + marca + "\\$([\\s\\S]*?)\\$" + marca + "\\$;").exec(sql)?.[1];
+    assert.equal(sacar("ac"), t?.aceptado);
+    assert.equal(sacar("re"), t?.rechazado);
+    assert.equal(sacar("ca"), t?.cancelado);
+    assert.equal((sql.match(/^do \$\$$/gm) ?? []).length, 1);
+    assert.ok(/on conflict \(id_tenant, modulo\) do update set habilitado = true/.test(sql), "repetible");
+    assert.ok(!/Patricia/.test(sql));
+  });
+
+  it("13: cambia SOLO los canales del aviso a la responsable (panel + correo); exige responsable ACTIVA, con rol que decide y CON correo; no toca nada más", () => {
+    const sql = archivos["13_aviso_por_correo.sql"];
+    const sin = sinLit(sql);
+    assert.deepEqual([...sin.matchAll(/\bupdate\s+(public\.\w+)/g)].map((m) => m[1]), ["public.dulabs_agente_runtime_config"]);
+    assert.ok(!/insert\s+into|delete\s+from|truncate|drop\s|alter\s|dulabs_tenant_modulos\s+set|dulabs_clientes_config\s+set/i.test(sin));
+    assert.ok(!/habilitado\s*=\s*(true|false)|ia_pausada\s*=|ia_restringida_a\s*=|transcripcion_audio\s*=|checkout_conversacional\s*=|negocio\s*=/i.test(sin));
+    assert.deepEqual([...sinComentarios(sql).matchAll(/jsonb_set\(checkout_opciones, '(\{[a-z_,]+\})'/g)].map((m) => m[1]), ["{cierre,responsable,canales}"]);
+    assert.ok(sql.includes("'[\"panel\",\"correo\"]'::jsonb"));
+    for (const guarda of ["estado = 'activo'", "rol in ('admin', 'agente')", "btrim(coalesce(email, ''))", "un correo válido: no se cambia nada", "'activacion_pendiente' is null", "corre antes 03_configurar_completo_sin_activar.sql"]) assert.ok(sql.includes(guarda), guarda);
+    assert.ok(!/@[a-z0-9.-]+\.[a-z]{2,}/i.test(sql) && !/Patricia/.test(sql), "ningún correo ni nombre de persona");
+    assert.equal(generarSqlAvisoPorCorreo(), sql);
+  });
+
+  it("el 03 de hoy ya trae los tres textos (una instalación nueva queda igual que una con 03 + 12); el módulo NO se enciende en el 03", () => {
+    const sql03 = archivos["03_configurar_completo_sin_activar.sql"];
+    const cfg = JSON.parse(/\$cfg\$\n([\s\S]*?)\n\$cfg\$::jsonb/.exec(sql03)?.[1] ?? "{}") as { cierre: { textos: Record<string, string> } };
+    assert.equal(cfg.cierre.textos.aceptado, TEXTOS_ASLC.avisoAceptado);
+    assert.ok(!/avisos_decision_pedidos|dulabs_tenant_modulos/.test(sinComentarios(sql03)));
+  });
+
+  it("los guardas de 05 / 06 / 10 y la verificación siguen exigiendo notificaciones_pedidos APAGADO (el módulo nuevo no lo reemplaza ni lo enciende)", () => {
+    for (const n of ["05_activacion_controlada.sql", "06_abrir_al_publico.sql", "10_reanudar_tras_freno.sql"]) assert.ok(archivos[n].includes("modulo = 'notificaciones_pedidos' and habilitado"), n);
+    assert.ok(!/avisos_decision_pedidos/.test(sinComentarios(archivos["05_activacion_controlada.sql"] + archivos["06_abrir_al_publico.sql"] + archivos["10_reanudar_tras_freno.sql"])), "esos scripts no cambian el módulo nuevo");
   });
 });

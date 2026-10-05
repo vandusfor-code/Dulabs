@@ -1476,7 +1476,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         : failure === "unverified" && deps.config.checkoutEnabled && trace.grounding.violations.includes("order_status") && activeOrder
           ? realOrderStatus(activeOrder)
           : null;
-    ctx.state = { ...ctx.state, failures: Math.min(10, ctx.state.failures + (failure === "safety" || failure === "pending" || aclarar ? 0 : 1)) };
+    // Si la conversación YA pasó a una persona (handoff_to_human salió bien), el texto que falló no es una falla del asistente que deba contarse.
+    ctx.state = { ...ctx.state, failures: Math.min(10, ctx.state.failures + (failure === "safety" || failure === "pending" || aclarar || ctx.handedOff ? 0 : 1)) };
     if (aclarar) {
       // Una pregunta concreta no es una falla: no suma para pasar a una asesora.
       reply = aclarar;
@@ -1487,6 +1488,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     } else if (failure === "pending") {
       reply = FALLBACK_MESSAGES.pending;
       outcome = "fallback";
+    } else if (ctx.handedOff) {
+      // handoff_to_human salió bien (el chat YA está con una persona) pero el texto final del modelo falló o no se pudo respaldar:
+      // el cliente recibe el mensaje FIJO de traspaso, nunca el técnico ("¿me lo escribes de nuevo?"), que contradice lo ya hecho.
+      reply = FALLBACK_MESSAGES.handoff;
+      outcome = "handoff";
     } else if (failure === "unverified" && trace.grounding.violations.includes("shipping") && !ctx.handedOff) {
       // Fase 3B.6: el modelo insistió en una afirmación de envío que el sistema no respalda (aun después de corregirla):
       // salida segura a una persona, con mensaje fijo. Nunca se envía lo que dijo.
