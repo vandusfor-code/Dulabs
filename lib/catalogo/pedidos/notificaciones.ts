@@ -192,11 +192,24 @@ export interface EnviadorWhatsapp {
   registrar(canal: CanalWhatsapp, telefono: string, texto: string, messageId: string | null): Promise<void>;
 }
 
+/**
+ * Fase 3B.9F — ¿con qué texto sale el aviso de una ETAPA del pedido ("en preparación", "enviado", "entregado")?
+ *   negocio     el texto que configuró el propio negocio (sale TAL CUAL, con el número de pedido completado)
+ *   plataforma  la plantilla de siempre de este módulo (negocios con "notificaciones_pedidos")
+ *   ninguno     este negocio no avisa esa etapa: no se reserva ni se envía nada (resultado "desactivada")
+ */
+export type TextoDeEtapa = { origen: "negocio"; texto: string } | { origen: "plataforma" } | { origen: "ninguno" };
+
 export interface NotificadorDeps {
   store: NotificacionesStore;
   enviador: EnviadorWhatsapp;
   now?: () => number;
   log?: (entry: Record<string, unknown>) => void;
+  /**
+   * Fase 3B.9F: decide el texto de cada aviso (lib/catalogo/pedidos/avisos-etapa.ts). Sin esta función (las pruebas de siempre y los mensajes de decisión, que traen su propio
+   * texto) rige lo de siempre: la plantilla de la plataforma. Puede lanzar: nunca se envía algo que no se pudo decidir.
+   */
+  textoDeEtapa?: (input: { tenantId: string; tipo: TipoNotificacion; pedido: Order }) => Promise<TextoDeEtapa>;
 }
 
 const TELEFONO = /^[0-9]{8,15}$/;
@@ -234,6 +247,13 @@ export async function notificarTransicion(
   const o = input.despues;
   try {
     if (!(await store.habilitado(input.tenantId))) return { estado: "desactivada" };
+    // Fase 3B.9F: ¿con qué texto sale? Sin resolutor (o con el texto explícito de una decisión), como siempre. "ninguno" = ese negocio no avisa esa etapa: ni fila ni envío.
+    let texto = input.texto;
+    if (texto === undefined && deps.textoDeEtapa) {
+      const decidido = await deps.textoDeEtapa({ tenantId: input.tenantId, tipo: input.tipo, pedido: o });
+      if (decidido.origen === "ninguno") return { estado: "desactivada" };
+      if (decidido.origen === "negocio") texto = decidido.texto;
+    }
     const contacto = o.contact;
     const telefono = contacto && TELEFONO.test(contacto.waId) ? contacto.waId : null;
     const reserva = await store.reservar({
@@ -250,7 +270,7 @@ export async function notificarTransicion(
     if (!reserva) return { estado: "no_disponible" };
     // Ya existía: doble clic, recarga, reintento o dos pestañas. NUNCA se vuelve a enviar aquí.
     if (!reserva.creada) return resumen(reserva.registro, true);
-    return await intentarEnvio(deps, input.tenantId, o, reserva.registro, false, input.texto);
+    return await intentarEnvio(deps, input.tenantId, o, reserva.registro, false, texto);
   } catch (err) {
     log({ log: "pedido_notificacion", result: "error", pedido: o.orderId, tipo: input.tipo, detalle: err instanceof Error ? err.message.slice(0, 120) : "?" });
     return { estado: "no_disponible" };
@@ -327,9 +347,20 @@ export async function reintentarNotificacion(
   if (r.estado === "desconocido" && now() - Date.parse(r.updatedAt) < ESPERA_REINTENTO_INCIERTO_MS) {
     return { estado: "no_reintentable", motivo: "No se sabe si el mensaje llegó. Revisa el chat y vuelve a intentar en unos minutos." };
   }
+  // Fase 3B.9F: el texto se decide ANTES de tomar la fila (si no se puede decidir, la fila queda como estaba y se puede volver a intentar).
+  let texto: string | undefined;
+  if (deps.textoDeEtapa) {
+    try {
+      const decidido = await deps.textoDeEtapa({ tenantId: input.tenantId, tipo: input.tipo, pedido: input.pedido });
+      if (decidido.origen === "ninguno") return { estado: "no_reintentable", motivo: "Este aviso ya no está activo para el negocio." };
+      if (decidido.origen === "negocio") texto = decidido.texto;
+    } catch {
+      return { estado: "no_reintentable", motivo: "No se pudo leer la configuración del negocio. Vuelve a intentarlo en unos minutos." };
+    }
+  }
   const tomada = await deps.store.cambiar(input.tenantId, r.id, [r.estado], { estado: "enviando" });
   if (!tomada) return { estado: "no_reintentable", motivo: "Otra persona está reintentando esta notificación." };
-  return intentarEnvio(deps, input.tenantId, input.pedido, tomada, false);
+  return intentarEnvio(deps, input.tenantId, input.pedido, tomada, false, texto);
 }
 
 // ---------------------------------------------------------------------------

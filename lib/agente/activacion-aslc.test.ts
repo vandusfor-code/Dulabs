@@ -19,6 +19,7 @@ import {
   AVISO_OFICIAL_SHA256,
   DECISIONES_ASLC,
   MODULO_AVISOS_DECISION,
+  MODULO_AVISOS_ETAPA,
   ESTILO_ASLC,
   ETAPAS_ASLC,
   POLITICAS_ASLC,
@@ -28,11 +29,13 @@ import {
   comprobacionesDeEtapa,
   configuracionCompletaAslc,
   decisionDe,
+  etapaDe,
   generarSqlAbrirAlPublico,
   generarSqlActivacionControlada,
   generarSqlAjustarComportamiento,
   generarSqlAvisoPorCorreo,
   generarSqlAvisosDeDecision,
+  generarSqlAvisosDeEtapa,
   generarSqlConfiguracionCompleta,
   generarSqlFrenoDeEmergencia,
   generarSqlReanudarTrasFreno,
@@ -49,6 +52,7 @@ import { FUNCIONES_3B_IMPLEMENTADAS, FUNCIONES_FASE_3B, funcionesNoDisponibles, 
 import { HANDOFF_MOTIVES } from "@/lib/agente/intencion";
 import { checkShippingClaims } from "@/lib/agente/envios-anclaje";
 import { marcadoresDe, renderizarTextoDecision } from "@/lib/agente/textos-cliente";
+import { renderizarTextoEtapa } from "@/lib/agente/textos-etapa";
 import { resolverEnvio } from "@/lib/agente/envios";
 
 const leer = (ruta: string) => readFileSync(join(process.cwd(), ruta), "utf8").replace(/\r\n/g, "\n");
@@ -378,14 +382,14 @@ describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => 
   const repo = (nombre: string) => leer(`supabase/provisioning/aslc/${nombre}`);
 
   it("cada archivo del repositorio es EXACTAMENTE lo que genera el código (nada escrito a mano que se desvíe)", () => {
-    assert.deepEqual(Object.keys(archivos), ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "08_ver_equipo_solo_lectura.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql"]);
+    assert.deepEqual(Object.keys(archivos), ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "08_ver_equipo_solo_lectura.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql", "14_avisos_de_etapa.sql"]);
     for (const [nombre, sql] of Object.entries(archivos)) assert.equal(repo(nombre), sql, nombre);
     assert.equal(repo("02_aprovisionar_sin_activar.sql"), generarSqlAprovisionamiento(), "el 02 (YA aplicado en producción) no cambió");
   });
 
   it("todos identifican a ASLC con la MISMA identidad que el 02 (tenant + phone_number_id + nombre; nunca telefono_negocio)", () => {
     assert.ok(generarSqlAprovisionamiento().includes(SQL_IDENTIDAD));
-    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql"]) {
+    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql", "14_avisos_de_etapa.sql"]) {
       assert.ok(archivos[nombre].includes(SQL_IDENTIDAD), nombre);
     }
     assert.ok(archivos["08_ver_equipo_solo_lectura.sql"].includes(`tenant_id::text = '${IDENTIDAD_ASLC_PRODUCCION.idTenant}'`));
@@ -464,7 +468,7 @@ describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => 
   });
 
   it("cada script con guardas es UNA sola sentencia (un bloque DO atómico), sin begin;/commit; explícitos que podrían dejar una transacción abierta en el editor", () => {
-    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql"]) {
+    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql", "14_avisos_de_etapa.sql"]) {
       const sql = archivos[nombre];
       assert.equal((sql.match(/^do \$\$$/gm) ?? []).length, 1, `${nombre}: un solo bloque DO`);
       assert.ok(/^end \$\$;$/m.test(sql), `${nombre}: termina el bloque`);
@@ -762,5 +766,110 @@ describe("3B.9E · los mensajes de decisión de ASLC y el script 12", () => {
   it("los guardas de 05 / 06 / 10 y la verificación siguen exigiendo notificaciones_pedidos APAGADO (el módulo nuevo no lo reemplaza ni lo enciende)", () => {
     for (const n of ["05_activacion_controlada.sql", "06_abrir_al_publico.sql", "10_reanudar_tras_freno.sql"]) assert.ok(archivos[n].includes("modulo = 'notificaciones_pedidos' and habilitado"), n);
     assert.ok(!/avisos_decision_pedidos/.test(sinComentarios(archivos["05_activacion_controlada.sql"] + archivos["06_abrir_al_publico.sql"] + archivos["10_reanudar_tras_freno.sql"])), "esos scripts no cambian el módulo nuevo");
+  });
+});
+
+// ===========================================================================
+// 7. Fase 3B.9F · avisos al cliente cuando su pedido avanza de etapa (módulo propio, sin las plantillas de la plataforma)
+// ===========================================================================
+
+describe("3B.9F · los avisos de etapa de ASLC y el script 14", () => {
+  const archivos = archivosDeActivacion(TEXTOS);
+  const PEDIDO = "DL-ORD-ABC234";
+  const CLAVES = ["en_preparacion", "enviado", "entregado"] as const;
+  const PROPUESTA = { en_preparacion: TEXTOS_ASLC.avisoEnPreparacion, enviado: TEXTOS_ASLC.avisoEnviado, entregado: TEXTOS_ASLC.avisoEntregado };
+  const config = () => configuracionCompletaAslc({ aviso: AVISO, trasAvisoConfirma: TEXTOS.tras_aviso_confirma, miembroId: RESPONSABLE });
+  const textosDe = (c: ReturnType<typeof config>) => {
+    assert.equal(c.cierre?.modo, "aceptacion_humana");
+    return c.cierre?.modo === "aceptacion_humana" ? c.cierre.textos : null;
+  };
+
+  it("la configuración completa trae los tres avisos de etapa (propuesta de DuLabs) y el runtime los lee como textos del negocio", () => {
+    const t = textosDe(config());
+    for (const k of CLAVES) assert.equal(t?.[k], PROPUESTA[k], k);
+    const parseada = parseAgentConfig(fila({ habilitado: true }), esperado);
+    assert.equal(parseada.kind, "ok", JSON.stringify(parseada));
+    const leida = parseada.kind === "ok" ? leerConfigAceptacion(parseada.config) : null;
+    assert.deepEqual(leida?.textosEtapa, PROPUESTA);
+  });
+
+  it("cada texto se completa con el número de pedido, solo admite {pedido}, y no promete nada ni trae datos de otro negocio, nombres ni cifras largas", () => {
+    for (const k of CLAVES) {
+      const texto = PROPUESTA[k];
+      const r = renderizarTextoEtapa(texto, { pedido: PEDIDO });
+      assert.ok(r.ok, k);
+      if (r.ok) assert.ok(r.texto.includes(PEDIDO) && !/[{}]/.test(r.texto), k);
+      assert.deepEqual(marcadoresDe(texto), ["pedido"], k + ": solo {pedido}");
+      assert.ok(texto.length <= 500 && texto === texto.trim(), k);
+      assert.doesNotMatch(texto, AJENO, k + ": nada de otro negocio");
+      assert.doesNotMatch(texto, /Patricia|asesora/i, k + ": ningún nombre de persona");
+      assert.doesNotMatch(texto, /\d{4,}/, k + ": sin cifras");
+      assert.doesNotMatch(texto, /\b(hoy|ma[ñn]ana|pronto|despach|garantiz|reposici|alternativa|te avisaremos|te escribiremos)/i, k + ": sin promesas de fechas, despacho ni de volver a avisar");
+    }
+    assert.match(TEXTOS_ASLC.avisoEnviado, /contraentrega/);
+  });
+
+  it("lo que aprueba el negocio (textos-aprobados.json) tiene prioridad sobre la propuesta; una plantilla inválida se rechaza", () => {
+    const propio = { en_preparacion: "Preparando {pedido} (texto del negocio)", enviado: "Enviado {pedido} (texto del negocio)" };
+    const t = textosDe(configuracionCompletaAslc({ aviso: AVISO, miembroId: RESPONSABLE, etapa: etapaDe({ ...propio, entregado: null }) }));
+    assert.equal(t?.en_preparacion, propio.en_preparacion);
+    assert.equal(t?.enviado, propio.enviado);
+    assert.equal(t?.entregado, TEXTOS_ASLC.avisoEntregado, "lo que no aprobó sigue con la propuesta");
+    for (const clave of CLAVES) {
+      for (const malo of ["{motivo} en {pedido}", "{nombre} avanzó", " con espacio al inicio", "llave suelta {pedido", "x".repeat(501), ""]) {
+        assert.throws(() => verificarTextosAprobados({ ...TEXTOS, [clave]: malo }), new RegExp(clave), clave + " " + JSON.stringify(malo.slice(0, 20)));
+      }
+    }
+    assert.doesNotThrow(() => verificarTextosAprobados({ ...TEXTOS, en_preparacion: null, enviado: undefined }));
+    assert.deepEqual(etapaDe({ en_preparacion: null, enviado: undefined, entregado: "x {pedido}" }), { entregado: "x {pedido}" });
+    assert.match(generarSqlAvisosDeEtapa({ ...TEXTOS, enviado: propio.enviado }), /Enviado \{pedido\} \(texto del negocio\)/);
+  });
+
+  it("14: escribe SOLO los tres textos de etapa y enciende SOLO avisos_etapa_pedidos; no toca pausa, restricción, habilitado, aviso, responsable, mensajes de decisión ni notificaciones_pedidos", () => {
+    const sql = archivos["14_avisos_de_etapa.sql"];
+    const sin = sinLit(sql);
+    assert.deepEqual([...sin.matchAll(/\bupdate\s+(public\.\w+)/g)].map((m) => m[1]), ["public.dulabs_agente_runtime_config"]);
+    assert.deepEqual([...sin.matchAll(/\binsert\s+into\s+(public\.\w+)/g)].map((m) => m[1]), ["public.dulabs_tenant_modulos"]);
+    assert.deepEqual([...sql.matchAll(/^\s+'(\{[a-z_,]+\})', to_jsonb/gm)].map((m) => m[1]), ["{cierre,textos,en_preparacion}", "{cierre,textos,enviado}", "{cierre,textos,entregado}"]);
+    assert.ok(!/habilitado\s*=\s*(true|false)\s+where|ia_pausada\s*=|ia_restringida_a\s*=|transcripcion_audio\s*=|checkout_conversacional\s*=|delete\s+from|truncate|drop\s|alter\s/i.test(sin), "no cambia el estado de la IA");
+    const upd = /update public\.dulabs_agente_runtime_config[\s\S]*?get diagnostics/.exec(sql)?.[0] ?? "";
+    assert.ok(upd.length > 0 && !/responsable|miembro_id|,aviso\}|aceptado|rechazado|cancelado/.test(upd), "el UPDATE no toca a la persona responsable, el aviso ni los mensajes de decisión");
+    const ins = /insert into public\.dulabs_tenant_modulos[\s\S]*?habilitado = true, updated_at = now\(\);/.exec(sql)?.[0] ?? "";
+    assert.ok(ins.includes("'" + MODULO_AVISOS_ETAPA + "'") && !/notificaciones_pedidos|avisos_decision_pedidos/.test(ins), "el módulo que enciende es solo avisos_etapa_pedidos");
+    assert.equal(MODULO_AVISOS_ETAPA, "avisos_etapa_pedidos");
+    for (const guarda of ["'activacion_pendiente' is null", AVISO_OFICIAL_SHA256, "corre antes 03_configurar_completo_sin_activar.sql", "modulo = 'notificaciones_pedidos' and habilitado", "no quedó encendido", "quedó encendido: abortando"]) {
+      assert.ok(sql.includes(guarda), guarda);
+    }
+    assert.equal(generarSqlAvisosDeEtapa(TEXTOS), sql);
+  });
+
+  it("14: los textos del SQL son EXACTAMENTE los de la configuración completa (03), y es una sola sentencia atómica, repetible, sin nombres ni datos del cliente", () => {
+    const sql = archivos["14_avisos_de_etapa.sql"];
+    const t = textosDe(config());
+    const sacar = (marca: string) => new RegExp("\\$" + marca + "\\$([\\s\\S]*?)\\$" + marca + "\\$;").exec(sql)?.[1];
+    assert.equal(sacar("ep"), t?.en_preparacion);
+    assert.equal(sacar("en"), t?.enviado);
+    assert.equal(sacar("et"), t?.entregado);
+    assert.equal((sql.match(/^do \$\$$/gm) ?? []).length, 1);
+    assert.ok(/on conflict \(id_tenant, modulo\) do update set habilitado = true/.test(sql), "repetible");
+    assert.ok(!/Patricia/.test(sql));
+  });
+
+  it("14 avisa, en su encabezado, que se corre DESPUÉS de desplegar el código (el esquema anterior rechaza estas claves) y explica el límite de las 24 h y la reversa", () => {
+    const sql = archivos["14_avisos_de_etapa.sql"];
+    assert.match(sql, /correr SOLO DESPUÉS de que el código de los avisos de etapa/);
+    assert.match(sql, /24 h/);
+    assert.match(sql, /REVERSA: apagar SOLO el módulo/);
+    assert.match(sql, /update public\.dulabs_tenant_modulos set habilitado = false/);
+  });
+
+  it("el 03 de hoy ya trae los tres textos (una instalación nueva queda igual que una con 03 + 12 + 14); el módulo NO se enciende en el 03 ni en 05 / 06 / 10 / 12 / 13", () => {
+    const sql03 = archivos["03_configurar_completo_sin_activar.sql"];
+    const cfg = JSON.parse(/\$cfg\$\n([\s\S]*?)\n\$cfg\$::jsonb/.exec(sql03)?.[1] ?? "{}") as { cierre: { textos: Record<string, string> } };
+    for (const k of CLAVES) assert.equal(cfg.cierre.textos[k], PROPUESTA[k], k);
+    for (const n of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "10_reanudar_tras_freno.sql", "12_avisos_de_decision.sql", "13_aviso_por_correo.sql"]) {
+      assert.ok(!/avisos_etapa_pedidos/.test(sinComentarios(archivos[n])), n + ": no cambia el módulo de etapas");
+    }
+    assert.ok(!/en_preparacion|entregado/.test(sinComentarios(archivos["12_avisos_de_decision.sql"])), "el 12 sigue escribiendo SOLO los mensajes de decisión");
   });
 });

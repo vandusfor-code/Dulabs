@@ -14,7 +14,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // "avisos_decision_pedidos" (Fase 3B.9E): SOLO el mensaje al cliente tras aceptar / rechazar / cancelar un pedido pendiente de aceptación, con el texto que
 //   configuró el propio negocio (checkout_opciones.cierre.textos). No enciende los avisos genéricos de cada etapa del pedido ("notificaciones_pedidos"),
 //   que usan plantillas de la plataforma y no son de ningún negocio en particular. No tiene menú.
-export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria", "pedidos_por_aceptar", "avisos_decision_pedidos"] as const;
+// "avisos_etapa_pedidos" (Fase 3B.9F): SOLO el aviso al cliente cuando su pedido ya aceptado pasa a "en preparación", "enviado" o "entregado", con el texto que configuró el
+//   propio negocio (checkout_opciones.cierre.textos). Igual que el anterior, no enciende las plantillas de la plataforma ("notificaciones_pedidos") y no tiene menú.
+export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria", "pedidos_por_aceptar", "avisos_decision_pedidos", "avisos_etapa_pedidos"] as const;
 export type ModuloId = (typeof MODULOS)[number];
 
 export function esModuloId(valor: unknown): valor is ModuloId {

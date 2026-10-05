@@ -20,6 +20,7 @@ import type { AcceptedReservation, Order } from "@/lib/catalogo/pedidos/contrato
 import type { AcceptanceRouter, HumanHandoffPort } from "@/lib/catalogo/pedidos/motor";
 import { loadAgentConfig, type AgentConfigStore, type AgentRuntimeConfig } from "@/lib/agente/config";
 import { cierreConAceptacion, reservaAlAceptar } from "@/lib/agente/perfil-negocio";
+import type { EtapaConTexto } from "@/lib/agente/textos-etapa";
 import { verificarResponsable, type MiembroEquipo, type MiembrosStore, type ResponsableConfig, type ResponsableError } from "@/lib/agente/responsable";
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,11 @@ export interface ConfigAceptacion {
    * {motivo}). null/ausente = el negocio no configuró ese texto: no se le escribe nada (nunca se inventa uno).
    */
   textosDecision?: { aceptado: string | null; rechazado: string | null; cancelado: string | null };
+  /**
+   * Fase 3B.9F: textos del negocio para el cliente cuando su pedido, ya aceptado, avanza de etapa (plantillas solo con {pedido}). null/ausente = el negocio no configuró
+   * ese texto: no se le escribe nada por esa etapa (nunca se inventa uno).
+   */
+  textosEtapa?: Readonly<Record<EtapaConTexto, string | null>>;
 }
 
 /** null = el negocio no usa la aceptación humana (o la configuración no es utilizable): nunca se inventa nada. */
@@ -59,6 +65,7 @@ export function leerConfigAceptacion(config: Pick<AgentRuntimeConfig, "checkoutO
     siYaRespondioPersona: cierre.respuesta_tras_aviso.si_ya_respondio_persona,
     notaEnvio: config.business.pedido?.nota_envio_domicilio ?? null,
     textosDecision: { aceptado: cierre.textos.aceptado ?? null, rechazado: cierre.textos.rechazado ?? null, cancelado: cierre.textos.cancelado ?? null },
+    textosEtapa: { en_preparacion: cierre.textos.en_preparacion ?? null, enviado: cierre.textos.enviado ?? null, entregado: cierre.textos.entregado ?? null },
   };
 }
 

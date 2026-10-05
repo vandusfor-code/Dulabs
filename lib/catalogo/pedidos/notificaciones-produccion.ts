@@ -74,6 +74,18 @@ export const MODULOS_AVISOS_DE_ESTADO: readonly ModuloId[] = Object.freeze(["not
 export const MODULOS_AVISOS_DE_DECISION: readonly ModuloId[] = Object.freeze(["avisos_decision_pedidos", "notificaciones_pedidos"] as const);
 
 /**
+ * Fase 3B.9F — módulo que enciende SOLO el aviso de las etapas "en preparación", "enviado" y "entregado" con el texto del propio negocio (checkout_opciones.cierre.textos).
+ * No enciende las plantillas de la plataforma ("notificaciones_pedidos").
+ */
+export const MODULO_AVISOS_DE_ETAPA: ModuloId = "avisos_etapa_pedidos";
+
+/**
+ * Módulos que encienden el notificador de las ACCIONES del panel de Pedidos (preparación, envío, entrega, pago, cierre): "notificaciones_pedidos" (plantillas de la plataforma,
+ * como siempre) o "avisos_etapa_pedidos" (solo las tres etapas, con el texto del negocio). QUÉ texto sale (o si no sale nada) lo decide lib/catalogo/pedidos/avisos-etapa.ts.
+ */
+export const MODULOS_PANEL_DE_PEDIDOS: readonly ModuloId[] = Object.freeze(["notificaciones_pedidos", "avisos_etapa_pedidos"] as const);
+
+/**
  * ¿Está encendido alguno de esos módulos para el negocio? Un error al consultar = apagado (fail-closed): nunca se envía por no poder verificar. Lo
  * decide SOLO la base (el negocio sale de la sesión), nunca la petición ni el modelo.
  */

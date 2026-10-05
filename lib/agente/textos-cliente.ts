@@ -32,7 +32,7 @@ export const MARCADORES_PERMITIDOS: Readonly<Record<ClaveTextoDecision, readonly
   cancelado: ["pedido", "motivo"],
 });
 
-const MARCADOR = /\{([^{}]*)\}/g;
+export const MARCADOR = /\{([^{}]*)\}/g;
 
 /** Nombres de los marcadores {…} de una plantilla, en orden. */
 export function marcadoresDe(plantilla: string): string[] {
@@ -51,7 +51,7 @@ export function plantillaValida(plantilla: string, permitidos: readonly string[]
 export const usaMotivo = (plantilla: string): boolean => marcadoresDe(plantilla).includes("motivo");
 
 /** Número público de pedido (el único identificador que ve el cliente). */
-const PEDIDO_PUBLICO = /^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/;
+export const PEDIDO_PUBLICO = /^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/;
 
 /**
  * Un motivo que parece contener un documento, un teléfono o una cuenta (7 o más dígitos seguidos, ignorando separadores)

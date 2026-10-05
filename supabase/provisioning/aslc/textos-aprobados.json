@@ -7,6 +7,9 @@
   "aceptado": null,
   "rechazado": null,
   "cancelado": null,
+  "en_preparacion": null,
+  "enviado": null,
+  "entregado": null,
   "saludo": null,
   "envios": {
     "sin_cobertura": null,
