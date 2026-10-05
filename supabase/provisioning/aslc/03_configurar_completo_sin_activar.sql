@@ -52,7 +52,7 @@ declare
     "barrio": true
   },
   "oficina": {
-    "transportadora": "Inter Rapidísimo",
+    "transportadora": "Interrapidísimo",
     "oferta": "solo_si_cliente_pide",
     "pide_direccion": false,
     "pide_barrio": false,
@@ -75,7 +75,7 @@ declare
     "mostrar_numero_pedido": true,
     "textos": {
       "aviso": "⚠️ IMPORTANTE ANTES DE ENVIAR SU PEDIDO:\n\nPor seguridad, actualmente no estamos dejando pedidos en las transportadoras sin reclamar o recibir, ya que hemos tenido pérdidas de mercancía bajo esta modalidad y, adicionalmente, se generan dobles costos de flete.\n\nPor este motivo, al confirmar su pedido, usted acepta recibirlo y reclamarlo cuando la transportadora lo entregue, RECOMENDAMOS TENER LA DISPONIBILIDAD DEL DINERO.\n\n📦 El producto se envía tal como se muestra en las fotos y videos, con las mismas características, especificaciones y accesorios ofrecidos en la publicación.\n\nPor favor, confirme su compra únicamente si está 100% seguro de recibir el pedido. 🙏\n\n¿Me confirmas por favor que estás 100% seguro de recibirlo?",
-      "tras_aviso_confirma": "¡Gracias por confirmar! 🙌 Una persona de nuestro equipo continuará con tu pedido y te escribirá por este mismo chat."
+      "tras_aviso_confirma": "¡Gracias por confirmar! 🙌 Se comunicará contigo la asesora Patricia Castro, quien se encargará del proceso de envío y despacho de tu producto."
     },
     "responsable": {
       "miembro_id": 1,
@@ -125,8 +125,8 @@ declare
           "festivos": {
             "tipo": "ignorar"
           },
-          "texto_antes": "Envío gratis. Tu pedido, hecho antes de las 11:30 a. m., puede tener entrega el mismo día (no está garantizado).",
-          "texto_despues": "Envío gratis. Como tu pedido se hace después de las 11:30 a. m., no tendría entrega el mismo día. El tiempo exacto depende de la ciudad y la transportadora."
+          "texto_antes": "Envío gratis. Tu pedido, hecho antes de las 11:30 a. m., puede tener entrega el mismo día.",
+          "texto_despues": "Envío gratis. Como tu pedido se hace después de las 11:30 a. m., el tiempo exacto de entrega depende de la ciudad y la transportadora."
         }
       },
       {
@@ -142,20 +142,40 @@ declare
     "ciudad_desconocida_en_checkout": "handoff",
     "texto_resumen": "Envío gratis",
     "envio_gratis": true,
-    "transportadora_habitual": "Inter Rapidísimo"
+    "transportadora_habitual": "Interrapidísimo"
   }
 }
 $cfg$::jsonb;
   v_negocio jsonb := $neg$
 {
+  "tono": "Cercano, cordial y profesional. Siempre tuteas (tú, te, puedes, me confirmas), nunca de usted salvo que el cliente lo pida. Comercial y persuasivo, sin presionar. Pocos emojis; respuestas breves.",
   "politicas": [
     "Pago ÚNICAMENTE contraentrega: el cliente paga al recibir su pedido. Nunca ofrezcas ni aceptes anticipos, transferencias, Nequi, Daviplata ni cuenta bancaria.",
-    "El envío es gratis. Los tiempos, la cobertura y la transportadora los das SOLO con la herramienta de envíos; nunca los estimes ni los prometas de memoria.",
-    "Si el cliente duda o pregunta si es una estafa: responde con calma y de forma comercial, sin ponerte a la defensiva; explica que es un comercio serio y que el pago es contraentrega (paga al recibir, sin anticipos).",
-    "Puedes ofrecer dejar una nota para solicitar que el cliente revise su pedido antes de pagar, aclarando que esa decisión es de la transportadora. NUNCA prometas que podrá abrir el paquete antes de pagar.",
-    "Nunca confirmes ni des por aceptado un pedido: lo decide una persona del equipo. Si no tienes información verificable de algo, no la inventes: dilo y ofrece pasar con una persona."
+    "Del envío (si es gratis, cobertura, tiempos, transportadora) NO digas nada hasta consultar_envio con la ciudad del cliente; entonces repite solo lo que devuelva. Si pregunta por el envío sin dar ciudad, pídesela. No lo menciones al dar precios ni descripciones.",
+    "Si el cliente desconfía o pregunta si es una estafa, usa la respuesta oficial de la información del negocio, con calma y sin discutir. Puedes ofrecer una nota de dejar revisar el pedido, pero NUNCA prometas que la transportadora permitirá abrir el paquete antes de pagar.",
+    "Nunca confirmes ni des por aceptado un pedido: lo decide una persona del equipo.",
+    "Si un producto está agotado o no disponible, díselo con claridad y, si hay productos parecidos disponibles, ofrécelos como alternativa. No prometas fecha de llegada ni de reposición.",
+    "Si no tienes confirmada la respuesta (tiempos sin confirmar, garantías o casos especiales sin información, disponibilidad específica, o cualquier dato que no esté en el producto o en la información del negocio), NO la inventes: pasa con un asesor (handoff_to_human, motivo out_of_scope).",
+    "Pasa con un asesor (handoff_to_human) si el cliente pide hablar con una persona, presenta una queja o inconformidad, tiene un problema con un pedido o con la entrega, reclama una garantía, devolución o cambio, o tiene una solicitud especial.",
+    "Si preguntan dónde estamos ubicados, responde con la información oficial de ubicación (es la bodega de despacho), sin inventar otras direcciones, y pregúntale en qué ciudad está para confirmarle el envío.",
+    "Si el cliente describe una necesidad (\"algo para cocinar\", \"un regalo para mi hijo\"), busca con varios términos del producto que la resuelve (freidora, tablet, reloj, celular) antes de decir que no hay; si aun así no hay, ofrece el catálogo completo."
   ],
   "nombre_negocio": "Aquí Sí Lo Compras",
+  "personalidad": "Eres el asistente de ventas de Aquí Sí Lo Compras. Tu objetivo es ayudar al cliente, resolver sus dudas y objeciones con naturalidad, generar confianza y llevar la conversación hacia el cierre de la venta, sin inventar nada y sin presionar. Tutea siempre de forma cordial y natural (tú, te, puedes, quieres, me confirmas); no uses el usted salvo que el cliente lo pida. Usa emojis con moderación y respuestas claras, naturales y no muy largas. Cuando el cliente muestre interés, propón el siguiente paso (por ejemplo, agregar el producto a su pedido) y termina con una pregunta amable que invite a avanzar. Insiste de forma estratégica y moderada: no repitas lo mismo ni resultes agresivo o incómodo. Ante una objeción de precio, destaca lo que incluye y su garantía; si ofreces otra opción, que sea más económica. Apóyate en lo que está confirmado: el pago es contraentrega y los accesorios y la garantía que figuren en la información del producto. Del envío (si es gratis, cobertura, tiempos, transportadora) solo hablas después de preguntar la ciudad del cliente y consultarla con la herramienta de envíos: antes no lo menciones y, cuando muestre interés, pídele su ciudad con naturalidad. Si el cliente duda de la compra o pregunta si es una estafa, responde con calma, cordialidad y seguridad, sin discutir ni molestarte, usando la información oficial del negocio. Si el cliente dice claramente que no le interesa o que no quiere más mensajes, respétalo y despídete con amabilidad.",
+  "conocimiento": [
+    {
+      "tema": "Ubicación de la bodega",
+      "info": "Nuestra bodega está ubicada vía Siberia, Cundinamarca. Desde allí despachamos nuestros pedidos, con pago contraentrega. 📦🚚"
+    },
+    {
+      "tema": "Si el cliente desconfía o pregunta si es una estafa",
+      "info": "Claro que sí 😊 Somos una empresa de comercio honesta y seria. Nuestra misión es enviar a nuestros clientes los productos con las mismas especificaciones y accesorios que solicitaron. Somos una empresa de comercio, no de estafas. Además, manejamos pago contraentrega y, si quieres, podemos poner una nota de dejar revisar el pedido para que puedas verificarlo antes de realizar el pago. 📦🔍"
+    },
+    {
+      "tema": "Horario del asistente",
+      "info": "Este asistente atiende las 24 horas del día, los 7 días de la semana."
+    }
+  ],
   "pedido": {
     "nota_envio_domicilio": "Envío GRATIS"
   }

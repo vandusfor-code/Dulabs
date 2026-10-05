@@ -1,22 +1,24 @@
 /**
  * FASE 3B.9A / 3B.9D — genera los SQL de supabase/provisioning/aslc/ desde lib/agente/aprovisionamiento.ts (02) y lib/agente/activacion-aslc.ts
- * (03, 05, 06, 07, 08 y 09). No se conecta a ninguna base de datos: solo escribe los archivos (que el dueño revisa y corre). Una prueba verifica que
- * cada archivo del repositorio es exactamente la salida de su función. El aviso obligatorio se lee de textos-aprobados.json y se verifica byte a byte
- * (SHA-256) antes de escribir nada.
+ * (03, 05, 06, 07, 08, 09, 10 y 11). No se conecta a ninguna base de datos: solo escribe los archivos (que el dueño revisa y corre). Una prueba verifica
+ * que cada archivo del repositorio es exactamente la salida de su función. Los textos del negocio (el aviso obligatorio, la respuesta tras el "sí", la
+ * ubicación y la respuesta a quien desconfía) se leen de textos-aprobados.json: el código no trae ninguno. El aviso se verifica byte a byte (SHA-256)
+ * antes de escribir nada.
  *
  *   npx tsx scripts/generar-aprovisionamiento-aslc.ts
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { generarSqlAprovisionamiento, pendientesActualesAslc } from "@/lib/agente/aprovisionamiento";
-import { archivosDeActivacion, verificarAviso } from "@/lib/agente/activacion-aslc";
+import { archivosDeActivacion, verificarTextosAprobados, type TextosAprobadosAslc } from "@/lib/agente/activacion-aslc";
 
 const carpeta = join(process.cwd(), "supabase", "provisioning", "aslc");
 
-const aviso = (JSON.parse(readFileSync(join(carpeta, "textos-aprobados.json"), "utf8")) as { aviso: string }).aviso;
-verificarAviso(aviso);
+const json = JSON.parse(readFileSync(join(carpeta, "textos-aprobados.json"), "utf8")) as Partial<Record<keyof TextosAprobadosAslc, unknown>>;
+const textos = { aviso: json.aviso, tras_aviso_confirma: json.tras_aviso_confirma, ubicacion: json.ubicacion, desconfianza: json.desconfianza } as TextosAprobadosAslc;
+verificarTextosAprobados(textos);
 
-const archivos: Record<string, string> = { "02_aprovisionar_sin_activar.sql": generarSqlAprovisionamiento(), ...archivosDeActivacion(aviso) };
+const archivos: Record<string, string> = { "02_aprovisionar_sin_activar.sql": generarSqlAprovisionamiento(), ...archivosDeActivacion(textos) };
 for (const [nombre, sql] of Object.entries(archivos)) {
   writeFileSync(join(carpeta, nombre), sql, "utf8");
   console.log(`escrito: ${join(carpeta, nombre)}`);

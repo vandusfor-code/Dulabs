@@ -3,9 +3,10 @@
 Esta carpeta NO es de migraciones (vive fuera de `supabase/migrations` a propósito): son scripts que el dueño revisa y corre a mano en el SQL Editor de
 Supabase. Ninguno se ejecutó en producción desde el código. Todos se probaron en un Postgres local efímero (pglite) con datos ficticios.
 
-**Estado en producción (2026-10-03):** aplicados la migración `20261208` y el `02`. Los scripts `03` a `10` NO están aplicados. Runbook completo, QA de 16 casos y límites
-conocidos: `docs/CATALOG_SALES_FASE_3B9D.md`. Orden: `08` (opcional) → `03` → desplegar el código → catálogo → `05` → QA → `06`. Siempre disponibles: `07` (freno),
-`10` (reanudar tras el freno), `09` (cambiar responsable).
+**Estado en producción (2026-10-05):** aplicados la migración `20261208`, el `02`, el `03`, el `05` y el `11`: el agente está habilitado con el estilo, las políticas y los textos del negocio, y la IA **activa pero restringida** a un número de
+prueba (`06`, abrir al público, NO está aplicado). Runbook completo, QA de 16 casos y límites conocidos: `docs/CATALOG_SALES_FASE_3B9D.md`. Orden de la activación: `08`
+(opcional) → `03` → desplegar el código → catálogo → `05` → QA → `06`. Siempre disponibles: `07` (freno), `10` (reanudar tras el freno), `09` (cambiar responsable) y `11`
+(ajustar el comportamiento con la IA ya corriendo: estilo, políticas e información oficial; no necesita desplegar).
 
 ### Activación (3B.9D) — paso a paso
 
@@ -19,9 +20,11 @@ conocidos: `docs/CATALOG_SALES_FASE_3B9D.md`. Orden: `08` (opcional) → `03` �
 | siempre | `07_freno_de_emergencia.sql` | Pausa la IA al instante (una sentencia). | sí |
 | siempre | `10_reanudar_tras_freno.sql` | Quita SOLO la pausa; la restricción queda como estaba (controlado o público). Nunca es la primera activación. | sí |
 | siempre | `09_cambiar_responsable.sql` | Cambia el responsable con la fila ya habilitada. | sí |
+| siempre | `11_ajustar_comportamiento.sql` | Con la fila **ya habilitada** (y la IA corriendo): deja el comportamiento que pidió el negocio sin pausar ni redesplegar. Escribe SOLO `negocio` (estilo, políticas e información oficial: ubicación, qué responder a quien desconfía, horario) y, dentro de `checkout_opciones`, la respuesta tras el "sí" (nombra a la responsable), la ortografía de la transportadora (Interrapidísimo) y los textos de los tiempos de envío (Bogotá antes y después de las 11:30, fin de semana y resto de ciudades: el modelo los repite tal cual y el candado de envíos debe aceptarlos). **No toca** `ia_pausada`, `ia_restringida_a`, `habilitado`, el audio, el responsable ni el aviso (verifica su SHA-256 antes de escribir). Idempotente. | sí |
 
-Los archivos `03` y `05` a `10` los GENERA `lib/agente/activacion-aslc.ts` (`npx tsx scripts/generar-aprovisionamiento-aslc.ts`); no se editan a mano y una prueba verifica
-que cada archivo es exactamente la salida del generador.
+Los archivos `03` y `05` a `11` los GENERA `lib/agente/activacion-aslc.ts` (`npx tsx scripts/generar-aprovisionamiento-aslc.ts`); no se editan a mano y una prueba verifica
+que cada archivo es exactamente la salida del generador. Los textos del negocio (aviso, respuesta tras el "sí", ubicación y qué responder a quien desconfía) salen de
+`textos-aprobados.json`: el código no trae ninguno.
 
 ### Aprovisionamiento (3B.9A) — ya aplicado
 
@@ -33,7 +36,7 @@ que cada archivo es exactamente la salida del generador.
 | 3 | `01_…` otra vez | Estado final: todas las `comprobaciones` en `true`; solo cambia la huella de módulos de ASLC. | no |
 | — | `04_revertir_aprovisionamiento.sql` | Reversa del 02 (se niega a borrar una fila que alguien habilitó o cambió). | sí |
 | — | `scripts/verificar-aslc-solo-lectura.mts` | Verificación de **solo lectura** desde el repo (service role, solo `select`): `npx tsx --env-file=.env.local scripts/verificar-aslc-solo-lectura.mts --etapa=inicial` (antes del 02), `aprovisionado` (después del 02), `configurado` (después del 03), `controlado` (después del 05) o `publico` (después del 06). Imprime el estado sin secretos, una huella de los demás negocios (no debe cambiar) y un checklist; termina con código 1 si falla. Juzga la fila con el parser y las compuertas REALES del runtime. Reemplaza pegar el resultado del 01 cuando se corre desde el repo. | no |
-| — | `textos-aprobados.json` | Lo único aprobado por el negocio en textos (el aviso, EXACTO) y lo que sigue pendiente (`null`). | no |
+| — | `textos-aprobados.json` | Lo que el negocio definió en textos: el aviso (EXACTO, byte a byte), la respuesta tras el "sí", la ubicación y qué responder a quien desconfía. Lo demás sigue pendiente (`null`). | no |
 
 ## Reglas
 

@@ -71,7 +71,7 @@ describe("3B.9A · solo lo aprobado: lo demás queda PENDIENTE y nunca se invent
         whatsappTerminaEn: "5088",
         pagos: ["contra_entrega"],
         envioGratis: true,
-        transportadoraHabitual: "Inter Rapidísimo",
+        transportadoraHabitual: "Interrapidísimo",
         diasHabiles: { min: 2, max: 3 },
         corteBogota: { hora_limite: "11:30", zona_horaria: "America/Bogota" },
         sinCerteza: "handoff",
@@ -118,7 +118,7 @@ describe("3B.9A · solo lo aprobado: lo demás queda PENDIENTE y nunca se invent
         sin_certeza: "handoff",
         ciudad_desconocida_en_checkout: "handoff",
         envio_gratis: true,
-        transportadora_habitual: "Inter Rapidísimo",
+        transportadora_habitual: "Interrapidísimo",
       },
     };
     const { oficina: _sin, ...sinOficina } = completa;
@@ -129,7 +129,7 @@ describe("3B.9A · solo lo aprobado: lo demás queda PENDIENTE y nunca se invent
     const conOficina = {
       ...sinOficina,
       entregas: ["domicilio", "oficina_transportadora"],
-      oficina: { transportadora: "Inter Rapidísimo", oferta: "solo_si_cliente_pide", pide_direccion: false, pide_barrio: false, seleccion: { tipo: "texto_libre" }, documento: { modo: "requerido", tipos: "sin_especificar", retencion: { tipo: "sin_borrado_automatico" }, si_se_niega: "handoff" } },
+      oficina: { transportadora: "Interrapidísimo", oferta: "solo_si_cliente_pide", pide_direccion: false, pide_barrio: false, seleccion: { tipo: "texto_libre" }, documento: { modo: "requerido", tipos: "sin_especificar", retencion: { tipo: "sin_borrado_automatico" }, si_se_niega: "handoff" } },
     };
     const lista = evaluarConfigCompleta(conOficina);
     assert.equal(lista.lista, true, JSON.stringify(lista.pendientes));
@@ -146,13 +146,17 @@ describe("3B.9A · solo lo aprobado: lo demás queda PENDIENTE y nunca se invent
     assert.equal(evaluarConfigCompleta({ ...conOficina, activacion_pendiente: true }).lista, false);
   });
 
-  it("el aviso obligatorio aprobado está guardado EXACTO (747 bytes, SHA-256 fijado en la 3B.4); los demás textos están pendientes (null), sin frases inventadas", () => {
+  it("el aviso obligatorio aprobado está guardado EXACTO (747 bytes, SHA-256 fijado en la 3B.4); lo que el negocio definió (respuesta tras el 'sí', ubicación, desconfianza) tiene texto; lo demás sigue pendiente (null), sin frases inventadas", () => {
     const t = JSON.parse(leer("supabase/provisioning/aslc/textos-aprobados.json")) as Record<string, unknown> & { aviso: string; envios: Record<string, unknown> };
     assert.equal(Buffer.byteLength(t.aviso, "utf8"), 747);
     assert.equal(sha256(t.aviso), AVISO_SHA256);
-    for (const k of ["tras_aviso_confirma", "aceptado", "rechazado", "cancelado", "saludo"]) assert.equal(t[k], null, `${k} es TEXTO_PENDIENTE`);
-    for (const [k, v] of Object.entries(t.envios)) assert.equal(v, null, `envios.${k} es TEXTO_PENDIENTE`);
-    assert.ok(!/Patricia/.test(JSON.stringify(t)), "Patricia no está en los textos aprobados: aún no hay un texto aprobado que la nombre");
+    for (const k of ["tras_aviso_confirma", "ubicacion", "desconfianza"]) assert.ok(typeof t[k] === "string" && (t[k] as string).length > 0, k + " lo definió el negocio");
+    for (const k of ["aceptado", "rechazado", "cancelado", "saludo"]) assert.equal(t[k], null, k + " es TEXTO_PENDIENTE");
+    for (const [k, v] of Object.entries(t.envios)) assert.equal(v, null, "envios." + k + " es TEXTO_PENDIENTE");
+    // El nombre de una persona solo puede estar en la respuesta tras el "sí" (lo pidió el negocio): ni en el aviso ni en ningún otro texto.
+    const sinTras = { ...t, tras_aviso_confirma: "", _nota: "" };
+    assert.ok(!/Patricia/.test(JSON.stringify(sinTras)), "Patricia solo aparece en la respuesta tras el 'sí'");
+    assert.match(t.tras_aviso_confirma as string, /Patricia Castro/);
   });
 });
 
@@ -717,7 +721,7 @@ describe("3B.9A · pruebas con configuración controlada y catálogo VACÍO: ant
   });
 
   it("5) pregunta de ENVÍO (sin reglas de envío configuradas todavía): el backend pasa a una persona; el modelo no afirma gratis, tiempos, cobertura ni transportadora", async () => {
-    const r = await turno(config(), [call("consultar_envio", { city: "Cali" }), { text: "Sí, envío gratis en 2 a 3 días con Inter Rapidísimo" }], "¿hacen envíos a Cali? ¿cuánto demora?");
+    const r = await turno(config(), [call("consultar_envio", { city: "Cali" }), { text: "Sí, envío gratis en 2 a 3 días con Interrapidísimo" }], "¿hacen envíos a Cali? ¿cuánto demora?");
     assert.equal(r.outcome, "handoff");
     assert.deepEqual(sent, [FALLBACK_MESSAGES.handoff]);
     assert.equal(r.provider.remaining(), 1, "el modelo no llegó a redactar");
@@ -725,7 +729,7 @@ describe("3B.9A · pruebas con configuración controlada y catálogo VACÍO: ant
     assert.equal(pausas.length, 1);
     // Sin consultar la herramienta: el guardián de envíos está activo AUNQUE no haya reglas (la herramienta está en la lista del número).
     sent.length = 0;
-    const sin = await turno(config(), [{ text: "¡Claro! Enviamos gratis a todo el país en 2 a 3 días con Inter Rapidísimo" }, { text: "Te llega en 2 días, gratis" }], "¿hacen envíos a Medellín?", { waId: OTRO });
+    const sin = await turno(config(), [{ text: "¡Claro! Enviamos gratis a todo el país en 2 a 3 días con Interrapidísimo" }, { text: "Te llega en 2 días, gratis" }], "¿hacen envíos a Medellín?", { waId: OTRO });
     assert.ok(sin.trace.grounding.violations.includes("shipping"));
     assert.deepEqual(sent, [FALLBACK_MESSAGES.handoff]);
     assert.ok(!sent.some((t) => /gratis|2 d[ií]as|Inter/i.test(t)));

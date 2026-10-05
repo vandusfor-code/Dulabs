@@ -13,6 +13,7 @@
  *        06  abrir al público                  -> quita la restricción (solo si la activación controlada está en marcha)
  *        07  freno de emergencia               -> pausa la IA de inmediato
  *        10  reanudar tras el freno            -> quita SOLO la pausa y deja la restricción como estaba (controlado o público)
+ *        11  ajustar comportamiento            -> con la fila ya habilitada: estilo, políticas e información oficial del negocio, texto tras el "sí", transportadora
  *        09  cambiar de responsable            -> con la fila ya habilitada (p. ej. cuando exista la persona real)
  *      Cada uno es UNA sola sentencia (un bloque DO atómico) con guardas: si una falla, no queda nada. Este código nunca toca una base.
  *
@@ -81,23 +82,74 @@ export const TEXTOS_ASLC = Object.freeze({
   /** Nota de envío que ve la persona responsable en el panel. */
   notaEnvioPanel: "Envío GRATIS",
   bogotaTexto: "Envío gratis a Bogotá.",
-  bogotaAntes: "Envío gratis. Tu pedido, hecho antes de las 11:30 a. m., puede tener entrega el mismo día (no está garantizado).",
-  bogotaDespues: "Envío gratis. Como tu pedido se hace después de las 11:30 a. m., no tendría entrega el mismo día. El tiempo exacto depende de la ciudad y la transportadora.",
+  /**
+   * Regla del negocio: antes de las 11:30 PUEDE tener entrega el mismo día y NUNCA se dice que está garantizado. El modelo repite estos textos TAL CUAL y el
+   * candado de envíos (3B.6) revisa lo que repite: «(no está garantizado)» activaba `guarantee` y «no tendría entrega el mismo día» activaba `same_day_unbacked`
+   * (el candado no entiende la negación), así que en un día hábil TODA consulta de envío a Bogotá pasaba a una persona. Una prueba exige que cada texto que el
+   * motor puede devolver pase el candado repetido tal cual. Después de las 11:30 el negocio no dio un texto: se dice solo lo verificable, sin «mismo día».
+   */
+  bogotaAntes: "Envío gratis. Tu pedido, hecho antes de las 11:30 a. m., puede tener entrega el mismo día.",
+  bogotaDespues: "Envío gratis. Como tu pedido se hace después de las 11:30 a. m., el tiempo exacto de entrega depende de la ciudad y la transportadora.",
   restoTexto: "Envío gratis. Normalmente de 2 a 3 días hábiles, según la ciudad y la transportadora.",
 });
 
 /**
+ * Estilo de atención que pidió el negocio (cuestionario del 2026-10-03, sección 11): amable, cercano, comercial y persuasivo, que TUTEA, con emojis
+ * moderados y respuestas breves, orientado al cierre sin presionar. Es configuración del negocio (negocio.tono y negocio.personalidad): el prompt base
+ * de la plataforma no fija ningún estilo. El seguimiento cada 2 horas NO es estilo: es un mecanismo aparte (no implementado).
+ */
+export const ESTILO_ASLC = Object.freeze({
+  tono: "Cercano, cordial y profesional. Siempre tuteas (tú, te, puedes, me confirmas), nunca de usted salvo que el cliente lo pida. Comercial y persuasivo, sin presionar. Pocos emojis; respuestas breves.",
+  personalidad:
+    "Eres el asistente de ventas de Aquí Sí Lo Compras. Tu objetivo es ayudar al cliente, resolver sus dudas y objeciones con naturalidad, generar confianza y llevar la conversación hacia el cierre de la venta, sin inventar nada y sin presionar. " +
+    "Tutea siempre de forma cordial y natural (tú, te, puedes, quieres, me confirmas); no uses el usted salvo que el cliente lo pida. Usa emojis con moderación y respuestas claras, naturales y no muy largas. " +
+    "Cuando el cliente muestre interés, propón el siguiente paso (por ejemplo, agregar el producto a su pedido) y termina con una pregunta amable que invite a avanzar. Insiste de forma estratégica y moderada: no repitas lo mismo ni resultes agresivo o incómodo. Ante una objeción de precio, destaca lo que incluye y su garantía; si ofreces otra opción, que sea más económica. " +
+    "Apóyate en lo que está confirmado: el pago es contraentrega y los accesorios y la garantía que figuren en la información del producto. Del envío (si es gratis, cobertura, tiempos, transportadora) solo hablas después de preguntar la ciudad del cliente y consultarla con la herramienta de envíos: antes no lo menciones y, cuando muestre interés, pídele su ciudad con naturalidad. " +
+    "Si el cliente duda de la compra o pregunta si es una estafa, responde con calma, cordialidad y seguridad, sin discutir ni molestarte, usando la información oficial del negocio. " +
+    "Si el cliente dice claramente que no le interesa o que no quiere más mensajes, respétalo y despídete con amabilidad.",
+});
+
+/**
  * Políticas para el modelo (negocio.politicas, ≤300 caracteres cada una). Son GUÍA, no autoridad: lo crítico (pago, envío, confirmación) lo hace el
- * backend. Salen de las reglas que dio el negocio; la de "¿es una estafa?" es SU regla aprobada (comercio serio + contraentrega + nota, sin prometer
- * que la transportadora deje abrir el paquete).
+ * backend. Salen de las reglas que dio el negocio. La respuesta a "¿es una estafa?" y la ubicación NO van aquí: son textos del negocio (conocimiento).
+ * Los traspasos por queja, garantía, devolución o falta de información dependen del criterio del modelo (el bloque `handoff` determinista no está
+ * implementado): por eso se piden aquí de forma explícita y se prueban con el modelo real.
+ *
+ * El ENVÍO no se menciona antes de consultar la ciudad: el candado de envíos (3B.6) solo respalda lo que devolvió `consultar_envio` en el turno y, si el
+ * modelo afirma "gratis", tiempos o cobertura sin ese respaldo, descarta la respuesta ENTERA (precio, qué incluye, garantía…) y pide la ciudad. La
+ * evaluación con Gemini real lo mostró: ni el estilo, ni las políticas, ni los textos del negocio que el modelo repite pueden empujarlo a decir "envío gratis".
  */
 export const POLITICAS_ASLC: readonly string[] = Object.freeze([
   "Pago ÚNICAMENTE contraentrega: el cliente paga al recibir su pedido. Nunca ofrezcas ni aceptes anticipos, transferencias, Nequi, Daviplata ni cuenta bancaria.",
-  "El envío es gratis. Los tiempos, la cobertura y la transportadora los das SOLO con la herramienta de envíos; nunca los estimes ni los prometas de memoria.",
-  "Si el cliente duda o pregunta si es una estafa: responde con calma y de forma comercial, sin ponerte a la defensiva; explica que es un comercio serio y que el pago es contraentrega (paga al recibir, sin anticipos).",
-  "Puedes ofrecer dejar una nota para solicitar que el cliente revise su pedido antes de pagar, aclarando que esa decisión es de la transportadora. NUNCA prometas que podrá abrir el paquete antes de pagar.",
-  "Nunca confirmes ni des por aceptado un pedido: lo decide una persona del equipo. Si no tienes información verificable de algo, no la inventes: dilo y ofrece pasar con una persona.",
+  "Del envío (si es gratis, cobertura, tiempos, transportadora) NO digas nada hasta consultar_envio con la ciudad del cliente; entonces repite solo lo que devuelva. Si pregunta por el envío sin dar ciudad, pídesela. No lo menciones al dar precios ni descripciones.",
+  "Si el cliente desconfía o pregunta si es una estafa, usa la respuesta oficial de la información del negocio, con calma y sin discutir. Puedes ofrecer una nota de dejar revisar el pedido, pero NUNCA prometas que la transportadora permitirá abrir el paquete antes de pagar.",
+  "Nunca confirmes ni des por aceptado un pedido: lo decide una persona del equipo.",
+  "Si un producto está agotado o no disponible, díselo con claridad y, si hay productos parecidos disponibles, ofrécelos como alternativa. No prometas fecha de llegada ni de reposición.",
+  "Si no tienes confirmada la respuesta (tiempos sin confirmar, garantías o casos especiales sin información, disponibilidad específica, o cualquier dato que no esté en el producto o en la información del negocio), NO la inventes: pasa con un asesor (handoff_to_human, motivo out_of_scope).",
+  "Pasa con un asesor (handoff_to_human) si el cliente pide hablar con una persona, presenta una queja o inconformidad, tiene un problema con un pedido o con la entrega, reclama una garantía, devolución o cambio, o tiene una solicitud especial.",
+  "Si preguntan dónde estamos ubicados, responde con la información oficial de ubicación (es la bodega de despacho), sin inventar otras direcciones, y pregúntale en qué ciudad está para confirmarle el envío.",
+  "Si el cliente describe una necesidad (\"algo para cocinar\", \"un regalo para mi hijo\"), busca con varios términos del producto que la resuelve (freidora, tablet, reloj, celular) antes de decir que no hay; si aun así no hay, ofrece el catálogo completo.",
 ]);
+
+/** Los textos que el negocio aprobó (supabase/provisioning/aslc/textos-aprobados.json). El CÓDIGO no trae ninguno: ni el aviso ni el nombre de ninguna persona. */
+export interface TextosAprobadosAslc {
+  aviso: string;
+  /** Lo que se le dice al cliente cuando contesta "sí" al aviso: nombra a la persona responsable que indicó el negocio. */
+  tras_aviso_confirma: string;
+  /** Respuesta del negocio a "¿dónde están ubicados?". */
+  ubicacion: string;
+  /** Respuesta del negocio a un cliente que desconfía o pregunta si es una estafa. */
+  desconfianza: string;
+}
+
+/** Lanza si falta alguno de los textos aprobados, está vacío o trae espacios en los bordes; el aviso se verifica byte a byte. */
+export function verificarTextosAprobados(t: TextosAprobadosAslc): void {
+  verificarAviso(t.aviso);
+  for (const k of ["tras_aviso_confirma", "ubicacion", "desconfianza"] as const) {
+    const v = t[k];
+    if (typeof v !== "string" || v.trim().length === 0 || v !== v.trim()) throw new Error(`textos-aprobados.json: '${k}' debe ser un texto no vacío y sin espacios en los bordes`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Configuración completa
@@ -106,6 +158,8 @@ export const POLITICAS_ASLC: readonly string[] = Object.freeze([
 export interface EntradaConfiguracion {
   /** Aviso obligatorio (de textos-aprobados.json): se verifica byte a byte. */
   aviso: string;
+  /** Respuesta al "sí" del cliente (de textos-aprobados.json, nombra a la responsable). Sin ella, el texto neutro de TEXTOS_ASLC. */
+  trasAvisoConfirma?: string;
   /** Id (dulabs_miembros_equipo.id) de la persona responsable: un miembro ACTIVO de ASLC con rol admin o agente. */
   miembroId: number;
   respaldoMiembroId?: number | null;
@@ -133,7 +187,7 @@ export function configuracionCompletaAslc(e: EntradaConfiguracion): CheckoutOpci
       modo: "aceptacion_humana",
       validacion_resumen: "boton_datos_correctos",
       mostrar_numero_pedido: d.mostrarNumeroPedido,
-      textos: { aviso: e.aviso, tras_aviso_confirma: t.trasAvisoConfirma },
+      textos: { aviso: e.aviso, tras_aviso_confirma: e.trasAvisoConfirma ?? t.trasAvisoConfirma },
       responsable: { miembro_id: e.miembroId, respaldo_miembro_id: e.respaldoMiembroId ?? null, canales: ["panel"] },
       aceptan: d.aceptan,
       reserva: { tipo: "ttl", minutos: d.reservaMinutos },
@@ -170,11 +224,24 @@ export function configuracionCompletaAslc(e: EntradaConfiguracion): CheckoutOpci
   return r.data;
 }
 
-/** negocio (JSON de la fila): nombre, nota de envío para la persona responsable y las políticas para el modelo. Sin saludo, tono ni conocimiento inventados. */
-export function negocioCompletoAslc(): BusinessConfig {
+/**
+ * negocio (JSON de la fila): nombre, estilo de atención, políticas para el modelo, nota de envío para la persona responsable y, con los textos
+ * aprobados, la información oficial del negocio (ubicación de la bodega, respuesta a quien desconfía y horario del asistente). Sin saludo inventado.
+ */
+export function negocioCompletoAslc(textos?: Pick<TextosAprobadosAslc, "ubicacion" | "desconfianza">): BusinessConfig {
+  const conocimiento = textos
+    ? [
+        { tema: "Ubicación de la bodega", info: textos.ubicacion },
+        { tema: "Si el cliente desconfía o pregunta si es una estafa", info: textos.desconfianza },
+        { tema: "Horario del asistente", info: "Este asistente atiende las 24 horas del día, los 7 días de la semana." },
+      ]
+    : undefined;
   const r = businessConfigSchema.safeParse({
     nombre_negocio: DATOS_APROBADOS_ASLC.nombreNegocio,
+    tono: ESTILO_ASLC.tono,
+    personalidad: ESTILO_ASLC.personalidad,
     politicas: [...POLITICAS_ASLC],
+    ...(conocimiento ? { conocimiento } : {}),
     pedido: { nota_envio_domicilio: TEXTOS_ASLC.notaEnvioPanel },
   });
   if (!r.success) throw new Error(`el negocio de ASLC no es válido: ${r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
@@ -260,10 +327,11 @@ const DECLARE_ACTIVACION = `  v_tenant uuid;
   v_restringida text;`;
 
 /** 03 — configuración completa, SIN activar. */
-export function generarSqlConfiguracionCompleta(entrada: { aviso: string }): string {
-  const config = configuracionCompletaAslc({ aviso: entrada.aviso, miembroId: 1 });
+export function generarSqlConfiguracionCompleta(textos: TextosAprobadosAslc): string {
+  verificarTextosAprobados(textos);
+  const config = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1 });
   const jsonConfig = JSON.stringify(config, null, 2);
-  const jsonNegocio = JSON.stringify(negocioCompletoAslc(), null, 2);
+  const jsonNegocio = JSON.stringify(negocioCompletoAslc(textos), null, 2);
   if (jsonConfig.includes("$cfg$") || jsonNegocio.includes("$neg$")) throw new Error("el JSON contiene un delimitador reservado del script");
   return `${ENCABEZADO_COMUN("CONFIGURACIÓN COMPLETA DE AQUÍ SÍ LO COMPRAS, SIN ACTIVAR")}
 --
@@ -554,16 +622,101 @@ end $$;
 `;
 }
 
-/** Los archivos que genera este módulo (nombre -> contenido). 03 necesita el aviso aprobado (textos-aprobados.json). */
-export function archivosDeActivacion(aviso: string): Readonly<Record<string, string>> {
+/**
+ * 11 — ajustar el comportamiento con la fila YA habilitada (sin pausar ni reconfigurar nada más): el estilo, las políticas y la información oficial del
+ * negocio (negocio), el texto que recibe el cliente cuando contesta "sí" al aviso y la escritura de la transportadora. Es el cambio que lleva una fila
+ * cargada por el 03 ANTERIOR a exactamente lo que el 03 de hoy carga en una instalación nueva (una prueba lo verifica en una base local).
+ */
+export function generarSqlAjustarComportamiento(textos: TextosAprobadosAslc): string {
+  verificarTextosAprobados(textos);
+  const jsonNegocio = JSON.stringify(negocioCompletoAslc(textos), null, 2);
+  const transportadora = DATOS_APROBADOS_ASLC.transportadoraHabitual;
+  // Lo que el 03 de hoy carga es la verdad: si algo no coincide, no se genera un script que deje la fila distinta.
+  const vigente = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1 });
+  const trasAvisoVigente = vigente.cierre?.modo === "aceptacion_humana" ? vigente.cierre.textos.tras_aviso_confirma : undefined;
+  if (vigente.oficina?.transportadora !== transportadora || vigente.envios?.transportadora_habitual !== transportadora || trasAvisoVigente !== textos.tras_aviso_confirma || !vigente.envios?.tiempos) {
+    throw new Error("el ajuste no coincide con la configuración completa vigente");
+  }
+  const jsonTiempos = JSON.stringify(vigente.envios.tiempos, null, 2);
+  if (jsonNegocio.includes("$neg$") || jsonTiempos.includes("$tiempos$") || textos.tras_aviso_confirma.includes("$tras$") || transportadora.includes("'")) throw new Error("un texto contiene un delimitador reservado del script");
+  return `${ENCABEZADO_COMUN("AJUSTAR EL COMPORTAMIENTO DE AQUÍ SÍ LO COMPRAS (CON EL AGENTE YA HABILITADO)")}
+--
+-- Aplica lo que pidió el negocio sin pausar ni reconfigurar nada más:
+--   · negocio: estilo de atención (tono y personalidad), políticas y la información oficial (ubicación de la bodega, respuesta a quien desconfía, horario).
+--   · checkout_opciones: el texto que recibe el cliente cuando contesta "sí" al aviso (nombra a la responsable), la escritura de la transportadora y los textos de los tiempos de envío
+--     (Bogotá antes y después de las 11:30 y el resto de ciudades: el modelo los repite tal cual y el candado de envíos los acepta).
+-- NO toca: ia_pausada, ia_restringida_a, habilitado, el aviso obligatorio, la persona responsable, los módulos ni otros negocios.
+-- Se puede repetir sin efectos nuevos. Después: scripts/verificar-aslc-solo-lectura.mts --etapa=controlado (o publico) confirma que la fila sigue válida.
+
+do $$
+declare
+  v_tenant uuid;
+  v_phone text;
+  v_filas integer;
+  v_negocio jsonb := $neg$
+${jsonNegocio}
+$neg$::jsonb;
+  v_tras text := $tras$${textos.tras_aviso_confirma}$tras$;
+  v_tiempos jsonb := $tiempos$
+${jsonTiempos}
+$tiempos$::jsonb;
+begin
+${SQL_PASO_IDENTIDAD}
+
+  -- La fila del agente: UNA, con la credencial propia y la configuración completa cargada (sin candado, con el cierre por aceptación humana).
+  select count(*) into v_filas from public.dulabs_agente_runtime_config
+   where ${SQL_CONDICION_FILA_DE_PARTIDA} and checkout_opciones -> 'activacion_pendiente' is null and coalesce(checkout_opciones #>> '{cierre,modo}', '') = 'aceptacion_humana';
+  if v_filas <> 1 then
+    raise exception 'se esperaba la fila del agente de ASLC con la configuración completa cargada (sin candado y con el cierre por aceptación humana): corre antes 03_configurar_completo_sin_activar.sql; hay %', v_filas;
+  end if;
+
+  -- El aviso obligatorio sigue EXACTO (este script no lo toca; se comprueba por si alguien lo cambió).
+  if not exists (select 1 from public.dulabs_agente_runtime_config where ${SQL_CONDICION_FILA_DE_PARTIDA} and encode(sha256(convert_to(checkout_opciones #>> '{cierre,textos,aviso}', 'UTF8')), 'hex') = '${AVISO_OFICIAL_SHA256}') then
+    raise exception 'el aviso obligatorio guardado NO es el aprobado: no se ajusta nada';
+  end if;
+
+  update public.dulabs_agente_runtime_config
+     set negocio = v_negocio,
+         checkout_opciones = jsonb_set(jsonb_set(jsonb_set(jsonb_set(checkout_opciones,
+           '{cierre,textos,tras_aviso_confirma}', to_jsonb(v_tras)),
+           '{oficina,transportadora}', to_jsonb('${transportadora}'::text)),
+           '{envios,transportadora_habitual}', to_jsonb('${transportadora}'::text)),
+           '{envios,tiempos}', v_tiempos),
+         updated_at = now()
+   where ${SQL_CONDICION_FILA_DE_PARTIDA};
+  get diagnostics v_filas = row_count;
+  if v_filas <> 1 then
+    raise exception 'no se pudo actualizar exactamente UNA fila del agente (%): abortando', v_filas;
+  end if;
+
+  -- Comprobación final dentro de la misma sentencia.
+  if not exists (
+    select 1 from public.dulabs_agente_runtime_config
+     where ${SQL_CONDICION_FILA_DE_PARTIDA}
+       and negocio = v_negocio
+       and checkout_opciones #>> '{cierre,textos,tras_aviso_confirma}' = v_tras
+       and checkout_opciones #>> '{oficina,transportadora}' = '${transportadora}'
+       and checkout_opciones #>> '{envios,transportadora_habitual}' = '${transportadora}'
+       and checkout_opciones #> '{envios,tiempos}' = v_tiempos
+       and checkout_opciones -> 'activacion_pendiente' is null
+  ) then
+    raise exception 'la fila del agente de ASLC no quedó como se esperaba: abortando';
+  end if;
+end $$;
+`;
+}
+
+/** Los archivos que genera este módulo (nombre -> contenido). Los textos aprobados vienen de textos-aprobados.json (el código no trae ninguno). */
+export function archivosDeActivacion(textos: TextosAprobadosAslc): Readonly<Record<string, string>> {
   return Object.freeze({
-    "03_configurar_completo_sin_activar.sql": generarSqlConfiguracionCompleta({ aviso }),
+    "03_configurar_completo_sin_activar.sql": generarSqlConfiguracionCompleta(textos),
     "05_activacion_controlada.sql": generarSqlActivacionControlada(),
     "06_abrir_al_publico.sql": generarSqlAbrirAlPublico(),
     "07_freno_de_emergencia.sql": generarSqlFrenoDeEmergencia(),
     "08_ver_equipo_solo_lectura.sql": generarSqlVerEquipo(),
     "09_cambiar_responsable.sql": generarSqlCambiarResponsable(),
     "10_reanudar_tras_freno.sql": generarSqlReanudarTrasFreno(),
+    "11_ajustar_comportamiento.sql": generarSqlAjustarComportamiento(textos),
   });
 }
 
