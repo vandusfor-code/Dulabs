@@ -78,7 +78,10 @@ declare
       "tras_aviso_confirma": "¡Gracias por confirmar! 🙌 Se comunicará contigo la asesora Patricia Castro, quien se encargará del proceso de envío y despacho de tu producto.",
       "aceptado": "¡Buenas noticias! 🎉 Tu pedido {pedido} fue aceptado. Recuerda que el pago es contraentrega: ten el dinero disponible cuando lo recibas. Si tienes alguna duda, escríbenos por este mismo chat.",
       "rechazado": "Hola 👋 Lamentamos informarte que tu pedido {pedido} no pudo ser aceptado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos.",
-      "cancelado": "Hola 👋 Tu pedido {pedido} fue cancelado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos."
+      "cancelado": "Hola 👋 Tu pedido {pedido} fue cancelado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos.",
+      "en_preparacion": "Hola 👋 Tu pedido {pedido} ya está en preparación. Si tienes alguna duda, escríbenos por este mismo chat.",
+      "enviado": "¡Buenas noticias! 📦 Tu pedido {pedido} ya fue enviado. Recuerda que el pago es contraentrega: ten el dinero disponible cuando lo recibas. Si tienes alguna duda, escríbenos por este mismo chat.",
+      "entregado": "Hola 👋 Tu pedido {pedido} figura como entregado. ¡Gracias por tu compra! Si tienes alguna duda, escríbenos por este mismo chat."
     },
     "responsable": {
       "miembro_id": 1,

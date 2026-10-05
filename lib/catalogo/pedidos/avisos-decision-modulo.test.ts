@@ -181,11 +181,11 @@ describe("3B.9E · de punta a punta: ASLC recibe SU mensaje de decisión y NING�
 describe("3B.9E · el cableado de producción usa los módulos correctos", () => {
   const leer = (ruta: string) => readFileSync(join(process.cwd(), ruta), "utf8").replace(/\r\n/g, "\n");
 
-  it("el gancho de 'Por aceptar' (decisiones) usa MODULOS_AVISOS_DE_DECISION; las rutas de gestión del panel siguen con el notificador de siempre", () => {
+  it("el gancho de 'Por aceptar' (decisiones) usa MODULOS_AVISOS_DE_DECISION; las rutas de gestión del panel usan el notificador de las etapas (Fase 3B.9F), sin el módulo de decisiones", () => {
     assert.match(leer("lib/catalogo/pedidos/mensajes-decision.ts"), /productionNotificador\(input\.supabase, \{ modulos: MODULOS_AVISOS_DE_DECISION \}\)/);
     for (const ruta of ["app/api/dashboard/pedidos/[pedido]/route.ts", "app/api/dashboard/pedidos/[pedido]/notificaciones/route.ts"]) {
       const fuente = leer(ruta);
-      assert.match(fuente, /productionNotificador\(supabase\)/, ruta);
+      assert.match(fuente, /productionNotificadorDelPanel\(supabase\)/, ruta);
       assert.doesNotMatch(fuente, /MODULOS_AVISOS_DE_DECISION|avisos_decision_pedidos/, ruta + ": las etapas del pedido no usan el módulo nuevo");
     }
   });

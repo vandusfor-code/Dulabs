@@ -10,7 +10,7 @@ import { withCatalog } from "@/lib/catalogo/http";
 import { ORDERS_MODULE } from "@/lib/catalogo/auth";
 import { reintentarNotificacionGestion } from "@/lib/catalogo/pedidos/gestion";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
-import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
+import { productionNotificadorDelPanel } from "@/lib/catalogo/pedidos/avisos-etapa-produccion";
 
 export const runtime = "nodejs";
 
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     "orders",
     async ({ supabase, actor }) => {
       const body = await request.json().catch(() => null);
-      return reintentarNotificacionGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), body, productionNotificador(supabase));
+      return reintentarNotificacionGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), body, productionNotificadorDelPanel(supabase));
     },
     { module: ORDERS_MODULE, recurso: "pedidos_escritura" },
   );

@@ -17,6 +17,7 @@
  *        09  cambiar de responsable            -> con la fila ya habilitada (p. ej. cuando exista la persona real)
  *        12  avisos de decisión al cliente     -> textos de aceptado / rechazado / cancelado + módulo avisos_decision_pedidos (SIN los avisos genéricos de cada etapa)
  *        13  aviso por correo a la responsable -> además del panel, un correo (solo el número de pedido y el enlace) cuando un pedido espera su aceptación
+ *        14  avisos de etapa al cliente        -> textos de en preparación / enviado / entregado + módulo avisos_etapa_pedidos (SIN las plantillas de la plataforma)
  *      Cada uno es UNA sola sentencia (un bloque DO atómico) con guardas: si una falla, no queda nada. Este código nunca toca una base.
  *
  * Qué NO hace: no activa nada por sí mismo, no crea personas (el responsable es un id que el dueño pone y la base verifica), no enciende
@@ -27,6 +28,7 @@ import { businessConfigSchema, parseAgentConfig, type BusinessConfig } from "@/l
 import { CREDENCIAL_GEMINI_ASLC, DATOS_APROBADOS_ASLC, IDENTIDAD_ASLC_PRODUCCION } from "@/lib/agente/aprovisionamiento";
 import { checkoutOpcionesSchema, type CheckoutOpciones, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
 import { MARCADORES_PERMITIDOS, plantillaValida } from "@/lib/agente/textos-cliente";
+import { ETAPAS_CON_TEXTO, MARCADORES_ETAPA } from "@/lib/agente/textos-etapa";
 import type { ModuloId } from "@/lib/tenant-modulos";
 
 // ---------------------------------------------------------------------------
@@ -76,7 +78,8 @@ export const DECISIONES_ASLC = Object.freeze({
 /**
  * Textos al cliente PROPUESTOS (no son del negocio). Sin ninguno de los opcionales el sistema usa sus mensajes neutros de siempre, por eso NO se
  * configuran los de envíos sin cobertura / no verificable / error (rige el traspaso y el mensaje neutro). Los de aceptado / rechazado / cancelado (Fase 3B.9E)
- * SÍ se proponen: salen con el módulo avisos_decision_pedidos, que NO enciende los avisos genéricos de otro negocio (notificaciones_pedidos sigue apagado).
+ * SÍ se proponen: salen con el módulo avisos_decision_pedidos, que NO enciende los avisos genéricos de otro negocio (notificaciones_pedidos sigue apagado). Los de etapa
+ * (en preparación / enviado / entregado, Fase 3B.9F) igual: salen con el módulo avisos_etapa_pedidos.
  */
 export const TEXTOS_ASLC = Object.freeze({
   /** Respuesta ÚNICA al "sí" del cliente tras el aviso (el pedido ya quedó con una persona; el "sí" no confirma nada). */
@@ -104,6 +107,15 @@ export const TEXTOS_ASLC = Object.freeze({
   avisoAceptado: "¡Buenas noticias! 🎉 Tu pedido {pedido} fue aceptado. Recuerda que el pago es contraentrega: ten el dinero disponible cuando lo recibas. Si tienes alguna duda, escríbenos por este mismo chat.",
   avisoRechazado: "Hola 👋 Lamentamos informarte que tu pedido {pedido} no pudo ser aceptado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos.",
   avisoCancelado: "Hola 👋 Tu pedido {pedido} fue cancelado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos.",
+  /**
+   * Avisos al cliente cuando su pedido, ya aceptado, avanza de etapa (Fase 3B.9F). PROPUESTOS por DuLabs, no del negocio, con las mismas reglas que los de decisión: sin nombres de
+   * personas, sin fechas, guías ni transportadoras, sin prometer que se volverá a avisar (la ventana de 24 h de WhatsApp puede estar cerrada) y solo con {pedido}. Solo repiten lo que el
+   * negocio ya dijo (pago contraentrega y tener el dinero disponible). Si el negocio aprueba otros, van en textos-aprobados.json (en_preparacion / enviado / entregado) y tienen prioridad.
+   * Solo salen con el módulo avisos_etapa_pedidos y dentro de la ventana de 24 h de WhatsApp.
+   */
+  avisoEnPreparacion: "Hola 👋 Tu pedido {pedido} ya está en preparación. Si tienes alguna duda, escríbenos por este mismo chat.",
+  avisoEnviado: "¡Buenas noticias! 📦 Tu pedido {pedido} ya fue enviado. Recuerda que el pago es contraentrega: ten el dinero disponible cuando lo recibas. Si tienes alguna duda, escríbenos por este mismo chat.",
+  avisoEntregado: "Hola 👋 Tu pedido {pedido} figura como entregado. ¡Gracias por tu compra! Si tienes alguna duda, escríbenos por este mismo chat.",
 });
 
 /**
@@ -157,6 +169,10 @@ export interface TextosAprobadosAslc {
   aceptado?: string | null;
   rechazado?: string | null;
   cancelado?: string | null;
+  /** Opcionales (Fase 3B.9F): avisos de etapa aprobados por el negocio; tienen prioridad sobre la propuesta de TEXTOS_ASLC. Solo admiten {pedido}. */
+  en_preparacion?: string | null;
+  enviado?: string | null;
+  entregado?: string | null;
 }
 
 /** Lanza si un mensaje de decisión aprobado (opcional) no es una plantilla válida: texto, sin espacios en los bordes, ≤ 500 caracteres y solo con {pedido} (y {motivo} en rechazo y cancelación). */
@@ -177,10 +193,29 @@ export function decisionDe(t: Pick<TextosAprobadosAslc, "aceptado" | "rechazado"
   return r;
 }
 
+/** Lanza si un aviso de etapa aprobado (opcional) no es una plantilla válida: texto, sin espacios en los bordes, ≤ 500 caracteres y solo con {pedido}. */
+function verificarTextosDeEtapa(t: Pick<TextosAprobadosAslc, "en_preparacion" | "enviado" | "entregado">): void {
+  for (const k of ETAPAS_CON_TEXTO) {
+    const v = t[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== "string" || v.trim().length === 0 || v !== v.trim() || v.length > 500 || !plantillaValida(v, MARCADORES_ETAPA)) {
+      throw new Error("textos-aprobados.json: '" + k + "' debe ser un texto de hasta 500 caracteres, sin espacios en los bordes y solo con el marcador {pedido}");
+    }
+  }
+}
+
+/** Lo que el negocio aprobó para las etapas (solo las claves con texto): el resto lo cubre la propuesta de TEXTOS_ASLC. */
+export function etapaDe(t: Pick<TextosAprobadosAslc, "en_preparacion" | "enviado" | "entregado">): { en_preparacion?: string; enviado?: string; entregado?: string } {
+  const r: { en_preparacion?: string; enviado?: string; entregado?: string } = {};
+  for (const k of ETAPAS_CON_TEXTO) if (typeof t[k] === "string") r[k] = t[k] as string;
+  return r;
+}
+
 /** Lanza si falta alguno de los textos aprobados, está vacío o trae espacios en los bordes; el aviso se verifica byte a byte. */
 export function verificarTextosAprobados(t: TextosAprobadosAslc): void {
   verificarAviso(t.aviso);
   verificarTextosDeDecision(t);
+  verificarTextosDeEtapa(t);
   for (const k of ["tras_aviso_confirma", "ubicacion", "desconfianza"] as const) {
     const v = t[k];
     if (typeof v !== "string" || v.trim().length === 0 || v !== v.trim()) throw new Error(`textos-aprobados.json: '${k}' debe ser un texto no vacío y sin espacios en los bordes`);
@@ -201,6 +236,8 @@ export interface EntradaConfiguracion {
   respaldoMiembroId?: number | null;
   /** Mensajes de decisión aprobados por el negocio (de textos-aprobados.json); sin ellos, la propuesta de TEXTOS_ASLC. */
   decision?: { aceptado?: string; rechazado?: string; cancelado?: string };
+  /** Avisos de etapa aprobados por el negocio (de textos-aprobados.json); sin ellos, la propuesta de TEXTOS_ASLC. */
+  etapa?: { en_preparacion?: string; enviado?: string; entregado?: string };
 }
 
 /** checkout_opciones COMPLETO (sin el candado activacion_pendiente), validado con el esquema del runtime. */
@@ -231,6 +268,9 @@ export function configuracionCompletaAslc(e: EntradaConfiguracion): CheckoutOpci
         aceptado: e.decision?.aceptado ?? t.avisoAceptado,
         rechazado: e.decision?.rechazado ?? t.avisoRechazado,
         cancelado: e.decision?.cancelado ?? t.avisoCancelado,
+        en_preparacion: e.etapa?.en_preparacion ?? t.avisoEnPreparacion,
+        enviado: e.etapa?.enviado ?? t.avisoEnviado,
+        entregado: e.etapa?.entregado ?? t.avisoEntregado,
       },
       responsable: { miembro_id: e.miembroId, respaldo_miembro_id: e.respaldoMiembroId ?? null, canales: ["panel"] },
       aceptan: d.aceptan,
@@ -373,7 +413,7 @@ const DECLARE_ACTIVACION = `  v_tenant uuid;
 /** 03 — configuración completa, SIN activar. */
 export function generarSqlConfiguracionCompleta(textos: TextosAprobadosAslc): string {
   verificarTextosAprobados(textos);
-  const config = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1, decision: decisionDe(textos) });
+  const config = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1, decision: decisionDe(textos), etapa: etapaDe(textos) });
   const jsonConfig = JSON.stringify(config, null, 2);
   const jsonNegocio = JSON.stringify(negocioCompletoAslc(textos), null, 2);
   if (jsonConfig.includes("$cfg$") || jsonNegocio.includes("$neg$")) throw new Error("el JSON contiene un delimitador reservado del script");
@@ -918,6 +958,112 @@ end $$;
 `;
 }
 
+/** Módulo que enciende SOLO el aviso al cliente de las etapas "en preparación", "enviado" y "entregado" con el texto del negocio (no las plantillas de la plataforma). */
+export const MODULO_AVISOS_ETAPA: ModuloId = "avisos_etapa_pedidos";
+
+/**
+ * 14 — avisos al cliente cuando su pedido, ya aceptado, avanza de etapa (en preparación, enviado, entregado). Con la configuración completa ya cargada: guarda los tres textos
+ * en checkout_opciones.cierre.textos y enciende el módulo avisos_etapa_pedidos. NO enciende notificaciones_pedidos (que mandaría las plantillas de la plataforma, con el tono de
+ * otro negocio) y exige que siga apagado. Hay que correrlo DESPUÉS de desplegar el código de la Fase 3B.9F (el esquema anterior rechaza estas claves y el agente callaría).
+ * Se puede repetir.
+ */
+export function generarSqlAvisosDeEtapa(textos: TextosAprobadosAslc): string {
+  verificarTextosAprobados(textos);
+  const vigente = configuracionCompletaAslc({ aviso: textos.aviso, trasAvisoConfirma: textos.tras_aviso_confirma, miembroId: 1, decision: decisionDe(textos), etapa: etapaDe(textos) });
+  const cierre = vigente.cierre;
+  if (cierre?.modo !== "aceptacion_humana" || !cierre.textos.en_preparacion || !cierre.textos.enviado || !cierre.textos.entregado) throw new Error("la configuración vigente no trae los tres avisos de etapa");
+  const { en_preparacion, enviado, entregado } = cierre.textos;
+  if (en_preparacion.includes("$ep$") || enviado.includes("$en$") || entregado.includes("$et$")) throw new Error("un texto contiene un delimitador reservado del script");
+  return `${ENCABEZADO_COMUN("AVISOS AL CLIENTE CUANDO SU PEDIDO AVANZA DE ETAPA (AQUÍ SÍ LO COMPRAS)")}
+--
+-- TEXTOS PROPUESTOS por DuLabs (no son del negocio): léelos abajo antes de correr. Si el negocio prefiere otros, se ponen en textos-aprobados.json
+-- (en_preparacion / enviado / entregado) y este archivo se regenera. Solo admiten el marcador {pedido} (el número público del pedido): ni datos del cliente ni
+-- un motivo escrito por el equipo. No prometen fechas, guías ni transportadoras, ni que se volverá a avisar.
+--
+-- PARA QUÉ: hoy, cuando una persona del equipo marca un pedido "en preparación", "enviado" o "entregado" en Pedidos, el cliente NO recibe nada: esos avisos dependían de
+--   notificaciones_pedidos, que manda plantillas de la plataforma (el tono de otro negocio) y está apagado a propósito para ASLC. Este script le da a ASLC SUS textos.
+--
+-- ORDEN: correr SOLO DESPUÉS de que el código de los avisos de etapa (Fase 3B.9F) esté desplegado en producción. Con el código anterior, la configuración con estas
+--   claves sería inválida y el agente callaría.
+--
+-- QUÉ HACE (todo o nada, con la fila ya habilitada o no):
+--   1. Guarda los tres textos en checkout_opciones.cierre.textos (en_preparacion, enviado, entregado) de la fila del agente de ASLC.
+--   2. Enciende el módulo avisos_etapa_pedidos de ASLC: SOLO el aviso de esas tres etapas, dentro de la ventana de 24 h de WhatsApp, una sola vez por pedido y etapa,
+--      con el número y el token de ASLC. No cambia el estado de ningún pedido.
+-- QUÉ NO HACE: no enciende notificaciones_pedidos (avisos genéricos con plantillas de la plataforma: sigue apagado y este script se niega a correr si alguien lo
+--   encendió), no toca ia_pausada, ia_restringida_a, habilitado, el aviso obligatorio, la persona responsable, los mensajes de decisión ni otros negocios.
+-- LÍMITE: WhatsApp solo deja escribir un texto libre dentro de las 24 h siguientes al último mensaje del cliente; pasado ese plazo el aviso no sale (el panel lo muestra).
+-- Se puede repetir sin efectos nuevos.
+--
+-- REVERSA: apagar SOLO el módulo (los textos quedan guardados y sin uso):
+--   update public.dulabs_tenant_modulos set habilitado = false, updated_at = now()
+--    where id_tenant = '${TENANT}'::uuid and modulo = '${MODULO_AVISOS_ETAPA}';
+
+do $$
+declare
+  v_tenant uuid;
+  v_phone text;
+  v_filas integer;
+  v_en_preparacion text := $ep$${en_preparacion}$ep$;
+  v_enviado text := $en$${enviado}$en$;
+  v_entregado text := $et$${entregado}$et$;
+begin
+${SQL_PASO_IDENTIDAD}
+
+  -- La fila del agente: UNA, con la credencial propia y la configuración completa cargada (sin candado, con el cierre por aceptación humana).
+  select count(*) into v_filas from public.dulabs_agente_runtime_config
+   where ${SQL_CONDICION_FILA_DE_PARTIDA} and checkout_opciones -> 'activacion_pendiente' is null and coalesce(checkout_opciones #>> '{cierre,modo}', '') = 'aceptacion_humana';
+  if v_filas <> 1 then
+    raise exception 'se esperaba la fila del agente de ASLC con la configuración completa cargada (sin candado y con el cierre por aceptación humana): corre antes 03_configurar_completo_sin_activar.sql; hay %', v_filas;
+  end if;
+
+  -- El aviso obligatorio sigue EXACTO (este script no lo toca; se comprueba por si alguien lo cambió).
+  if not exists (select 1 from public.dulabs_agente_runtime_config where ${SQL_CONDICION_FILA_DE_PARTIDA} and encode(sha256(convert_to(checkout_opciones #>> '{cierre,textos,aviso}', 'UTF8')), 'hex') = '${AVISO_OFICIAL_SHA256}') then
+    raise exception 'el aviso obligatorio guardado NO es el aprobado: no se ajusta nada';
+  end if;
+
+  -- notificaciones_pedidos debe seguir APAGADO: encendido mandaría también las plantillas de la plataforma (el tono de otro negocio) en cada etapa del pedido.
+  if exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = 'notificaciones_pedidos' and habilitado) then
+    raise exception 'el módulo notificaciones_pedidos está encendido para ASLC: apágalo antes (mandaría avisos genéricos de otro negocio)';
+  end if;
+
+  update public.dulabs_agente_runtime_config
+     set checkout_opciones = jsonb_set(jsonb_set(jsonb_set(checkout_opciones,
+           '{cierre,textos,en_preparacion}', to_jsonb(v_en_preparacion)),
+           '{cierre,textos,enviado}', to_jsonb(v_enviado)),
+           '{cierre,textos,entregado}', to_jsonb(v_entregado)),
+         updated_at = now()
+   where ${SQL_CONDICION_FILA_DE_PARTIDA};
+  get diagnostics v_filas = row_count;
+  if v_filas <> 1 then
+    raise exception 'no se pudo actualizar exactamente UNA fila del agente (%): abortando', v_filas;
+  end if;
+
+  insert into public.dulabs_tenant_modulos (id_tenant, modulo, habilitado)
+  values (v_tenant, '${MODULO_AVISOS_ETAPA}', true)
+  on conflict (id_tenant, modulo) do update set habilitado = true, updated_at = now();
+
+  -- Comprobación final dentro de la misma sentencia.
+  if not exists (
+    select 1 from public.dulabs_agente_runtime_config
+     where ${SQL_CONDICION_FILA_DE_PARTIDA}
+       and checkout_opciones #>> '{cierre,textos,en_preparacion}' = v_en_preparacion
+       and checkout_opciones #>> '{cierre,textos,enviado}' = v_enviado
+       and checkout_opciones #>> '{cierre,textos,entregado}' = v_entregado
+       and checkout_opciones -> 'activacion_pendiente' is null
+  ) then
+    raise exception 'la fila del agente de ASLC no quedó como se esperaba: abortando';
+  end if;
+  if not exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = '${MODULO_AVISOS_ETAPA}' and habilitado) then
+    raise exception 'el módulo ${MODULO_AVISOS_ETAPA} no quedó encendido: abortando';
+  end if;
+  if exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = 'notificaciones_pedidos' and habilitado) then
+    raise exception 'notificaciones_pedidos quedó encendido: abortando';
+  end if;
+end $$;
+`;
+}
+
 /** Los archivos que genera este módulo (nombre -> contenido). Los textos aprobados vienen de textos-aprobados.json (el código no trae ninguno). */
 export function archivosDeActivacion(textos: TextosAprobadosAslc): Readonly<Record<string, string>> {
   return Object.freeze({
@@ -931,6 +1077,7 @@ export function archivosDeActivacion(textos: TextosAprobadosAslc): Readonly<Reco
     "11_ajustar_comportamiento.sql": generarSqlAjustarComportamiento(textos),
     "12_avisos_de_decision.sql": generarSqlAvisosDeDecision(textos),
     "13_aviso_por_correo.sql": generarSqlAvisoPorCorreo(),
+    "14_avisos_de_etapa.sql": generarSqlAvisosDeEtapa(textos),
   });
 }
 

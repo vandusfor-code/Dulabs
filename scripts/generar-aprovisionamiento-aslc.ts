@@ -1,9 +1,9 @@
 /**
  * FASE 3B.9A / 3B.9D — genera los SQL de supabase/provisioning/aslc/ desde lib/agente/aprovisionamiento.ts (02) y lib/agente/activacion-aslc.ts
- * (03, 05, 06, 07, 08, 09, 10, 11 y 12). No se conecta a ninguna base de datos: solo escribe los archivos (que el dueño revisa y corre). Una prueba verifica
+ * (03, 05, 06, 07, 08, 09, 10, 11, 12, 13 y 14). No se conecta a ninguna base de datos: solo escribe los archivos (que el dueño revisa y corre). Una prueba verifica
  * que cada archivo del repositorio es exactamente la salida de su función. Los textos del negocio (el aviso obligatorio, la respuesta tras el "sí", la
  * ubicación y la respuesta a quien desconfía) se leen de textos-aprobados.json: el código no trae ninguno (los mensajes de aceptado / rechazado / cancelado
- * son opcionales ahí: sin ellos rige la propuesta de TEXTOS_ASLC). El aviso se verifica byte a byte (SHA-256) antes de escribir nada.
+ * y los avisos de en_preparacion / enviado / entregado son opcionales ahí: sin ellos rige la propuesta de TEXTOS_ASLC). El aviso se verifica byte a byte (SHA-256) antes de escribir nada.
  *
  *   npx tsx scripts/generar-aprovisionamiento-aslc.ts
  */
@@ -23,6 +23,9 @@ const textos = {
   aceptado: json.aceptado,
   rechazado: json.rechazado,
   cancelado: json.cancelado,
+  en_preparacion: json.en_preparacion,
+  enviado: json.enviado,
+  entregado: json.entregado,
 } as TextosAprobadosAslc;
 verificarTextosAprobados(textos);
 

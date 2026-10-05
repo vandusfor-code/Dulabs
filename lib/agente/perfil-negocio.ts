@@ -25,6 +25,7 @@ import { DELIVERY_TYPES, PAYMENT_METHODS, POLICY_MINUTES_MAX, type AcceptancePol
 import { DOCUMENT_RETENTION_DAYS_MAX, DOCUMENT_TYPE_CODE, DOCUMENTO_SIN_TIPO } from "@/lib/catalogo/pedidos/documento";
 import { normalizar } from "@/lib/agente/lenguaje/normalizar";
 import { MARCADORES_PERMITIDOS, plantillaValida, type ClaveTextoDecision } from "@/lib/agente/textos-cliente";
+import { MARCADORES_ETAPA } from "@/lib/agente/textos-etapa";
 
 // ---------------------------------------------------------------------------
 // Vocabulario
@@ -116,6 +117,11 @@ const textoControlado = (max: number) =>
  */
 const plantillaDecision = (clave: ClaveTextoDecision) =>
   textoControlado(500).refine((s) => plantillaValida(s, MARCADORES_PERMITIDOS[clave]), "solo admite los marcadores {pedido} y, en rechazo y cancelación, {motivo}");
+/**
+ * Fase 3B.9F — texto del negocio para el cliente cuando su pedido, ya aceptado, avanza de etapa ("en preparación", "enviado", "entregado"). Se envía tal cual; solo admite
+ * el marcador cerrado {pedido} (textos-cliente.ts): ningún dato del cliente ni un motivo escrito por el equipo.
+ */
+const plantillaEtapa = () => textoControlado(500).refine((s) => plantillaValida(s, MARCADORES_ETAPA), "solo admite el marcador {pedido}");
 /** Fase 3B.8 — texto fijo de envíos: sin marcadores (se envía exactamente como está escrito). */
 const textoSinMarcadores = (max: number) => textoControlado(max).refine((s) => plantillaValida(s, []), "este texto no admite llaves {}");
 /** Ciudad o municipio normalizado (minúsculas, sin tildes ni signos) para compararlo con lo que escribe el cliente. */
@@ -196,6 +202,10 @@ const cierreSchema = z.discriminatedUnion("modo", [
           aceptado: plantillaDecision("aceptado").optional(),
           rechazado: plantillaDecision("rechazado").optional(),
           cancelado: plantillaDecision("cancelado").optional(),
+          /** Fase 3B.9F (opcionales: sin ellos NO se le escribe nada al cliente al cambiar de etapa): aviso de "en preparación", "enviado" y "entregado". */
+          en_preparacion: plantillaEtapa().optional(),
+          enviado: plantillaEtapa().optional(),
+          entregado: plantillaEtapa().optional(),
         })
         .strict(),
       /** D8: persona responsable (miembro del equipo DEL MISMO negocio), su respaldo y por dónde se le avisa. */

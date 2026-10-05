@@ -18,7 +18,7 @@ import { ORDERS_MODULE } from "@/lib/catalogo/auth";
 import { accionGestion, detalleGestion, eliminarGestion } from "@/lib/catalogo/pedidos/gestion";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import { productionPanelFuentes } from "@/lib/catalogo/pedidos/panel-fuentes";
-import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
+import { productionNotificadorDelPanel } from "@/lib/catalogo/pedidos/avisos-etapa-produccion";
 
 export const runtime = "nodejs";
 
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     request,
     "read",
     async ({ supabase, actor, canManageOrders }) =>
-      detalleGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), { fuentes: productionPanelFuentes(supabase), verTelefono: canManageOrders }, productionNotificador(supabase)),
+      detalleGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), { fuentes: productionPanelFuentes(supabase), verTelefono: canManageOrders }, productionNotificadorDelPanel(supabase)),
     { module: ORDERS_MODULE, recurso: "pedidos_lectura" },
   );
 }
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     async ({ supabase, actor, memberId }) => {
       const body = await request.json().catch(() => null);
       // Bloque 31: tras aplicar el cambio, aviso al cliente por WhatsApp (solo negocios con el módulo).
-      return accionGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), body, memberId, productionNotificador(supabase));
+      return accionGestion(productionOrderEngine(supabase), actor.tenantId, pedido.toUpperCase(), body, memberId, productionNotificadorDelPanel(supabase));
     },
     { module: ORDERS_MODULE, recurso: "pedidos_escritura" },
   );
