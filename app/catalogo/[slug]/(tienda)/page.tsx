@@ -3,10 +3,11 @@ import { notFound } from "next/navigation";
 import { PublicCatalog } from "@/components/catalogo-publico/PublicCatalog";
 import { TarjetaProducto } from "@/components/catalogo-publico/tienda/TarjetaProducto";
 import { TiendaInicio } from "@/components/catalogo-publico/tienda/TiendaInicio";
+import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/TiendaInicioTecnologia";
 import { esListado } from "@/lib/catalogo/inicio";
 import { cargarCatalogoPublico, cargarInicio, cargarTienda, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
-import { storefrontConfigFor } from "@/lib/catalogo/vitrina";
+import { storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
 
 // Catálogo público con precios al DETAL: /catalogo/{slug}. Sin parámetros
 // muestra el INICIO de la tienda; con búsqueda, categoría, página o ?todo=1,
@@ -41,7 +42,11 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
   if (!listado) {
     const home = await cargarInicio(slug);
     if (!home) notFound();
-    return <TiendaInicio home={home} config={storefrontConfigFor(tienda.slug)} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
+    const config = storefrontConfigFor(tienda.slug);
+    // Vitrina con tema "tecnologia": su propio inicio (el header navy y la navegación inferior los pone el marco de la tienda).
+    const tecnologia = tecnologiaOf(config);
+    if (tecnologia) return <TiendaInicioTecnologia home={home} contenido={tecnologia} basePath={basePath} listPath={listPath} />;
+    return <TiendaInicio home={home} config={config} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
   }
 
   const data = await cargarCatalogoPublico(slug, "retail", undefined, q, categoria, paginaDe(sp.pagina));

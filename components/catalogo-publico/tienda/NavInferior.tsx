@@ -16,7 +16,7 @@ const item = "flex h-14 flex-1 flex-col items-center justify-center gap-1 text-[
  * Carrito). Oculta en escritorio y en la ficha de producto (que tiene su
  * propia barra de compra).
  */
-export function NavInferior({ basePath, categoriasHref }: { basePath: string; categoriasHref: string }) {
+export function NavInferior({ basePath, categoriasHref, ocultoEnInicio = false }: { basePath: string; categoriasHref: string; /** Vitrinas con tema propio: en el inicio las dibuja su propia navegación. */ ocultoEnInicio?: boolean }) {
   const { abrirCarrito } = useTienda();
   const { items } = useCarrito();
   const pathname = usePathname();
@@ -24,6 +24,7 @@ export function NavInferior({ basePath, categoriasHref }: { basePath: string; ca
   if (pathname.startsWith(`${basePath}/productos/`)) return null;
 
   const enInicio = pathname === basePath && !params.get("q") && !params.get("categoria") && !params.get("pagina") && !params.get("todo");
+  if (ocultoEnInicio && enInicio) return null;
   return (
     <nav
       aria-label="Navegación de la tienda"

@@ -2480,6 +2480,60 @@ body {
   font-family: var(--font-serif-catalogo), ui-serif, Georgia, serif;
 }
 
+/* ---------- Catálogo público · tema "tecnologia" (tienda de tecnología) ----------
+   Se SUMA a .catalogo-tienda en las vitrinas que lo piden (lib/catalogo/vitrina.ts: tema = "tecnologia"). Redefine los MISMOS tokens, así el carrito, el
+   listado y la ficha toman la paleta nueva sin duplicarse: azul eléctrico sobre navy y blanco, y sans en todos los títulos (nada de serif). */
+.catalogo-tienda.tienda-tecnologia {
+  --color-ink: #ffffff;
+  --color-ink-2: #f5f7fa;
+  --color-card: #ffffff;
+  --color-edge: #e5eaf0;
+  --color-fg: #071426;
+  --color-mist: #64748b;
+  /* Acento con contraste AA (≥ 4.5:1) como texto sobre blanco y como fondo de texto blanco. Los rellenos de marca (#087cff) usan --tech-blue. */
+  --tienda-oro: #0a6fe0;
+  --tienda-oro-hover: #0859b8;
+  --tienda-oro-suave: #eaf3ff;
+  --tech-navy: #061a35;
+  --tech-navy-2: #0b2347;
+  --tech-blue: #087cff;
+  --tech-blue-bright: #1597ff;
+  --tech-cyan: #19c8ff;
+  --tech-ok: #16a34a;
+  --tech-offer: #ef4444;
+  --tech-surface: #f5f7fa;
+}
+
+.catalogo-tienda.tienda-tecnologia .font-serif-tienda {
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.catalogo-tienda.tienda-tecnologia dialog::backdrop {
+  background: rgb(6 26 53 / 0.55);
+  backdrop-filter: blur(2px);
+}
+
+/* Zonas oscuras (header, hero, banners): el aro de foco del tema azul no se ve sobre navy; ahí va blanco. */
+.tech-oscuro :focus-visible {
+  outline-color: #ffffff;
+}
+
+/* Hero: navy a azul eléctrico, con un halo cian muy sutil detrás de los dispositivos. */
+.tech-hero {
+  background:
+    radial-gradient(70% 90% at 82% 62%, rgb(21 151 255 / 0.5) 0%, rgb(8 124 255 / 0.16) 42%, transparent 70%),
+    linear-gradient(135deg, var(--tech-navy) 0%, var(--tech-navy-2) 48%, #0a3b8c 100%);
+}
+
+/* Banners inferiores: navy tecnológico con acento azul del lado de la imagen. */
+.tech-banner {
+  background:
+    radial-gradient(80% 110% at 88% 55%, rgb(21 151 255 / 0.34) 0%, transparent 62%),
+    linear-gradient(135deg, var(--tech-navy) 0%, var(--tech-navy-2) 100%);
+}
+
 .tienda-scroll {
   scrollbar-width: none;
 }

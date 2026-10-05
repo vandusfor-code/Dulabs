@@ -542,3 +542,4 @@ components/dashboard/business-agent/onboarding/onboarding.dom.test.tsx
 lib/agent-compiler/runtime/fase7.test.ts
 lib/agent-compiler/runtime/fase8.test.ts
 lib/agent-compiler/runtime/fase9.test.ts
+lib/catalogo/vitrina-tecnologia.test.ts
