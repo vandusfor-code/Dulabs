@@ -18,6 +18,7 @@ import {
   AVISO_OFICIAL_BYTES,
   AVISO_OFICIAL_SHA256,
   DECISIONES_ASLC,
+  ESTILO_ASLC,
   ETAPAS_ASLC,
   POLITICAS_ASLC,
   SQL_IDENTIDAD,
@@ -27,6 +28,7 @@ import {
   configuracionCompletaAslc,
   generarSqlAbrirAlPublico,
   generarSqlActivacionControlada,
+  generarSqlAjustarComportamiento,
   generarSqlConfiguracionCompleta,
   generarSqlFrenoDeEmergencia,
   generarSqlReanudarTrasFreno,
@@ -34,13 +36,26 @@ import {
   negocioCompletoAslc,
   sha256Utf8,
   verificarAviso,
+  verificarTextosAprobados,
   type DatosEtapaAslc,
   type FilaAgenteVerificable,
+  type TextosAprobadosAslc,
 } from "@/lib/agente/activacion-aslc";
 import { FUNCIONES_3B_IMPLEMENTADAS, FUNCIONES_FASE_3B, funcionesNoDisponibles, politicaDeAceptacion, type FuncionFase3B } from "@/lib/agente/perfil-negocio";
+import { HANDOFF_MOTIVES } from "@/lib/agente/intencion";
+import { checkShippingClaims } from "@/lib/agente/envios-anclaje";
+import { resolverEnvio } from "@/lib/agente/envios";
 
 const leer = (ruta: string) => readFileSync(join(process.cwd(), ruta), "utf8").replace(/\r\n/g, "\n");
-const AVISO = (JSON.parse(leer("supabase/provisioning/aslc/textos-aprobados.json")) as { aviso: string }).aviso;
+const TEXTOS_JSON = JSON.parse(leer("supabase/provisioning/aslc/textos-aprobados.json")) as Record<string, unknown>;
+/** Los textos del negocio: el CÓDIGO no trae ninguno (ni el aviso ni el nombre de la responsable); salen de textos-aprobados.json. */
+const TEXTOS: TextosAprobadosAslc = {
+  aviso: TEXTOS_JSON.aviso as string,
+  tras_aviso_confirma: TEXTOS_JSON.tras_aviso_confirma as string,
+  ubicacion: TEXTOS_JSON.ubicacion as string,
+  desconfianza: TEXTOS_JSON.desconfianza as string,
+};
+const AVISO = TEXTOS.aviso;
 const RESPONSABLE = 41;
 const sinComentarios = (sql: string) => sql.replace(/--.*$/gm, "");
 /** Sin comentarios NI literales de texto: para contar sentencias reales (un mensaje de error que cita un UPDATE no es una escritura). */
@@ -64,9 +79,9 @@ function fila(over: Partial<AgentConfigRow> = {}): AgentConfigRow {
     nivel_razonamiento: null,
     herramientas: [...HERRAMIENTAS_ASLC],
     canal: "retail",
-    negocio: negocioCompletoAslc(),
+    negocio: negocioCompletoAslc(TEXTOS),
     vocabulario: null,
-    checkout_opciones: configuracionCompletaAslc({ aviso: AVISO, miembroId: RESPONSABLE, respaldoMiembroId: null }),
+    checkout_opciones: configuracionCompletaAslc({ aviso: AVISO, trasAvisoConfirma: TEXTOS.tras_aviso_confirma, miembroId: RESPONSABLE, respaldoMiembroId: null }),
     checkout_conversacional: true,
     meta_token_plataforma: false,
     transcripcion_audio: false,
@@ -99,7 +114,7 @@ describe("3B.9D · el aviso obligatorio es EXACTO y cualquier alteración se det
 // ===========================================================================
 
 describe("3B.9D · la configuración completa de ASLC", () => {
-  const config = () => configuracionCompletaAslc({ aviso: AVISO, miembroId: RESPONSABLE, respaldoMiembroId: 42 });
+  const config = () => configuracionCompletaAslc({ aviso: AVISO, trasAvisoConfirma: TEXTOS.tras_aviso_confirma, miembroId: RESPONSABLE, respaldoMiembroId: 42 });
 
   it("es válida con el esquema del runtime y completa (sin nada pendiente)", () => {
     const e = evaluarConfigCompleta(JSON.parse(JSON.stringify(config())) as Record<string, unknown>);
@@ -107,16 +122,16 @@ describe("3B.9D · la configuración completa de ASLC", () => {
     assert.deepEqual(e.pendientes, []);
   });
 
-  it("lo que definió el negocio: solo contraentrega, envío gratis, Inter Rapidísimo, 2–3 días hábiles, corte 11:30 de Bogotá, sin certeza = persona, datos del pedido, documento en oficina (si se niega: persona)", () => {
+  it("lo que definió el negocio: solo contraentrega, envío gratis, Interrapidísimo, 2–3 días hábiles, corte 11:30 de Bogotá, sin certeza = persona, datos del pedido, documento en oficina (si se niega: persona)", () => {
     const c = config();
     assert.deepEqual(c.pagos, [{ metodo: "contra_entrega" }]);
     assert.deepEqual(c.entregas, ["domicilio", "oficina_transportadora"]);
     assert.deepEqual(c.campos, { nombre_completo: true, telefono: { modo: "requerido", acepta_mismo_whatsapp: DECISIONES_ASLC.telefonoAceptaMismoWhatsapp }, departamento: true, barrio: true });
-    assert.equal(c.oficina?.transportadora, "Inter Rapidísimo");
+    assert.equal(c.oficina?.transportadora, "Interrapidísimo");
     assert.equal(c.oficina?.documento.modo, "requerido");
     if (c.oficina?.documento.modo === "requerido") assert.equal(c.oficina.documento.si_se_niega, "handoff");
     assert.equal(c.envios?.envio_gratis, true);
-    assert.equal(c.envios?.transportadora_habitual, "Inter Rapidísimo");
+    assert.equal(c.envios?.transportadora_habitual, "Interrapidísimo");
     assert.equal(c.envios?.sin_certeza, "handoff");
     assert.equal(c.envios?.ciudad_desconocida_en_checkout, "handoff");
     const [bogota, resto] = c.envios!.tiempos;
@@ -130,6 +145,7 @@ describe("3B.9D · la configuración completa de ASLC", () => {
     if (c.cierre?.modo === "aceptacion_humana") {
       assert.equal(c.cierre.validacion_resumen, "boton_datos_correctos");
       assert.equal(c.cierre.textos.aviso, AVISO);
+      assert.equal(c.cierre.textos.tras_aviso_confirma, TEXTOS.tras_aviso_confirma, "al 'sí' del cliente: el texto del negocio, que nombra a la responsable");
       assert.equal(c.cierre.respuesta_tras_aviso.si_ya_respondio_persona, "no_responder");
       assert.deepEqual(c.cierre.responsable, { miembro_id: RESPONSABLE, respaldo_miembro_id: 42, canales: ["panel"] });
     }
@@ -162,6 +178,33 @@ describe("3B.9D · la configuración completa de ASLC", () => {
     assert.equal(DECISIONES_ASLC.vencimientoMinutos, 1440);
   });
 
+  it("CADA texto de envío que el motor puede devolver pasa el candado de envíos repetido TAL CUAL (el modelo debe repetirlo): Bogotá antes y después de las 11:30, fin de semana y el resto de ciudades", () => {
+    // Hallazgo de la evaluación con Gemini real: «(no está garantizado)» activaba `guarantee` y «no tendría entrega el mismo día» activaba `same_day_unbacked`
+    // (el candado no entiende la negación): en un día hábil TODA consulta de envío a Bogotá terminaba en una persona. Ahora se prueba con el motor REAL y cada hora.
+    const envios = config().envios;
+    const lunes = Date.UTC(2026, 9, 5); // lunes 5 de octubre de 2026, 00:00 UTC; Colombia = UTC-5
+    const enColombia = (dia: number, hh: number, mm: number) => lunes + dia * 86_400_000 + (hh + 5) * 3_600_000 + mm * 60_000;
+    const vistos = new Set<string>();
+    for (const dia of [0, 1, 2, 3, 4, 5, 6]) {
+      for (const [hh, mm] of [[0, 5], [8, 0], [11, 29], [11, 30], [11, 31], [15, 0], [23, 59]]) {
+        for (const ciudad of ["Bogotá", "Medellín", "Cali", "Barranquilla", "San Andrés", "Leticia"]) {
+          const d = resolverEnvio(envios, { city: ciudad }, enColombia(dia, hh, mm));
+          assert.equal(d.status, "covered", ciudad);
+          const texto = d.customer_text ?? "";
+          vistos.add(texto);
+          assert.ok(texto.length > 0);
+          assert.deepEqual(checkShippingClaims(texto, [d]), [], `${ciudad}, día ${dia} ${hh}:${mm}: «${texto}»`);
+        }
+      }
+    }
+    // Y de verdad se ejercitaron los CUATRO textos (Bogotá antes, Bogotá después, Bogotá fin de semana y el resto).
+    assert.deepEqual([...vistos].sort(), [TEXTOS_ASLC.bogotaAntes, TEXTOS_ASLC.bogotaDespues, TEXTOS_ASLC.bogotaTexto, TEXTOS_ASLC.restoTexto].sort());
+    // La regla del negocio: antes de las 11:30 PUEDE entregar el mismo día y nunca se dice que está garantizado; después no se habla de "mismo día".
+    assert.match(TEXTOS_ASLC.bogotaAntes, /puede tener entrega el mismo día/);
+    assert.doesNotMatch(TEXTOS_ASLC.bogotaAntes, /garantiz/i);
+    assert.doesNotMatch(TEXTOS_ASLC.bogotaDespues, /mismo d[ií]a|hoy/i);
+  });
+
   it("nada de otro negocio ni datos personales en lo que ve el cliente; y cabe en la columna (≈4 KB; la BD admite 32 KB)", () => {
     const c = config();
     const textos = [
@@ -178,24 +221,98 @@ describe("3B.9D · la configuración completa de ASLC", () => {
   });
 });
 
-describe("3B.9D · negocio (políticas para el modelo)", () => {
-  it("es válido; ≤12 políticas de ≤300 caracteres; recoge las reglas del negocio y NUNCA promete abrir el paquete antes de pagar", () => {
-    const n = negocioCompletoAslc();
-    assert.equal(businessConfigSchema.safeParse(n).success, true);
-    assert.equal(n.nombre_negocio, "Aquí Sí Lo Compras");
-    assert.ok(n.politicas && n.politicas.length >= 4 && n.politicas.length <= 12);
-    for (const p of n.politicas ?? []) assert.ok(p.length <= 300, p);
-    const todas = (n.politicas ?? []).join("\n");
+describe("3B.9D · negocio (estilo, políticas e información oficial para el modelo)", () => {
+  const n = () => negocioCompletoAslc(TEXTOS);
+
+  it("es válido con el esquema del runtime; ≤12 políticas de ≤300 caracteres; recoge las reglas del negocio y NUNCA promete abrir el paquete antes de pagar", () => {
+    assert.equal(businessConfigSchema.safeParse(n()).success, true);
+    assert.equal(n().nombre_negocio, "Aquí Sí Lo Compras");
+    assert.ok(n().politicas && n().politicas!.length >= 6 && n().politicas!.length <= 12);
+    for (const p of n().politicas ?? []) assert.ok(p.length <= 300, p);
+    const todas = (n().politicas ?? []).join("\n");
     assert.match(todas, /contraentrega/i);
     assert.match(todas, /estafa/i);
-    assert.match(todas, /NUNCA prometas que podrá abrir el paquete antes de pagar/);
+    assert.match(todas, /NUNCA prometas que la transportadora permitirá abrir el paquete antes de pagar/);
     assert.match(todas, /Nunca confirmes ni des por aceptado un pedido/);
-    assert.deepEqual([...POLITICAS_ASLC], n.politicas);
-    // Sin saludo, tono ni conocimiento inventados.
-    assert.equal(n.saludo, undefined);
-    assert.equal(n.tono, undefined);
-    assert.equal(n.conocimiento, undefined);
-    assert.ok(!/joya|joyer[ií]a|delacour|💍|💖/i.test(JSON.stringify(n)));
+    assert.deepEqual([...POLITICAS_ASLC], n().politicas);
+  });
+
+  it("estilo que pidió el negocio: tutea siempre, comercial y persuasivo sin presionar, emojis moderados, orientado al cierre y respeta a quien no quiere más mensajes", () => {
+    assert.equal(n().tono, ESTILO_ASLC.tono);
+    assert.equal(n().personalidad, ESTILO_ASLC.personalidad);
+    assert.match(n().tono ?? "", /tuteas/);
+    assert.match(n().tono ?? "", /persuasivo/);
+    assert.match(n().tono ?? "", /Pocos emojis/);
+    for (const frase of [/Tutea siempre/, /no uses el usted salvo que el cliente lo pida/, /cierre de la venta/, /moderada/, /emojis con moderación/, /Ante una objeción de precio, destaca lo que incluye y su garantía; si ofreces otra opción, que sea más económica/, /no le interesa o que no quiere más mensajes, respétalo/]) assert.match(n().personalidad ?? "", frase);
+    assert.ok((n().tono ?? "").length <= 200 && (n().personalidad ?? "").length <= 1500);
+  });
+
+  it("información oficial: la ubicación de la bodega y la respuesta a quien desconfía son EXACTAMENTE los textos del negocio; más el horario del asistente (24/7)", () => {
+    const k = n().conocimiento ?? [];
+    assert.deepEqual(k.map((x) => x.tema), ["Ubicación de la bodega", "Si el cliente desconfía o pregunta si es una estafa", "Horario del asistente"]);
+    assert.equal(k[0].info, TEXTOS.ubicacion);
+    assert.equal(k[1].info, TEXTOS.desconfianza);
+    assert.match(k[0].info, /vía Siberia, Cundinamarca/);
+    assert.match(k[1].info, /empresa de comercio, no de estafas/);
+    assert.match(k[2].info, /24 horas/);
+    assert.equal(negocioCompletoAslc().conocimiento, undefined, "sin los textos del negocio no hay información oficial (nada inventado)");
+  });
+
+  it("el ENVÍO no se adelanta: ningún texto que el modelo repite al cliente afirma gratis, cobertura ni tiempos (sin ciudad consultada el candado de envíos los descartaría, y con ellos la respuesta ENTERA)", () => {
+    // Hallazgo de la evaluación con Gemini real: "envío gratis" dicho antes de consultar la ciudad hacía que el candado descartara el precio, lo que incluye o la
+    // ubicación que el cliente había preguntado, y le contestara solo "¿en qué ciudad?". Lo que el modelo puede repetir tal cual NO puede tener esas afirmaciones.
+    for (const k of n().conocimiento ?? []) assert.deepEqual(checkShippingClaims(k.info, []), [], `conocimiento «${k.tema}»: ${k.info}`);
+    assert.doesNotMatch(n().personalidad ?? "", /env[ií]o gratis|gratis a todo|a nivel nacional/i, "el estilo no empuja a decir «envío gratis» antes de la ciudad");
+    assert.match(n().personalidad ?? "", /Del envío \(si es gratis, cobertura, tiempos, transportadora\) solo hablas después de preguntar la ciudad/);
+    const politicas = (n().politicas ?? []).join("\n");
+    assert.doesNotMatch(politicas, /El envío es gratis/);
+    assert.match(politicas, /NO digas nada hasta consultar_envio con la ciudad del cliente; entonces repite solo lo que devuelva/);
+    assert.match(politicas, /No lo menciones al dar precios ni descripciones/);
+    // Y lo que SÍ puede decir (pago contraentrega, ubicación, que no es una estafa) sigue ahí.
+    assert.match(n().conocimiento?.[0]?.info ?? "", /despachamos nuestros pedidos, con pago contraentrega/);
+    assert.match(politicas, /pregúntale en qué ciudad está para confirmarle el envío/);
+  });
+
+  it("las reglas pedidas por el negocio están como políticas: agotado sin prometer reposición, no inventar y pasar a un asesor, y los motivos de traspaso existen de verdad", () => {
+    const todas = (n().politicas ?? []).join("\n");
+    assert.match(todas, /agotado/);
+    assert.match(todas, /No prometas fecha de llegada ni de reposición/);
+    assert.match(todas, /NO la inventes: pasa con un asesor/);
+    assert.match(todas, /queja o inconformidad/);
+    assert.match(todas, /reclama una garantía, devolución o cambio/);
+    assert.match(todas, /problema con un pedido o con la entrega/);
+    assert.match(todas, /solicitud especial/);
+    assert.match(todas, /dónde estamos ubicados/);
+    assert.match(todas, /describe una necesidad.*busca con varios términos del producto que la resuelve.*ofrece el catálogo completo/);
+    // Lo que las políticas le piden al modelo EXISTE: la herramienta está entre las de ASLC y el motivo es uno de los cerrados del sistema.
+    assert.ok(HERRAMIENTAS_ASLC.includes("handoff_to_human"));
+    assert.match(todas, /handoff_to_human, motivo out_of_scope/);
+    assert.ok((HANDOFF_MOTIVES as readonly string[]).includes("out_of_scope"));
+  });
+
+  it("nada de otro negocio ni de una persona: sin saludo inventado, sin joyería, y 'Patricia' NO está en el negocio (solo en la respuesta tras el 'sí', que sale del JSON)", () => {
+    assert.equal(n().saludo, undefined);
+    assert.ok(!/joya|joyer[ií]a|delacour|💍|💖/i.test(JSON.stringify(n())));
+    assert.ok(!/Patricia/.test(JSON.stringify(n())));
+    // Lo que ve el cliente (estilo, conocimiento) no trae palabras de otro rubro (las políticas sí nombran los pagos prohibidos para prohibirlos).
+    for (const t of [n().tono ?? "", n().personalidad ?? "", ...(n().conocimiento ?? []).map((x) => x.info)]) assert.ok(!AJENO.test(t), "texto ajeno: " + t);
+  });
+
+  it("los textos aprobados se verifican: faltan, vacíos o con espacios en los bordes => se rechazan; el aviso, byte a byte", () => {
+    assert.doesNotThrow(() => verificarTextosAprobados(TEXTOS));
+    for (const k of ["tras_aviso_confirma", "ubicacion", "desconfianza"] as const) {
+      assert.throws(() => verificarTextosAprobados({ ...TEXTOS, [k]: "" }), /no vacío/, k + " vacío");
+      assert.throws(() => verificarTextosAprobados({ ...TEXTOS, [k]: " " + TEXTOS[k] }), /sin espacios en los bordes/, k + " con espacio");
+      assert.throws(() => verificarTextosAprobados({ ...TEXTOS, [k]: undefined as unknown as string }), /no vacío/, k + " ausente");
+    }
+    assert.throws(() => verificarTextosAprobados({ ...TEXTOS, aviso: AVISO.replace("IMPORTANTE", "IMPORTANTES") }), /byte a byte/);
+  });
+
+  it("la respuesta tras el 'sí' nombra a la responsable que indicó el negocio y NO promete nada que el sistema no haga (no dice que el pedido ya fue aceptado)", () => {
+    assert.match(TEXTOS.tras_aviso_confirma, /asesora Patricia Castro/);
+    assert.match(TEXTOS.tras_aviso_confirma, /envío y despacho/);
+    assert.ok(!/aceptad|confirmad|ya (está|quedó)/i.test(TEXTOS.tras_aviso_confirma), "el 'sí' no confirma la venta");
+    assert.ok(TEXTOS.tras_aviso_confirma.length <= 500);
   });
 });
 
@@ -221,7 +338,7 @@ describe("3B.9D · la fila que dejan 02 + 03 + 05, leída por el parser REAL del
     assert.ok(aceptacion, "el negocio usa la aceptación humana");
     assert.equal(aceptacion.responsable.miembro_id, RESPONSABLE);
     assert.equal(aceptacion.aceptan, "responsable_y_admins");
-    assert.equal(aceptacion.textoTrasAviso, TEXTOS_ASLC.trasAvisoConfirma);
+    assert.equal(aceptacion.textoTrasAviso, TEXTOS.tras_aviso_confirma);
     assert.equal(aceptacion.siYaRespondioPersona, "no_responder");
     assert.equal(aceptacion.notaEnvio, TEXTOS_ASLC.notaEnvioPanel);
     assert.deepEqual(aceptacion.textosDecision, { aceptado: null, rechazado: null, cancelado: null }, "sin texto configurado no se le escribe nada al cliente");
@@ -251,18 +368,18 @@ describe("3B.9D · la fila que dejan 02 + 03 + 05, leída por el parser REAL del
 // ===========================================================================
 
 describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => {
-  const archivos = archivosDeActivacion(AVISO);
+  const archivos = archivosDeActivacion(TEXTOS);
   const repo = (nombre: string) => leer(`supabase/provisioning/aslc/${nombre}`);
 
   it("cada archivo del repositorio es EXACTAMENTE lo que genera el código (nada escrito a mano que se desvíe)", () => {
-    assert.deepEqual(Object.keys(archivos), ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "08_ver_equipo_solo_lectura.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql"]);
+    assert.deepEqual(Object.keys(archivos), ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "08_ver_equipo_solo_lectura.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql"]);
     for (const [nombre, sql] of Object.entries(archivos)) assert.equal(repo(nombre), sql, nombre);
     assert.equal(repo("02_aprovisionar_sin_activar.sql"), generarSqlAprovisionamiento(), "el 02 (YA aplicado en producción) no cambió");
   });
 
   it("todos identifican a ASLC con la MISMA identidad que el 02 (tenant + phone_number_id + nombre; nunca telefono_negocio)", () => {
     assert.ok(generarSqlAprovisionamiento().includes(SQL_IDENTIDAD));
-    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql"]) {
+    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "07_freno_de_emergencia.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql"]) {
       assert.ok(archivos[nombre].includes(SQL_IDENTIDAD), nombre);
     }
     assert.ok(archivos["08_ver_equipo_solo_lectura.sql"].includes(`tenant_id::text = '${IDENTIDAD_ASLC_PRODUCCION.idTenant}'`));
@@ -284,8 +401,8 @@ describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => 
     const cfg = /\$cfg\$\n([\s\S]*?)\n\$cfg\$::jsonb/.exec(sql)?.[1];
     const neg = /\$neg\$\n([\s\S]*?)\n\$neg\$::jsonb/.exec(sql)?.[1];
     assert.ok(cfg && neg);
-    assert.deepEqual(JSON.parse(cfg), JSON.parse(JSON.stringify(configuracionCompletaAslc({ aviso: AVISO, miembroId: 1 }))));
-    assert.deepEqual(JSON.parse(neg), JSON.parse(JSON.stringify(negocioCompletoAslc())));
+    assert.deepEqual(JSON.parse(cfg), JSON.parse(JSON.stringify(configuracionCompletaAslc({ aviso: AVISO, trasAvisoConfirma: TEXTOS.tras_aviso_confirma, miembroId: 1 }))));
+    assert.deepEqual(JSON.parse(neg), JSON.parse(JSON.stringify(negocioCompletoAslc(TEXTOS))));
     assert.equal((JSON.parse(cfg) as { cierre: { textos: { aviso: string } } }).cierre.textos.aviso, AVISO, "el aviso pegado en el SQL es EXACTAMENTE el aprobado");
     assert.ok(!/activacion_pendiente/.test(cfg), "sin el candado");
   });
@@ -341,12 +458,44 @@ describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => 
   });
 
   it("cada script con guardas es UNA sola sentencia (un bloque DO atómico), sin begin;/commit; explícitos que podrían dejar una transacción abierta en el editor", () => {
-    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql"]) {
+    for (const nombre of ["03_configurar_completo_sin_activar.sql", "05_activacion_controlada.sql", "06_abrir_al_publico.sql", "09_cambiar_responsable.sql", "10_reanudar_tras_freno.sql", "11_ajustar_comportamiento.sql"]) {
       const sql = archivos[nombre];
       assert.equal((sql.match(/^do \$\$$/gm) ?? []).length, 1, `${nombre}: un solo bloque DO`);
       assert.ok(/^end \$\$;$/m.test(sql), `${nombre}: termina el bloque`);
       assert.ok(!/^(begin|commit);$/m.test(sql), `${nombre}: sin transacción explícita`);
     }
+  });
+
+  it("11 (ajustar en caliente): solo toca negocio, el texto tras el 'sí', la transportadora y los tiempos de envío de la fila ya habilitada; no toca pausa, restricción, habilitado, aviso ni responsable", () => {
+    const sql = archivos["11_ajustar_comportamiento.sql"];
+    const sin = sinLit(sql);
+    assert.deepEqual([...sin.matchAll(/\bupdate\s+(public\.\w+)/g)].map((m) => m[1]), ["public.dulabs_agente_runtime_config"]);
+    assert.ok(/set negocio = v_negocio,\s+checkout_opciones = jsonb_set\(jsonb_set\(jsonb_set\(jsonb_set\(checkout_opciones,/.test(sin));
+    // Los cuatro cambios de checkout_opciones, y solo esos.
+    assert.deepEqual([...sql.matchAll(/^\s+'(\{[a-z_,]+\})', /gm)].map((m) => m[1]), ["{cierre,textos,tras_aviso_confirma}", "{oficina,transportadora}", "{envios,transportadora_habitual}", "{envios,tiempos}"]);
+    assert.ok(!/habilitado\s*=|ia_pausada\s*=|ia_restringida_a\s*=|transcripcion_audio\s*=|checkout_conversacional\s*=/.test(sin), "no cambia el estado de la IA");
+    assert.ok(!/insert\s+into|delete\s+from|truncate|drop\s|alter\s|dulabs_tenant_modulos\s+set|dulabs_clientes_config\s+set/i.test(sin));
+    const upd = /update public\.dulabs_agente_runtime_config[\s\S]*?get diagnostics/.exec(sql)?.[0] ?? "";
+    assert.ok(upd.length > 0 && !/responsable|miembro_id|,aviso\}/.test(upd), "el UPDATE no toca a la persona responsable ni el aviso");
+    for (const guarda of ["'activacion_pendiente' is null", AVISO_OFICIAL_SHA256, "el aviso obligatorio guardado NO es el aprobado", "corre antes 03_configurar_completo_sin_activar.sql"]) {
+      assert.ok(sql.includes(guarda), guarda);
+    }
+    const neg = /\$neg\$\n([\s\S]*?)\n\$neg\$::jsonb/.exec(sql)?.[1];
+    const tras = /v_tras text := \$tras\$([\s\S]*?)\$tras\$;/.exec(sql)?.[1];
+    assert.ok(neg && tras);
+    assert.deepEqual(JSON.parse(neg), JSON.parse(JSON.stringify(negocioCompletoAslc(TEXTOS))), "el negocio del 11 es EXACTAMENTE el que carga el 03");
+    assert.equal(tras, TEXTOS.tras_aviso_confirma);
+    const tiempos = /v_tiempos jsonb := \$tiempos\$\n([\s\S]*?)\n\$tiempos\$::jsonb/.exec(sql)?.[1];
+    assert.ok(tiempos);
+    assert.deepEqual(JSON.parse(tiempos), JSON.parse(JSON.stringify(configuracionCompletaAslc({ aviso: TEXTOS.aviso, trasAvisoConfirma: TEXTOS.tras_aviso_confirma, miembroId: RESPONSABLE }).envios?.tiempos)), "los tiempos del 11 son EXACTAMENTE los que carga el 03");
+    assert.ok(sql.includes("to_jsonb('Interrapidísimo'::text)"));
+    assert.equal(generarSqlAjustarComportamiento(TEXTOS), sql);
+  });
+
+  it("el nombre de la responsable solo vive en el JSON y en los SQL de configuración (03 y 11); ningún otro script ni el generador de código lo trae", () => {
+    const con = Object.entries(archivos).filter(([, sql]) => /Patricia/.test(sql)).map(([nombre]) => nombre);
+    assert.deepEqual(con, ["03_configurar_completo_sin_activar.sql", "11_ajustar_comportamiento.sql"]);
+    assert.ok(!/Patricia/.test(leer("lib/agente/activacion-aslc.ts")), "el código no trae nombres de personas");
   });
 
   it("08 (equipo): solo lectura, sin correos; dice quién sirve como responsable", () => {
@@ -383,7 +532,7 @@ describe("3B.9D · SQL: lo generado, solo lo previsto y con sus guardas", () => 
     assert.deepEqual(Object.entries(archivos).filter(([, s]) => quita(s)).map(([n]) => n), ["05_activacion_controlada.sql", "10_reanudar_tras_freno.sql"]);
     assert.deepEqual(Object.entries(archivos).filter(([, s]) => pone(s)).map(([n]) => n), ["07_freno_de_emergencia.sql"]);
     assert.deepEqual(Object.entries(archivos).filter(([, s]) => abre(s)).map(([n]) => n), ["06_abrir_al_publico.sql"]);
-    assert.equal(generarSqlConfiguracionCompleta({ aviso: AVISO }), archivos["03_configurar_completo_sin_activar.sql"]);
+    assert.equal(generarSqlConfiguracionCompleta(TEXTOS), archivos["03_configurar_completo_sin_activar.sql"]);
     assert.equal(generarSqlActivacionControlada(), archivos["05_activacion_controlada.sql"]);
     assert.equal(generarSqlAbrirAlPublico(), archivos["06_abrir_al_publico.sql"]);
   });

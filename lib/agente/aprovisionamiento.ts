@@ -33,8 +33,8 @@ export const DATOS_APROBADOS_ASLC = Object.freeze({
   pagos: ["contra_entrega"] as readonly PaymentMethod[],
   /** Envío GRATIS (regla del negocio). */
   envioGratis: true,
-  /** Transportadora más frecuente (información, no una promesa por ciudad). */
-  transportadoraHabitual: "Inter Rapidísimo",
+  /** Transportadora más frecuente (información, no una promesa por ciudad). Escrita como la escribe el negocio. */
+  transportadoraHabitual: "Interrapidísimo",
   /** Otras ciudades: normalmente 2 a 3 días hábiles. */
   diasHabiles: Object.freeze({ min: 2, max: 3 }),
   /** Bogotá: antes de las 11:30 a. m. puede tener entrega el mismo día (hora de Colombia). */
