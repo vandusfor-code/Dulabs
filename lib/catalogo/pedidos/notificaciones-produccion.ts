@@ -8,7 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClienteConfig } from "@/lib/supabase";
 import { MetaGraphApiError, enviarTexto } from "@/lib/whatsapp";
 import { registrarMensaje, resolverTokenMetaDeNumero } from "@/lib/whatsapp-outbound";
-import { moduloHabilitado } from "@/lib/tenant-modulos";
+import { moduloHabilitado, type ModuloId } from "@/lib/tenant-modulos";
 import {
   ErrorEnvioWhatsapp,
   type EnviadorWhatsapp,
@@ -60,11 +60,36 @@ function registro(f: Fila): RegistroNotificacion {
   };
 }
 
-export function createSupabaseNotificacionesStore(supabase: SupabaseClient): NotificacionesStore {
+/**
+ * Módulos que encienden los avisos de ESTADO del pedido (plantillas de la plataforma, cada cambio de etapa): solo "notificaciones_pedidos".
+ * Es lo que usa todo lo que existía antes de la Fase 3B.9E.
+ */
+export const MODULOS_AVISOS_DE_ESTADO: readonly ModuloId[] = Object.freeze(["notificaciones_pedidos"] as const);
+
+/**
+ * Módulos que encienden el mensaje al cliente tras una DECISIÓN humana (aceptar / rechazar / cancelar un pedido pendiente de aceptación, con el texto
+ * del propio negocio): "avisos_decision_pedidos" (solo eso) o, como siempre, "notificaciones_pedidos". Un negocio con aceptación humana que no quiere los
+ * avisos genéricos de cada etapa enciende solo el primero.
+ */
+export const MODULOS_AVISOS_DE_DECISION: readonly ModuloId[] = Object.freeze(["avisos_decision_pedidos", "notificaciones_pedidos"] as const);
+
+/**
+ * ¿Está encendido alguno de esos módulos para el negocio? Un error al consultar = apagado (fail-closed): nunca se envía por no poder verificar. Lo
+ * decide SOLO la base (el negocio sale de la sesión), nunca la petición ni el modelo.
+ */
+export async function algunModuloHabilitado(supabase: SupabaseClient, tenantId: string, modulos: readonly ModuloId[]): Promise<boolean> {
+  for (const modulo of modulos) {
+    if (await moduloHabilitado(supabase, tenantId, modulo).catch(() => false)) return true;
+  }
+  return false;
+}
+
+export function createSupabaseNotificacionesStore(supabase: SupabaseClient, opciones: { modulos?: readonly ModuloId[] } = {}): NotificacionesStore {
   const tabla = () => supabase.from(TABLA);
+  const modulos = opciones.modulos ?? MODULOS_AVISOS_DE_ESTADO;
   return {
     // Módulo del negocio: encendido SOLO para quien corresponda (Delacour). Un error = apagado.
-    habilitado: (tenantId) => moduloHabilitado(supabase, tenantId, "notificaciones_pedidos").catch(() => false),
+    habilitado: (tenantId) => algunModuloHabilitado(supabase, tenantId, modulos),
 
     async reservar(i) {
       const { data, error } = await tabla()
@@ -196,9 +221,9 @@ export function createMetaEnviador(supabase: SupabaseClient): EnviadorWhatsapp {
   };
 }
 
-export function productionNotificador(supabase: SupabaseClient): NotificadorDeps {
+export function productionNotificador(supabase: SupabaseClient, opciones: { modulos?: readonly ModuloId[] } = {}): NotificadorDeps {
   return {
-    store: createSupabaseNotificacionesStore(supabase),
+    store: createSupabaseNotificacionesStore(supabase, opciones),
     enviador: createMetaEnviador(supabase),
     log: (e) => console.info(JSON.stringify(e)),
   };

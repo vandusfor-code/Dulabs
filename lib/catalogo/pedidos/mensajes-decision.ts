@@ -4,7 +4,7 @@
  *   decisión de una persona autorizada (3B.7: el estado YA cambió, por las operaciones de siempre)
  *     -> ¿hay texto del NEGOCIO para esa decisión? (checkout_opciones.cierre.textos.aceptado | rechazado | cancelado)
  *     -> se completa con {pedido} y, si la plantilla lo pide, el motivo que registró esa persona (nunca uno inventado)
- *     -> módulo "notificaciones_pedidos" del negocio (si no está activo, no se envía nada)
+ *     -> módulo del negocio: "avisos_decision_pedidos" (solo estos mensajes) o "notificaciones_pedidos"; si ninguno está activo, no se envía nada
  *     -> candado IDEMPOTENTE en la BD: una fila por (pedido, tipo de mensaje), clave única: un doble clic, un reintento, un
  *        webhook repetido o dos procesos NUNCA mandan dos veces el mismo mensaje (no depende de la memoria del proceso)
  *     -> ventana de 24 h de WhatsApp, número del negocio, token propio -> texto EXACTO -> resultado registrado.
@@ -21,7 +21,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Order } from "@/lib/catalogo/pedidos/contrato";
 import type { OrderEngine } from "@/lib/catalogo/pedidos/motor";
 import { notificarTransicion, type NotificadorDeps, type ResultadoNotificacion, type TipoNotificacion } from "@/lib/catalogo/pedidos/notificaciones";
-import { productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
+import { MODULOS_AVISOS_DE_DECISION, productionNotificador } from "@/lib/catalogo/pedidos/notificaciones-produccion";
 import type { DecisionPorAceptar, MensajeAlCliente } from "@/lib/catalogo/pedidos/por-aceptar";
 import type { ConfigAceptacion } from "@/lib/agente/aceptacion-humana";
 import { CLAVE_TEXTO_DECISION, renderizarTextoDecision, type DecisionConTexto } from "@/lib/agente/textos-cliente";
@@ -98,6 +98,6 @@ export function aMensajeAlCliente(r: ResultadoMensajeDecision): MensajeAlCliente
  */
 export function productionMensajesDecision(input: { supabase: SupabaseClient; engine: Pick<OrderEngine, "panelOrder"> | null; config: MensajesDecisionDeps["config"] }): ((d: DecisionPorAceptar) => Promise<MensajeAlCliente>) | null {
   if (!input.engine) return null;
-  const deps: MensajesDecisionDeps = { engine: input.engine, config: input.config, notificador: productionNotificador(input.supabase) };
+  const deps: MensajesDecisionDeps = { engine: input.engine, config: input.config, notificador: productionNotificador(input.supabase, { modulos: MODULOS_AVISOS_DE_DECISION }) };
   return async (d) => aMensajeAlCliente(await enviarMensajeDecision(deps, d));
 }

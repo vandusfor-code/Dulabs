@@ -75,7 +75,10 @@ declare
     "mostrar_numero_pedido": true,
     "textos": {
       "aviso": "⚠️ IMPORTANTE ANTES DE ENVIAR SU PEDIDO:\n\nPor seguridad, actualmente no estamos dejando pedidos en las transportadoras sin reclamar o recibir, ya que hemos tenido pérdidas de mercancía bajo esta modalidad y, adicionalmente, se generan dobles costos de flete.\n\nPor este motivo, al confirmar su pedido, usted acepta recibirlo y reclamarlo cuando la transportadora lo entregue, RECOMENDAMOS TENER LA DISPONIBILIDAD DEL DINERO.\n\n📦 El producto se envía tal como se muestra en las fotos y videos, con las mismas características, especificaciones y accesorios ofrecidos en la publicación.\n\nPor favor, confirme su compra únicamente si está 100% seguro de recibir el pedido. 🙏\n\n¿Me confirmas por favor que estás 100% seguro de recibirlo?",
-      "tras_aviso_confirma": "¡Gracias por confirmar! 🙌 Se comunicará contigo la asesora Patricia Castro, quien se encargará del proceso de envío y despacho de tu producto."
+      "tras_aviso_confirma": "¡Gracias por confirmar! 🙌 Se comunicará contigo la asesora Patricia Castro, quien se encargará del proceso de envío y despacho de tu producto.",
+      "aceptado": "¡Buenas noticias! 🎉 Tu pedido {pedido} fue aceptado. Recuerda que el pago es contraentrega: ten el dinero disponible cuando lo recibas. Si tienes alguna duda, escríbenos por este mismo chat.",
+      "rechazado": "Hola 👋 Lamentamos informarte que tu pedido {pedido} no pudo ser aceptado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos.",
+      "cancelado": "Hola 👋 Tu pedido {pedido} fue cancelado. Si tienes alguna duda, escríbenos por este mismo chat y te ayudamos."
     },
     "responsable": {
       "miembro_id": 1,

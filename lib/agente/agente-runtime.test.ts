@@ -412,6 +412,29 @@ describe("handoff, fotos, límites y fallos", () => {
     assert.equal(r.provider.requests[1].toolMode, "none");
   });
 
+  it("18b. handoff exitoso pero el texto final del modelo falla: el cliente recibe el mensaje de traspaso (no el técnico) y no cuenta como falla", async () => {
+    const estado = async () => (await stateStore.load({ tenantId: A.tenantId, phoneNumberId: PN_A, waId: CLIENTE })).state;
+    // El proveedor cae justo después de pasar el chat a una persona.
+    const caido = await turno([call("handoff_to_human", { reason: "Reclamo por un pago" }), { error: new AIProviderError("server", "gemini") }, { error: new AIProviderError("server", "gemini") }], "me cobraron dos veces el pedido");
+    assert.equal(caido.outcome, "handoff");
+    assert.deepEqual(pausas, [CLIENTE]);
+    assert.equal(sent.at(-1), FALLBACK_MESSAGES.handoff);
+    assert.equal(caido.trace.handoff?.source, "model");
+    assert.equal((await estado()).failures, 0, "el texto que falló tras el traspaso no se cuenta como falla del asistente");
+    // El modelo despide al cliente con un monto que ninguna herramienta respalda (dos veces): tampoco sale el mensaje técnico ni lo inventado.
+    pausas = [];
+    sent.length = 0;
+    const sinRespaldo = await turno([call("handoff_to_human", { reason: "Reclamo por un pago" }), { text: "Te devolvemos $99.999 hoy mismo." }, { text: "Te devolvemos $99.999 hoy mismo." }], "me cobraron dos veces el pedido");
+    assert.equal(sinRespaldo.outcome, "handoff");
+    assert.deepEqual(pausas, [CLIENTE]);
+    assert.deepEqual(sent, [FALLBACK_MESSAGES.handoff]);
+    // Sin traspaso, un fallo técnico sigue siendo técnico (lo de siempre).
+    sent.length = 0;
+    const normal = await turno([{ error: new AIProviderError("server", "gemini") }, { error: new AIProviderError("server", "gemini") }], "hola");
+    assert.equal(normal.outcome, "fallback");
+    assert.deepEqual(sent, [FALLBACK_MESSAGES.technical]);
+  });
+
   it("fotos: el backend decide qué enviar (reales, activas, del negocio) y las envía después del texto", async () => {
     const con = await producto(A, "Anillo con foto", 58_000, 5);
     const sin = await producto(A, "Anillo sin foto", 40_000, 5);
