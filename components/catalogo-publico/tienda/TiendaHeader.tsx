@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Menu, MessageCircle, Search, ShoppingBag, X } from "lucide-react";
 import type { CatalogCategory } from "@/lib/catalogo/domain";
@@ -40,14 +40,20 @@ export function TiendaHeader({
   basePath,
   listPath,
   categorias,
+  ocultoEnInicio = false,
 }: {
   marca: { name: string; descriptor?: string };
   basePath: string;
   listPath: string;
   categorias: CatalogCategory[];
+  /** Vitrinas con tema propio: en el inicio las dibuja su propio header y este se oculta (en el resto de pantallas sigue igual). */
+  ocultoEnInicio?: boolean;
 }) {
   const { whatsapp } = useTienda();
-  const q = useSearchParams().get("q") ?? undefined;
+  const params = useSearchParams();
+  const pathname = usePathname();
+  const q = params.get("q") ?? undefined;
+  const esInicio = pathname === basePath && !q && !params.get("categoria") && !params.get("pagina") && !params.get("todo");
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [buscando, setBuscando] = useState(Boolean(q));
   const inputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +67,8 @@ export function TiendaHeader({
     if (!primerRender.current && buscando) inputRef.current?.focus({ preventScroll: true });
     primerRender.current = false;
   }, [buscando]);
+
+  if (ocultoEnInicio && esInicio) return null;
 
   return (
     <>

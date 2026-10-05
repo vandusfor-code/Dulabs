@@ -14,6 +14,12 @@
  * Los datos comerciales (productos, precios, referencias, categorías,
  * WhatsApp) nunca viven aquí: salen del catálogo en la BD. Un negocio sin
  * configuración obtiene una vitrina correcta, sin hero ni banner.
+ *
+ * TEMAS. Cada negocio elige el aspecto de su vitrina: "clasico" (por defecto: claro
+ * cálido, el de Delacour) o "tecnologia" (tienda de tecnología: azul eléctrico sobre
+ * navy y blanco). El tema "tecnologia" tiene su propio contenido editorial
+ * (`tecnologia`): textos del hero, beneficios y banners. Las categorías, los
+ * productos, los precios, las fotos y el carrito siguen saliendo del catálogo real.
  */
 
 export interface StorefrontImage {
@@ -24,9 +30,69 @@ export interface StorefrontImage {
   alt: string;
 }
 
+/** Aspecto de la vitrina: "clasico" (por defecto) o "tecnologia". */
+export type TemaVitrina = "clasico" | "tecnologia";
+
+/** Iconos de los accesos de categoría de la vitrina de tecnología (cerrado: el componente los traduce a dibujos). */
+export const ICONOS_CATEGORIA = ["celular", "tablet", "computador", "audio", "smartwatch", "gaming", "cocina", "general"] as const;
+export type IconoCategoria = (typeof ICONOS_CATEGORIA)[number];
+
+export const ICONOS_BENEFICIO = ["envio", "seguridad", "soporte", "ofertas", "pago", "garantia"] as const;
+export type IconoBeneficio = (typeof ICONOS_BENEFICIO)[number];
+
+/** Dibujos decorativos disponibles para los banners (no son fotos de productos: la foto real vive en el catálogo). */
+export const ARTES_BANNER = ["tablet", "smartwatch", "celular"] as const;
+export type ArteBanner = (typeof ARTES_BANNER)[number];
+
+export interface BeneficioVitrina {
+  icono: IconoBeneficio;
+  titulo: string;
+  detalle: string;
+}
+
+export interface BannerVitrina {
+  /** "TABLETS": etiqueta corta sobre el título. */
+  etiqueta: string;
+  /** Título; un "\n" parte la línea. */
+  titulo: string;
+  cta: string;
+  /**
+   * Búsqueda REAL en el catálogo a la que lleva el banner ("tablet", "reloj"): el listado la resuelve con los productos de la BD.
+   * Nunca un enlace a algo que no exista.
+   */
+  consulta: string;
+  arte: ArteBanner;
+}
+
+export interface HeroTecnologia {
+  /** "Tecnología para": pequeña, en mayúsculas, sobre el título. */
+  etiqueta: string;
+  /** Dos líneas: la primera en blanco y la segunda en azul/cian. */
+  lineas: readonly [string, string];
+  descripcion: string;
+  cta: string;
+  /**
+   * Render real (PNG/WebP con fondo transparente en /public) de los dispositivos del hero. Sin él se usa el dibujo decorativo:
+   * este recurso lo sube el negocio cuando lo tenga; el texto NUNCA va dentro de la imagen.
+   */
+  imagen?: StorefrontImage;
+}
+
+export interface ConfigTecnologia {
+  /** Texto de ayuda del buscador. */
+  buscador: string;
+  hero: HeroTecnologia;
+  beneficios: readonly BeneficioVitrina[];
+  banners: readonly BannerVitrina[];
+}
+
 export interface CatalogStorefrontConfig {
   /** Lockup del header. Sin configurar => el nombre público del catálogo (BD). */
   brand?: { name: string; descriptor?: string };
+  /** Aspecto de la vitrina. Sin configurar => "clasico". */
+  tema?: TemaVitrina;
+  /** Contenido editorial del tema "tecnologia" (solo se usa con ese tema). */
+  tecnologia?: ConfigTecnologia;
   /** Fotografía del hero: el texto NUNCA va dentro de la imagen, es HTML real. */
   heroImage?: StorefrontImage & { /** Punto focal al recortar (CSS object-position). */ focus?: string };
   heroEyebrow?: string;
@@ -49,6 +115,48 @@ export function heroOf(config: CatalogStorefrontConfig) {
   };
 }
 
+/** Tema efectivo de la vitrina: "tecnologia" SOLO si el negocio lo pide y trae su contenido; si no, el clásico (nunca una vitrina a medias). */
+export function temaDe(config: CatalogStorefrontConfig): TemaVitrina {
+  return config.tema === "tecnologia" && config.tecnologia ? "tecnologia" : "clasico";
+}
+
+/** Contenido del tema "tecnologia" (null si la vitrina es clásica). */
+export function tecnologiaOf(config: CatalogStorefrontConfig): ConfigTecnologia | null {
+  return temaDe(config) === "tecnologia" ? (config.tecnologia ?? null) : null;
+}
+
+/** Parte el nombre de la marca en dos líneas para el lockup del header ("Aquí Sí Lo Compras" => "AQUÍ SÍ" / "LO COMPRAS"). */
+export function partirMarca(nombre: string): [string, string] {
+  const palabras = nombre.trim().split(/\s+/).filter(Boolean);
+  if (palabras.length === 0) return ["", ""];
+  if (palabras.length === 1) return [palabras[0].toLocaleUpperCase("es"), ""];
+  const corte = Math.ceil(palabras.length / 2);
+  return [palabras.slice(0, corte).join(" ").toLocaleUpperCase("es"), palabras.slice(corte).join(" ").toLocaleUpperCase("es")];
+}
+
+const sinTildes = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+const PALABRAS_ICONO: ReadonlyArray<readonly [IconoCategoria, RegExp]> = [
+  ["smartwatch", /smartwatch|reloj|watch/],
+  ["tablet", /tablet|ipad/],
+  ["celular", /celular|telefono|smartphone|movil|iphone/],
+  ["computador", /computador|portatil|laptop|notebook|\bpc\b|escritorio/],
+  ["audio", /audio|audifono|auricular|parlante|bocina|sonido|headphone/],
+  ["gaming", /gaming|gamer|juego|consola|videojuego/],
+  ["cocina", /cocina|freidora|hogar|electrodomestico/],
+];
+
+/** Icono de una categoría REAL según su nombre (sin coincidencia => icono general). */
+export function iconoDeCategoria(nombre: string): IconoCategoria {
+  const n = sinTildes(nombre);
+  return PALABRAS_ICONO.find(([, re]) => re.test(n))?.[0] ?? "general";
+}
+
+/** Enlace de un banner: la búsqueda REAL del listado público ("?q="). */
+export function enlaceDeConsulta(basePath: string, consulta: string): string {
+  return `${basePath}?q=${encodeURIComponent(consulta.trim())}`;
+}
+
 // Fuente TEMPORAL (fase visual): configuración por publicación (slug).
 const REGISTRO: Record<string, CatalogStorefrontConfig> = {
   delacour: {
@@ -69,6 +177,31 @@ const REGISTRO: Record<string, CatalogStorefrontConfig> = {
       width: 2172,
       height: 724,
       alt: "El regalo perfecto siempre es una joya. Hacé cada momento inolvidable.",
+    },
+  },
+  // Aquí Sí Lo Compras: tienda de tecnología. Los banners llevan a líneas que el negocio vende de verdad (tablets y relojes);
+  // las categorías de la franja salen del catálogo (las que el negocio cree en su panel), nunca de esta lista.
+  "aqui-si-lo-compras": {
+    brand: { name: "Aquí Sí Lo Compras" },
+    tema: "tecnologia",
+    tecnologia: {
+      buscador: "Busca tu producto favorito...",
+      hero: {
+        etiqueta: "Tecnología para",
+        lineas: ["Un mundo", "sin límites"],
+        descripcion: "Descubre los mejores dispositivos al mejor precio.",
+        cta: "Comprar ahora",
+      },
+      beneficios: [
+        { icono: "envio", titulo: "Envío rápido", detalle: "A todo el país" },
+        { icono: "seguridad", titulo: "Compra segura", detalle: "Pagos protegidos" },
+        { icono: "soporte", titulo: "Soporte 24/7", detalle: "Atención personalizada" },
+        { icono: "ofertas", titulo: "Ofertas exclusivas", detalle: "Todos los días" },
+      ],
+      banners: [
+        { etiqueta: "Tablets", titulo: "Tablets y kits\ntodo en uno", cta: "Ver tablets", consulta: "tablet", arte: "tablet" },
+        { etiqueta: "Smartwatch", titulo: "Smartwatch 4G\npara niños", cta: "Ver relojes", consulta: "reloj", arte: "smartwatch" },
+      ],
     },
   },
 };
