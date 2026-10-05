@@ -20,6 +20,7 @@ import { parseAgentConfig, type AgentConfigRow, type AgentRuntimeConfig } from "
 import { createMemoryConversationStateStore, type ConversationState, type ConversationStateStore } from "@/lib/agente/estado";
 import { AGENT_TOOL_NAMES } from "@/lib/agente/nombres-herramientas";
 import { runAgentTurn, type AgentTurnTrace } from "@/lib/agente/runtime";
+import { CATALOG_LIMITS } from "@/lib/catalogo/domain";
 
 const A: CatalogActor = { tenantId: "aaaaaaaa-0000-4000-8000-00000000000a", userId: "admin-a" };
 const B: CatalogActor = { tenantId: "bbbbbbbb-0000-4000-8000-00000000000b", userId: "admin-b" };
@@ -225,5 +226,39 @@ describe("herramientas: búsqueda paginada, más resultados y parecidos", () => 
     assert.equal(mem.searchCalls.at(-1)!.channel, "wholesale");
     const trampa = await turno([call("search_products", { query: "anillo", channel: "retail" }), { text: "…" }], "anillo");
     assert.deepEqual(results(trampa), ["INVALID_INPUT"]);
+  });
+});
+
+describe("herramientas: la descripción llega COMPLETA al modelo (no se recorta a 200 caracteres)", () => {
+  // Un producto técnico (como los de ASLC) pasa de 200 caracteres: la garantía y los accesorios van al final de la descripción.
+  const LARGA =
+    "Pantalla: 10.1 pulgadas. Sistema: Android 15. RAM: 8 GB. Almacenamiento: 64 GB. 4G LTE + SIM Card. Wi-Fi y Bluetooth. Batería: 5000 mAh. Incluye: teclado, mouse, lápiz óptico, case protector, protector de pantalla, audífonos con cable y cargador. Garantía: 8 meses por defecto de fábrica. Envío: gratis. Pago: contraentrega.";
+
+  it("search_products, resolve_product_by_reference y get_product_details devuelven la descripción íntegra (garantía y accesorios incluidos)", async () => {
+    assert.ok(LARGA.length > 300, "la descripción de prueba pasa de los 200 caracteres de antes");
+    const p = await producto(A, "Kit Tablet X2", 498_900, 5, { description: LARGA });
+    const r = await turno(
+      [call("search_products", { query: "kit tablet" }), call("resolve_product_by_reference", { reference: p.reference }), call("get_product_details", { reference: p.reference }), { text: "Listo." }],
+      "¿qué incluye el " + p.reference + " y qué garantía tiene?",
+    );
+    for (const i of [1, 2, 3]) {
+      const out = JSON.stringify(salida(r.provider.requests[i]));
+      assert.ok(out.includes(LARGA), "la salida de la herramienta #" + i + " lleva la descripción completa");
+      assert.ok(out.includes("Garantía: 8 meses por defecto de fábrica") && out.includes("audífonos con cable y cargador"), "garantía y accesorios visibles");
+    }
+  });
+
+  it("el tope es el del catálogo (CATALOG_LIMITS.description): una descripción más larga se corta ahí, nunca antes", async () => {
+    await producto(A, "Producto muy descrito", 10_000, 5, { description: "x".repeat(CATALOG_LIMITS.description + 500) });
+    const r = await turno([call("search_products", { query: "muy descrito" }), { text: "Listo." }], "quiero ver el producto muy descrito");
+    const out = salida(r.provider.requests[1]) as unknown as { candidates: Array<{ description: string | null }> };
+    assert.equal(out.candidates[0].description?.length, CATALOG_LIMITS.description);
+  });
+
+  it("una descripción corta llega idéntica (los negocios con descripciones cortas, como Delacour, no cambian)", async () => {
+    await producto(A, "Dije Corazón", 38_000, 5, { description: "Con circón" });
+    const r = await turno([call("search_products", { query: "dije corazon" }), { text: "Listo." }], "busco un dije corazón");
+    const out = salida(r.provider.requests[1]) as unknown as { candidates: Array<{ description: string | null }> };
+    assert.equal(out.candidates[0].description, "Con circón");
   });
 });
