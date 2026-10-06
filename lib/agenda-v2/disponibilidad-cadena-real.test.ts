@@ -75,6 +75,9 @@ function escenario() {
   const enviados: string[] = [];
   const citasCreadas: { especialistaId: number; servicioId: string; inicio: Date }[] = [];
   const deps: AgendaV2RouterDeps = {
+    // Estas pruebas verifican la CADENA de disponibilidad del flujo guiado (que la reprogramación sigue usando). Reservar citas NUEVAS por chat está retirado
+    // para AMORE en producción (ver lib/amore-conversacion-matriz.test.ts, bloque J): aquí se habilita el flujo antiguo solo para probar esa cadena.
+    permitirReservaPorChat: true,
     hoyIsoParaExtraccion: () => HOY_REAL,
     // Solo la ESCRITURA de la cita se simula (crearCitaConNylas tiene su propia suite con revalidación): acá se
     // verifica que el router pida crear EXACTAMENTE la cita que la clienta eligió en lenguaje natural.

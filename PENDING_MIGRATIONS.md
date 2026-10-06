@@ -1,5 +1,29 @@
 # Pasos manuales pendientes en producción
 
+## PENDIENTE — AMORE: «Mi cita» (reservas solo por enlace + gestión por enlace personal)
+
+Migración `supabase/migrations/20261209000000_dulabs_cita_enlaces.sql`. **Aditiva**: crea la tabla
+`dulabs_cita_enlaces` (RLS activo y sin políticas: solo `service_role`). No toca ninguna tabla existente
+ni ningún dato; las citas siguen siendo `dulabs_citas_especialista` (única fuente de verdad).
+Reversa: `supabase/rollbacks/20261209000000_dulabs_cita_enlaces.down.sql` (se niega a borrar si hay enlaces activos).
+Verificación local (PGlite): `supabase/tests/20261209000000_dulabs_cita_enlaces.test.sql`.
+
+**Qué guarda:** un enlace personal por cita — del token (32 bytes aleatorios) solo se guarda el hash sha256 (único) y una copia
+cifrada AES-256-GCM para poder reenviar el MISMO enlace en los recordatorios. Caduca 14 días después de la cita y se puede revocar.
+
+Sin la migración el sistema NO se rompe: la reserva y la cancelación funcionan igual, pero no se crea enlace
+(la confirmación y los recordatorios salen sin el texto del enlace y `/mi-cita/<token>` responde «enlace inválido»).
+
+1. Correr el archivo completo en el SQL Editor (idempotente).
+2. Verificar (esperado: una fila con `true | true`):
+   ```sql
+   select to_regclass('public.dulabs_cita_enlaces') is not null as tabla,
+          (select relrowsecurity from pg_class where oid = 'public.dulabs_cita_enlaces'::regclass) as rls_activo;
+   ```
+3. (Opcional, recomendado) Diagnóstico de solo lectura de las citas futuras y, si hay citas del portal antiguo que el bot no encuentra,
+   su reparación: `supabase/provisioning/amore/01_diagnostico_citas_solo_lectura.sql` y `02_reparar_identidad_citas_portal.sql`.
+4. Detalle completo, riesgos y prueba controlada: `docs/AMORE_RESERVAS_POR_ENLACE.md`.
+
 ## ✅ APLICADA (25-sep-2026, verificada `5`) — Registros de módulo: respaldo y conciliación de `registrar_en_modulo` (genérico)
 
 Migración `supabase/migrations/20261121000000_dulabs_registros_modulo.sql`. **Aditiva**: crea la

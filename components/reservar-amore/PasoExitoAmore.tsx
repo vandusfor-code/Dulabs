@@ -4,12 +4,10 @@ import { Check, Clock, Gem } from "lucide-react";
 import { playfairDisplay } from "@/lib/fonts-portal-amore";
 import { AMORE, serifAmore } from "./tema";
 
-// AMORE (Fase 3 del portal, autorizado) — pantalla de éxito. Mismo
-// `resultado` real que ya devuelve el POST de app/api/reservar/[tenant]/route.ts
-// (reservarCitaPorServicio) -- ninguna lógica nueva, solo presentación con
-// identidad propia. NO envía WhatsApp (pedido explícito de esta fase).
+// AMORE (Fase 3 del portal, autorizado) — pantalla de éxito. Muestra lo que devolvió el POST de app/api/reservar/[tenant]/route.ts, incluido el enlace
+// personal «Mi cita» (enlaceGestion) para ver, modificar o cancelar la cita. Solo presentación: el enlace lo emite el servidor.
 
-type ResultadoExito = { codigo: string; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number };
+type ResultadoExito = { codigo: string; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number; enlaceGestion?: string | null };
 
 function Fila({ label, valor }: { label: string; valor: string }) {
   return (
@@ -72,6 +70,24 @@ export function PasoExitoAmore({ resultado, negocio }: { resultado: ResultadoExi
             </span>
           </div>
         </div>
+
+        {resultado.enlaceGestion && (
+          <div className="mt-4 w-full rounded-[28px] p-5 text-left" style={{ backgroundColor: AMORE.doradoSuave }}>
+            <p className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
+              Gestiona tu cita
+            </p>
+            <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: AMORE.textoSecundario }}>
+              Si necesitas modificar o cancelar tu cita, puedes hacerlo desde este enlace. También te lo enviamos por WhatsApp.
+            </p>
+            <a
+              href={resultado.enlaceGestion}
+              className="mt-3 flex w-full items-center justify-center py-3 text-[14.5px] font-semibold text-white"
+              style={{ backgroundColor: AMORE.burdeos, borderRadius: 999 }}
+            >
+              Ver o modificar mi cita
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

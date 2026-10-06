@@ -54,6 +54,9 @@ import { nombreConocido } from "@/lib/clientes-conocidos";
 // para el módulo genérico de comunicaciones (lib/comunicaciones/*), en vez
 // de un texto fijo -- nunca una segunda función de reemplazo de variables.
 import { renderizarMensajeComunicacion } from "@/lib/comunicaciones/mensaje";
+// AMORE «Mi cita» -- el recordatorio lleva el enlace personal de la cita (el MISMO que recibió en la confirmación) para modificarla o cancelarla.
+import { urlEnlaceDeCita } from "@/lib/mi-cita/chat";
+import { textoEnlaceGestion } from "@/lib/mi-cita/mensajes";
 
 export interface CitaParaRecordatorioAmore {
   id: number;
@@ -62,9 +65,13 @@ export interface CitaParaRecordatorioAmore {
   nombre_cliente: string;
   servicio: string;
   inicio: string;
+  /** Fin de la cita (para el vencimiento del enlace). Opcional: sin él se asume una duración de 3 h. */
+  fin?: string;
 }
 
 export interface DepsRecordatorioAmore {
+  /** URL del enlace personal de la cita (default real: lib/mi-cita/chat.ts, que lo emite si aún no existe). null = no se agrega ninguna línea. */
+  urlEnlaceCita?: (supabase: SupabaseClient, idTenant: string, cita: { id: number; fin: string }) => Promise<string | null>;
   especialistaPorId?: typeof especialistaPorId;
   enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
   obtenerNombresServiciosDeCita?: typeof obtenerNombresServiciosDeCita;
@@ -196,8 +203,19 @@ export async function enviarRecordatorioAmore(
         horaTexto,
       });
 
+  // «Si necesitas modificar o cancelar tu cita, puedes hacerlo desde este enlace: …». Si el enlace no se puede obtener, el recordatorio sale igual que siempre
+  // (nunca se bloquea ni se retrasa un recordatorio por esto). Si la plantilla del negocio ya trae el enlace, no se repite.
+  let textoFinal = texto;
   try {
-    const resultado = await enviar({ tenantId: idTenant, telefono: cita.telefono_cliente, mensaje: texto, origen: "automatico" });
+    const finCita = cita.fin ?? new Date(new Date(cita.inicio).getTime() + 3 * 60 * 60_000).toISOString();
+    const url = await (deps.urlEnlaceCita ?? urlEnlaceDeCita)(supabase, idTenant, { id: cita.id, fin: finCita });
+    if (url && !texto.includes(url)) textoFinal = `${texto}\n\n${textoEnlaceGestion(url)}`;
+  } catch (err) {
+    console.error(`[amore-recordatorio] cita ${cita.id}: no se pudo obtener el enlace de gestión -- el recordatorio sale sin él:`, err instanceof Error ? err.message : "error desconocido");
+  }
+
+  try {
+    const resultado = await enviar({ tenantId: idTenant, telefono: cita.telefono_cliente, mensaje: textoFinal, origen: "automatico" });
     return resultado.ok;
   } catch (err) {
     console.error(`[amore-recordatorio] cita ${cita.id}: error técnico enviando por el worker:`, err instanceof Error ? err.message : "error desconocido");

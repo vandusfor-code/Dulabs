@@ -4,6 +4,10 @@ import { planDelTenant } from "@/lib/plan-limits";
 import { reservarCitaPorServicio } from "@/lib/disponibilidad-servicio";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
 import { enviarConfirmacionReservaWhatsApp } from "@/lib/reserva-notificaciones-whatsapp";
+// AMORE: la reserva del portal usa el MISMO motor real que el chat y el panel (Google Calendar vía Nylas) y emite el enlace personal «Mi cita».
+import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
+import { reservarPorPortalAmore } from "@/lib/mi-cita/reserva-portal";
+import { depsProduccionMiCita } from "@/lib/mi-cita/gestion";
 
 export const runtime = "nodejs";
 
@@ -149,6 +153,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const inicio = new Date(`${fecha}T${hora}:00-05:00`);
   if (Number.isNaN(inicio.getTime())) {
     return Response.json({ error: "Fecha u hora inválida" }, { status: 400 });
+  }
+
+  // AMORE: motor real con Nylas (revalida contra Google Calendar y crea el evento), identidad igual a la del chat, enlace «Mi cita» y confirmación por
+  // WhatsApp con ese enlace; sin integración de calendario FALLA CERRADO (nunca reserva a ciegas). Cualquier otro negocio sigue por el camino de siempre.
+  if (tenant === AMORE_TENANT_ID) {
+    const r = await reservarPorPortalAmore(depsProduccionMiCita(supabase), {
+      servicioId,
+      especialistaId,
+      inicio,
+      nombreCliente,
+      telefonoCliente,
+      correoCliente,
+      fechaNacimientoDia,
+      fechaNacimientoMes,
+      idempotencyKey,
+    });
+    if (!r.ok) return Response.json({ error: r.error }, { status: r.status });
+    return Response.json({ success: true, ...r.data });
   }
 
   const huella = huellaSolicitud([tenant, servicioId, especialistaId, inicio.toISOString(), telefonoCliente, nombreCliente]);

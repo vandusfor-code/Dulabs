@@ -383,7 +383,10 @@ describe("Tests 5-8 -- fast track determinista: frases inequívocas van DIRECTO 
       assert.equal(r.manejado, true);
       assert.equal(iniciarAgenda.llamadas.length, 1);
       assert.equal(fakeClasificador.llamadas.length, 0, "el fast track determinista debe evitar la latencia de llamar a Gemini");
-      assert.equal(envios.enviados.at(-1)!.mensaje, "Perfecto 💗 Vamos a agendar tu cita.");
+      // La reserva por chat se retiró: este puente ya no anuncia «Vamos a agendar tu cita». iniciarAgendaV2 (aquí un fake; en producción es el choke point que
+      // entrega el enlace de reserva) responde en UN solo mensaje, así que el puente no agrega ninguno propio: bienvenida (2) + respuesta a la opción «2» (1).
+      assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Vamos a agendar/);
+      assert.equal(envios.enviados.length, 3, "el puente no manda mensaje propio al pasar a la reserva");
     });
   }
 });
@@ -418,7 +421,8 @@ describe("Test 12 -- Gemini pregunta '¿Quieres agendar?' y el cliente responde 
     const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "Sí", wamid: "w4" }, deps);
     assert.equal(r.manejado, true);
     assert.equal(iniciarAgenda.llamadas.length, 1);
-    assert.equal(envios.enviados.at(-1)!.mensaje, "Perfecto 💗 Vamos a agendar tu cita.", "el reply_text de Gemini se IGNORA cuando intent=TRIGGER_AGENDA");
+    assert.notEqual(envios.enviados.at(-1)!.mensaje, "ignorado", "el reply_text de Gemini se IGNORA cuando intent=TRIGGER_AGENDA");
+    assert.doesNotMatch(envios.enviados.at(-1)!.mensaje, /Vamos a agendar/, "ya no se anuncia «Vamos a agendar»: lo que sigue es el enlace de reserva (iniciarAgendaV2)");
   });
 });
 

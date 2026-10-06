@@ -37,7 +37,8 @@ import { OPCIONES_CONFIRMACION } from "@/lib/agenda-v2/confirmacion";
 import type { ResultadoCrearCitaNylas, DepsCrearCitaNylas, ResultadoActualizarCitaNylas } from "@/lib/reserva-servicio-nylas";
 import type { CitaEspecialista, Especialista } from "@/lib/especialistas";
 import type { ResultadoCancelarCitaEspecialista, ResultadoCitasActivasEspecialista } from "@/lib/especialistas-flow-adaptador";
-import { construirOpcionesCita } from "@/lib/agenda-v2/gestion-citas";
+import { construirOpcionesCita, OPCIONES_SI_NO, MENSAJE_CANCELACION_ABANDONADA, MENSAJE_SIN_CITAS_FUTURAS } from "@/lib/agenda-v2/gestion-citas";
+import { MENSAJE_RESERVA_POR_ENLACE, MENSAJE_SIN_CITAS_CON_ENLACE } from "@/lib/mi-cita/mensajes";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
 
@@ -289,6 +290,9 @@ function armarDepsAmore(overrides: Partial<AgendaV2RouterDeps> = {}, clientePree
   const entradasAmore = crearFakeEntradasAmore();
   const deps: AgendaV2RouterDeps = {
     ...base.deps,
+    // Estas pruebas verifican el flujo guiado de reserva y su registro previo de clientas nuevas, que ya NO es el comportamiento de producción de AMORE (la cita nueva
+    // se reserva por el enlace): se habilita explícitamente. El comportamiento de producción se prueba en los tests «AMORE: la cita nueva va por el enlace» de este archivo.
+    permitirReservaPorChat: true,
     buscarClienteConocido: clientes.buscarClienteConocido,
     buscarEntradaAmoreDeps: entradasAmore.buscarEntradaAmoreDeps,
     crearEntradaAmoreDeps: entradasAmore.crearEntradaAmoreDeps,
@@ -3317,5 +3321,82 @@ describe("NUEVA FASE (autorizado) -- iniciarGestionCitasAgendaV2 (CANCELAR_CITA/
     await iniciarGestionCitasAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: "573148127388", wamid: "sem1", accion: "cancelar" }, deps);
     assert.match(envios.enviados[0]!.mensaje, /Células Madres/);
     assert.doesNotMatch(envios.enviados[0]!.mensaje, /Cejas con Cera/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AMORE «Mi cita» -- la cita NUEVA va por el enlace (comportamiento de PRODUCCIÓN: permitirReservaPorChat NO se activa).
+// ---------------------------------------------------------------------------
+describe("AMORE: la cita nueva va por el enlace -- el chat ya no reserva", () => {
+  const TEL = "573148127388";
+  const sinFlujoAntiguo = { permitirReservaPorChat: false };
+  const catalogoNoDebeLeerse = async (): Promise<ServicioCatalogoReal[]> => {
+    throw new Error("el catálogo NO debía leerse: no se arma ninguna reserva por chat");
+  };
+
+  it("iniciarNuevaSesionAgendaV2 (clienta conocida): UN mensaje con el enlace; ni sesión, ni catálogo, ni registro", async () => {
+    const { deps, sesiones, envios, entradasAmore } = armarDepsAmore({ ...sinFlujoAntiguo, cargarCatalogoReal: catalogoNoDebeLeerse }, { nombre: "Laura", cumpleDia: null, cumpleMes: null });
+    await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL, wamid: "w1" }, deps);
+    assert.equal(envios.enviados.length, 1);
+    assert.equal(envios.enviados[0]!.mensaje, MENSAJE_RESERVA_POR_ENLACE);
+    assert.ok(envios.enviados[0]!.mensaje.includes("https://www.dulabs.co/reservar/amore"));
+    assert.equal(sesiones.filas.length, 0);
+    assert.equal(entradasAmore.filas.length, 0);
+  });
+
+  it("iniciarNuevaSesionAgendaV2 (clienta NUEVA): también el enlace; NO se inicia el registro por chat", async () => {
+    const { deps, sesiones, envios, entradasAmore } = armarDepsAmore({ ...sinFlujoAntiguo, cargarCatalogoReal: catalogoNoDebeLeerse });
+    await iniciarNuevaSesionAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL, wamid: "w1" }, deps);
+    assert.equal(envios.enviados.length, 1);
+    assert.equal(envios.enviados[0]!.mensaje, MENSAJE_RESERVA_POR_ENLACE);
+    assert.equal(sesiones.filas.length, 0);
+    assert.equal(entradasAmore.filas.length, 0, "no se crea la fila de registro_nombre");
+  });
+
+  it("procesarMensajeConAgendaV2 con 'quiero una cita' (AMORE): el enlace, sin sesión", async () => {
+    const { deps, sesiones, envios } = armarDepsAmore({ ...sinFlujoAntiguo, cargarCatalogoReal: catalogoNoDebeLeerse }, { nombre: "Laura", cumpleDia: null, cumpleMes: null });
+    const r = await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL, texto: "quiero una cita", wamid: "w1" }, deps);
+    assert.deepEqual(r, { manejado: true });
+    assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_RESERVA_POR_ENLACE);
+    assert.equal(sesiones.filas.length, 0);
+  });
+
+  it("otro negocio (nunca AMORE): 'quiero una cita' sigue abriendo su reserva guiada de siempre", async () => {
+    const { deps, sesiones, envios } = armarDeps();
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: TEL, texto: "quiero una cita", wamid: "w1" }, deps);
+    assert.equal(sesiones.filas.length, 1);
+    assert.match(envios.enviados.at(-1)!.mensaje, /¿Qué tipo de servicio te gustaría agendar\?/);
+    assert.ok(!envios.enviados.some((e) => e.mensaje.includes("reservar/amore")));
+  });
+
+  it("una sesión de reserva NUEVA abierta de AMORE se cierra con el enlace; una gestión (SG_*) NO se toca; en otro negocio la sesión sigue", async () => {
+    // (a) reserva nueva abierta (sin cita objetivo, paso de reserva guiada) -> se cierra y recibe el enlace
+    const a = armarDepsAmore({ ...sinFlujoAntiguo });
+    await a.sesiones.crearSesion(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL, wamid: "w0", step: "S2_PROFESIONAL", servicioId: "s-dipping-real", opcionesMostradas: [] });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL, texto: "con Cristal", wamid: "w1" }, a.deps);
+    assert.equal(a.envios.enviados.at(-1)!.mensaje, MENSAJE_RESERVA_POR_ENLACE);
+    assert.equal(a.sesiones.filas[0]!.activo, false);
+    // (b) gestión de una cita (cancelar) en curso: se respeta, NO se cierra con el enlace
+    const b = armarDepsAmore({ ...sinFlujoAntiguo });
+    await b.sesiones.crearSesion(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL, wamid: "w0", step: "SG_CANCELAR_CONFIRMAR", citaObjetivoId: 77, opcionesMostradas: OPCIONES_SI_NO });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL, texto: "2", wamid: "w1" }, b.deps);
+    assert.equal(b.envios.enviados.at(-1)!.mensaje, MENSAJE_CANCELACION_ABANDONADA, "'No, conservar' respeta la gestión en curso");
+    assert.ok(!b.envios.enviados.some((e) => e.mensaje === MENSAJE_RESERVA_POR_ENLACE));
+    // (c) otro negocio con la misma sesión: sigue su flujo (el retiro de la reserva por chat es solo de AMORE)
+    const c = armarDeps();
+    await c.sesiones.crearSesion(FAKE_SUPABASE, { tenantId: "amore-test", telefonoCliente: TEL, wamid: "w0", step: "S1_SERVICIO", opcionesMostradas: construirOpcionesCategoria(CATALOGO_FIXTURE) });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: TEL, texto: NUMERO_CATEGORIA_UNAS, wamid: "w1" }, c.deps);
+    assert.equal(c.sesiones.filas[0]!.activo, true);
+    assert.ok(!c.envios.enviados.some((e) => e.mensaje === MENSAJE_RESERVA_POR_ENLACE));
+  });
+
+  it("pedir gestionar una cita sin tener ninguna a ese número: dice la verdad y ofrece el enlace personal / reservar (AMORE); otros negocios, el texto de siempre", async () => {
+    const sinCitas = async () => ({ cantidad: 0, citas: [] });
+    const amore = armarDepsAmore({ ...sinFlujoAntiguo, consultarCitasActivas: sinCitas });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL, texto: "quiero cancelar mi cita", wamid: "w1" }, amore.deps);
+    assert.equal(amore.envios.enviados.at(-1)!.mensaje, MENSAJE_SIN_CITAS_CON_ENLACE);
+    const otro = armarDeps({ consultarCitasActivas: sinCitas });
+    await procesarMensajeConAgendaV2({ supabase: FAKE_SUPABASE, idTenant: "amore-test", telefono: TEL, texto: "quiero cancelar mi cita", wamid: "w1" }, otro.deps);
+    assert.equal(otro.envios.enviados.at(-1)!.mensaje, MENSAJE_SIN_CITAS_FUTURAS);
   });
 });

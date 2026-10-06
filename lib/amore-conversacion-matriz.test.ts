@@ -12,6 +12,7 @@ import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { atenderMensajeWhatsAppQR, type DepsPipelineWhatsAppQR } from "@/lib/whatsapp-qr-pipeline";
 import { iniciarNuevaSesionAgendaV2, iniciarGestionCitasAgendaV2, type AgendaV2RouterDeps } from "@/lib/agenda-v2/router";
+import { crearSesionAgendaV2 } from "@/lib/agenda-v2/sesiones";
 import { AMORE_TENANT_ID, phoneNumberIdWhatsappQr } from "@/lib/nylas/nylas-grant";
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
 import type { EscenarioRow } from "@/lib/bot-escenarios/tipos";
@@ -141,6 +142,10 @@ function crearBot(
     gemini?: Gemini;
     crearCita?: AgendaV2RouterDeps["crearCitaConNylas"];
     conCitaExistente?: boolean;
+    /** SOLO para los casos del flujo ANTIGUO de reserva guiada por chat (ya retirado en producción: la cita nueva se reserva por el enlace). */
+    reservaPorChat?: boolean;
+    /** Enlace personal de la cita (AMORE «Mi cita») que el bot agrega al gestionarla; sin esto no se agrega nada. */
+    enlaceDeCita?: string;
   } = {},
 ) {
   const tablas = tablasAmore(opciones.clienteRegistrado ?? true);
@@ -161,6 +166,8 @@ function crearBot(
   };
   const agendaV2: AgendaV2RouterDeps = {
     ...comun,
+    permitirReservaPorChat: opciones.reservaPorChat ?? false,
+    sufijoEnlaceCita: async () => (opciones.enlaceDeCita ? `\n\nTambién puedes modificarla o cancelarla desde tu enlace personal:\n${opciones.enlaceDeCita}` : ""),
     cargarEscenariosReal: async (_s, t) => AMORE_ESCENARIOS_SEED.map((e, i) => ({ ...e, id: `${t}-e${i}`, tenantId: t }) as EscenarioRow),
     resolverNylasGrantIdParaTenant: () => "grant-prueba",
     resolveNylasApiKeyFromEnv: () => "clave-prueba",
@@ -221,8 +228,11 @@ function crearBot(
   const sesion = () => (tablas.dulabs_agenda_v2_sesiones ?? []).find((s) => s.activo) ?? null;
   const entrada = () => (tablas.dulabs_amore_entrada ?? [])[0] ?? null;
   const citaReal = () => (tablas.dulabs_citas_especialista ?? []).find((c) => c.id === 77) ?? null;
-  return { decir, citas, reprogramaciones, llamadasGemini, sesion, entrada, citaReal };
+  return { decir, citas, reprogramaciones, llamadasGemini, sesion, entrada, citaReal, db, tablas };
 }
+
+/** El flujo ANTIGUO de reserva guiada por chat (ya NO es el comportamiento de producción para AMORE): se conserva probado porque la reprogramación reutiliza sus pasos. */
+const crearBotConReservaPorChat = (opciones: Parameters<typeof crearBot>[0] = {}) => crearBot({ ...opciones, reservaPorChat: true });
 
 let restaurar: () => void = () => {};
 const conNylas = (r: RespuestaNylas) => (restaurar = instalarNylasFalso(r));
@@ -299,7 +309,7 @@ describe("B. Servicios -- precios y duraciones SOLO del catálogo real", () => {
 describe("C-E. Profesionales, disponibilidad y reserva -- de punta a punta, en lenguaje natural", () => {
   it("reserva completa: 'Quiero una cita' -> 'uñas' -> 'el dipping' -> 'Quiero con Cristal' -> día -> 'a las 3' -> 'Sí, perfecto'", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     await bot.decir("Quiero una cita");
     assert.equal(bot.sesion()!.step, "S1_SERVICIO");
     await bot.decir("uñas");
@@ -324,7 +334,7 @@ describe("C-E. Profesionales, disponibilidad y reserva -- de punta a punta, en l
 
   it("el mismo camino con NÚMEROS (la conversación real del bug: '1' -> '2' -> '1' -> '2') ofrece días de Cristal", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     await bot.decir("Hola");
     await bot.decir("1");
     await bot.decir("2"); // Uñas
@@ -336,7 +346,7 @@ describe("C-E. Profesionales, disponibilidad y reserva -- de punta a punta, en l
 
   it("profesional SIN cupo real (Jessica, agenda llena) -> lo dice con su nombre y ofrece a las demás, sin ella", async () => {
     conNylas(calendarioNylas({ ocupados: { "cal-jessica": Array.from({ length: 16 }, (_, i) => ({ start: unix(sumarDias(HOY, i), "00:00"), end: unix(sumarDias(HOY, i), "23:59") })) } }));
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     const restaurarLogs = silenciarLogs();
     try {
       await bot.decir("Quiero una cita");
@@ -353,7 +363,7 @@ describe("C-E. Profesionales, disponibilidad y reserva -- de punta a punta, en l
 
   it("calendario de Cristal ILEGIBLE (Nylas 404) -> dice la verdad ('no pude consultar'), nunca 'no hay días'", async () => {
     conNylas((q) => (q.calendarId === "cal-cristal" ? { status: 404, body: { error: { type: "not_found" } } } : AGENDA_NORMAL()(q)));
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     const restaurarLogs = silenciarLogs();
     try {
       await bot.decir("Quiero una cita");
@@ -369,7 +379,7 @@ describe("C-E. Profesionales, disponibilidad y reserva -- de punta a punta, en l
 
   it("slot tomado justo antes de confirmar (revalidación real 'ocupado') -> nada se crea, vuelve a horas reales", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot({ crearCita: async () => ({ ok: false, motivo: "ocupado", detalle: "Ese horario ya está ocupado." }) });
+    const bot = crearBotConReservaPorChat({ crearCita: async () => ({ ok: false, motivo: "ocupado", detalle: "Ese horario ya está ocupado." }) });
     await bot.decir("Quiero una cita");
     await bot.decir("uñas");
     await bot.decir("dipping");
@@ -385,7 +395,7 @@ describe("C-E. Profesionales, disponibilidad y reserva -- de punta a punta, en l
 describe("F. Conversación natural durante la reserva", () => {
   it("'me da igual quién' -> propone a la primera con días reales; 'Ah no, mejor con Cristal' -> cambia a sus días", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     await bot.decir("Quiero una cita");
     await bot.decir("uñas");
     await bot.decir("dipping");
@@ -399,7 +409,7 @@ describe("F. Conversación natural durante la reserva", () => {
 
   it("'¿puede ser después de las 5?' en las horas -> solo horas reales desde las 5 p. m.", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     await bot.decir("Quiero una cita");
     await bot.decir("uñas");
     await bot.decir("dipping");
@@ -438,7 +448,7 @@ describe("G. Casos límite", () => {
 
   it("clienta NUEVA: 'Quiero una cita' -> registro (nombre, día, mes) -> y recién ahí el menú real", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot({ clienteRegistrado: false });
+    const bot = crearBotConReservaPorChat({ clienteRegistrado: false });
     assert.match((await bot.decir("Quiero una cita")).respuestas.join("\n"), /tu nombre/);
     await bot.decir("Ana");
     await bot.decir("5");
@@ -525,7 +535,7 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
 
   it("I1 '¿cuánto cuesta el dipping?' eligiendo día -> precio REAL del catálogo, mismo paso y mismas opciones, sin contar como fallo", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     for (const t of ["Quiero una cita", "uñas", "dipping", "con Cristal"]) await bot.decir(t);
     const antes = opcionesDe(bot.sesion());
     const { respuestas } = await bot.decir("¿cuánto cuesta el dipping?");
@@ -538,7 +548,7 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
 
   it("I2 '¿cuánto demora?' eligiendo hora -> duración del servicio YA elegido (catálogo real)", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     for (const t of ["Quiero una cita", "uñas", "dipping", "Mary", `el ${NOMBRE_DIA}`]) await bot.decir(t);
     const { respuestas } = await bot.decir("¿cuánto demora?");
     assert.match(respuestas[0]!, /Dipping\* dura aproximadamente 120 minutos/);
@@ -547,7 +557,7 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
 
   it("I3 otra pregunta a mitad de la reserva ('estoy mirando para una boda, ¿qué me recomiendas?') -> la IA responde con datos reales y el menú sigue", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     for (const t of ["Quiero una cita", "uñas", "dipping"]) await bot.decir(t);
     const { respuestas } = await bot.decir("es para una boda, ¿qué me recomiendas?");
     assert.match(respuestas[0]!, /ocasión especial/);
@@ -557,7 +567,7 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
 
   it("I4 'sí' / 'sí, perfecto' cuando NO se está pidiendo confirmación -> jamás crea una cita ni avanza", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     for (const t of ["Quiero una cita", "uñas", "dipping", "Mary", `el ${NOMBRE_DIA}`]) await bot.decir(t);
     for (const t of ["sí", "sí, perfecto"]) {
       const { respuestas } = await bot.decir(t);
@@ -569,7 +579,7 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
 
   it("I5 'quiero con Cristal' ANTES del servicio + 'uñas para el <día>' -> al elegir el servicio va directo a los horarios REALES de Cristal ese día", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     await bot.decir("Quiero una cita");
     const anotado = await bot.decir("quiero con Cristal");
     assert.match(anotado.respuestas[0]!, /Anoto que la quieres con \*Cristal\*/);
@@ -584,7 +594,7 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
 
   it("I6 primer mensaje '¿tienes disponibilidad el <día>?' (sin servicio) -> se recuerda el día; 'me da igual con quién' -> profesional con ESE día real", async () => {
     conNylas(AGENDA_NORMAL());
-    const bot = crearBot({
+    const bot = crearBotConReservaPorChat({
       gemini: ({ mensaje }) =>
         /disponibilidad/.test(mensaje) ? { ...consulta(""), intent: "TRIGGER_AGENDA", detectedDateMention: `el ${NOMBRE_DIA}` } : geminiConDatos({ mensaje }),
     });
@@ -602,7 +612,7 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
     conNylas(
       calendarioNylas({ libresEn: ["cal-cristal"], ocupados: { "cal-cristal": [{ start: unix(DIA_OBJETIVO, "00:00"), end: unix(DIA_OBJETIVO, "23:59") }] } }),
     );
-    const bot = crearBot();
+    const bot = crearBotConReservaPorChat();
     await bot.decir("Quiero una cita");
     await bot.decir(`uñas para el ${NOMBRE_DIA}`);
     await bot.decir("dipping");
@@ -611,5 +621,147 @@ describe("I. No repetir información ni caer en 'No reconocí' -- preguntas y da
     assert.match(respuestas[0]!, /no tiene cupo disponible/);
     const ofrecidos = (bot.sesion()!.opciones_mostradas as { opciones: { fechaIso: string }[] }).opciones.map((o) => o.fechaIso);
     assert.ok(!ofrecidos.includes(DIA_OBJETIVO));
+  });
+});
+
+describe("J. Citas NUEVAS: solo por el enlace -- el chat nunca reserva (comportamiento de producción)", () => {
+  const ENLACE_RESERVA = "https://www.dulabs.co/reservar/amore";
+  let llamadasNylas = 0;
+  const conNylasContado = () => conNylas((q) => (llamadasNylas++, AGENDA_NORMAL()(q)));
+  const sinReservaPorChat = (bot: ReturnType<typeof crearBot>) => {
+    assert.equal(bot.citas.length, 0, "no se creó ninguna cita");
+    assert.equal(bot.sesion(), null, "no se abrió ninguna sesión de reserva guiada");
+    assert.equal(llamadasNylas, 0, "no se consultó el calendario ni se tocó Nylas");
+    assert.equal((bot.tablas.dulabs_citas_especialista ?? []).length, 0, "no hay filas de cita");
+  };
+
+  it("J1 'quiero una cita' -> el enlace de reserva en UN solo mensaje; no pregunta servicio/profesional/día/hora ni crea nada", async () => {
+    llamadasNylas = 0;
+    conNylasContado();
+    const bot = crearBot();
+    await bot.decir("Hola");
+    const { respuestas } = await bot.decir("quiero una cita");
+    assert.equal(respuestas.length, 1);
+    assert.match(respuestas[0]!, /Para reservar una cita nueva/);
+    assert.ok(respuestas[0]!.includes(ENLACE_RESERVA));
+    assert.doesNotMatch(respuestas[0]!, /Vamos a agendar|categor|profesional:|¿Con quién/i);
+    sinReservaPorChat(bot);
+  });
+
+  it("J2 opción «1» del menú, 'quiero agendar', 'quiero reservar', 'me gustaría agendar una cita' -> siempre el enlace", async () => {
+    for (const frase of ["1", "quiero agendar", "quiero reservar", "me gustaría agendar una cita", "quiero sacar cita con Cristal"]) {
+      llamadasNylas = 0;
+      conNylasContado();
+      const bot = crearBot();
+      await bot.decir("Hola");
+      const { respuestas } = await bot.decir(frase);
+      assert.ok(respuestas.join("\n").includes(ENLACE_RESERVA), `frase: ${frase}`);
+      assert.equal(respuestas.length, 1, `un solo mensaje para: ${frase}`);
+      sinReservaPorChat(bot);
+      restaurar();
+    }
+  });
+
+  it("J3 la IA clasifica 'tienen espacio para mí el viernes' como TRIGGER_AGENDA -> el enlace; nada se consulta ni se crea", async () => {
+    llamadasNylas = 0;
+    conNylasContado();
+    const bot = crearBot({ gemini: () => ({ ...consulta("ignorado"), intent: "TRIGGER_AGENDA", detectedProfessionalMention: "Cristal", detectedDateMention: "el viernes" }) });
+    await bot.decir("Hola");
+    const { respuestas } = await bot.decir("¿tendrán un campito para mí con Cristal el viernes?");
+    assert.ok(respuestas.join("\n").includes(ENLACE_RESERVA));
+    assert.doesNotMatch(respuestas.join("\n"), /ignorado/);
+    sinReservaPorChat(bot);
+  });
+
+  it("J4 una clienta NUEVA que dice 'quiero agendar' recibe el enlace (el portal pide su nombre y teléfono): ya no se la mete en un registro por chat", async () => {
+    llamadasNylas = 0;
+    conNylasContado();
+    const bot = crearBot({ clienteRegistrado: false });
+    await bot.decir("Hola");
+    const { respuestas } = await bot.decir("quiero agendar");
+    assert.ok(respuestas.join("\n").includes(ENLACE_RESERVA));
+    assert.doesNotMatch(respuestas.join("\n"), /tu nombre|cómo te llamas|cumpleaños/i);
+    assert.notEqual(bot.entrada()!.modo, "registro_nombre");
+    sinReservaPorChat(bot);
+  });
+
+  it("J5 una pregunta INFORMATIVA ('¿Cristal trabaja los sábados?') se responde con información, NO se convierte en una redirección", async () => {
+    llamadasNylas = 0;
+    conNylasContado();
+    const bot = crearBot({ gemini: () => consulta("Cristal atiende de lunes a sábado dentro del horario del salón 💗") });
+    await bot.decir("Hola");
+    const { respuestas } = await bot.decir("¿Cristal trabaja los sábados?");
+    assert.equal(respuestas.length, 1);
+    assert.match(respuestas[0]!, /Cristal atiende de lunes a sábado/);
+    assert.ok(!respuestas[0]!.includes(ENLACE_RESERVA), "no es una intención de reservar: no se manda el enlace");
+    sinReservaPorChat(bot);
+  });
+
+  it("J6 una sesión de reserva NUEVA que quedó abierta (la clienta iba a mitad) ya no continúa: se cierra y recibe el enlace", async () => {
+    llamadasNylas = 0;
+    conNylasContado();
+    const bot = crearBot();
+    await bot.decir("Hola");
+    await crearSesionAgendaV2(bot.db, { tenantId: T, telefonoCliente: TEL, wamid: "w-previo", step: "S2_PROFESIONAL", servicioId: "s-dipping", opcionesMostradas: [] });
+    assert.ok(bot.sesion(), "hay una sesión de reserva abierta");
+    const { respuestas } = await bot.decir("con Cristal");
+    assert.ok(respuestas.join("\n").includes(ENLACE_RESERVA));
+    assert.equal(bot.sesion(), null, "la sesión antigua se cerró");
+    assert.equal(bot.citas.length, 0);
+  });
+
+  it("J7 CANCELAR sigue por el chat: muestra SU cita, pide confirmar, y al decir que sí la cancela (más el enlace personal si existe)", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({ conCitaExistente: true, enlaceDeCita: "https://www.dulabs.co/mi-cita/TOKEN-DE-PRUEBA" });
+    await bot.decir("Hola");
+    const pregunta = await bot.decir("quiero cancelar mi cita");
+    assert.match(pregunta.respuestas.join("\n"), /Cristal/);
+    assert.match(pregunta.respuestas.join("\n"), /tu enlace personal:\s*\nhttps:\/\/www\.dulabs\.co\/mi-cita\/TOKEN-DE-PRUEBA/);
+    assert.equal(bot.citaReal()!.estado, "confirmada", "nada se cancela sin confirmar");
+    await bot.decir("sí");
+    assert.equal(bot.citaReal()!.estado, "cancelada");
+  });
+
+  it("J8 CAMBIAR la cita sigue por el chat: 'quiero cambiar mi cita' -> misma profesional, días reales -> se reprograma esa cita", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({ conCitaExistente: true });
+    await bot.decir("Hola");
+    const inicio = await bot.decir("quiero cambiar mi cita");
+    assert.match(inicio.respuestas.join("\n"), /¿Deseas reprogramarla\?/);
+    await bot.decir("1");
+    assert.equal(bot.sesion()!.step, "S3_DIA");
+    assert.equal(bot.sesion()!.profesional_id, 1263);
+    assert.equal(bot.sesion()!.cita_objetivo_id, 77, "es una reprogramación de ESA cita, no una reserva nueva");
+  });
+
+  it("J9 CONSULTAR sigue por el chat y ofrece el enlace personal", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot({ conCitaExistente: true, enlaceDeCita: "https://www.dulabs.co/mi-cita/TOKEN-DE-PRUEBA" });
+    await bot.decir("Hola");
+    const { respuestas } = await bot.decir("¿cuándo es mi cita?");
+    assert.match(respuestas.join("\n"), /Esta es tu próxima cita/);
+    assert.match(respuestas.join("\n"), /TOKEN-DE-PRUEBA/);
+  });
+
+  it("J10 pedir cancelar o cambiar SIN tener citas a este número -> dice la verdad y ofrece el enlace personal o reservar una nueva (nunca un callejón sin salida)", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot();
+    await bot.decir("Hola");
+    for (const frase of ["quiero cancelar mi cita", "quiero cambiar mi cita"]) {
+      const { respuestas } = await bot.decir(frase);
+      assert.match(respuestas.join("\n"), /No encontré citas próximas con este número/, frase);
+      assert.match(respuestas.join("\n"), /enlace personal/, frase);
+      assert.ok(respuestas.join("\n").includes(ENLACE_RESERVA), frase);
+    }
+  });
+
+  it("J11 'hablar con una persona' sigue funcionando (transferencia a Jessica)", async () => {
+    conNylas(AGENDA_NORMAL());
+    const bot = crearBot();
+    await bot.decir("Hola");
+    const { aJessica, respuestas } = await bot.decir("quiero hablar con una persona");
+    assert.equal(aJessica.length, 1, "se avisó a Jessica");
+    assert.match(respuestas.join("\n"), /Jessica/);
+    assert.equal(bot.entrada()!.modo, "atencion_humana");
   });
 });

@@ -23,6 +23,9 @@ import {
 import { planDelTenant } from "@/lib/plan-limits";
 import { requireAuth } from "@/lib/auth/authz";
 import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
+// AMORE: cancelar una cita desde el panel también debe liberar su evento de Google Calendar (si no, el evento huérfano seguiría bloqueando ese horario).
+import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
+import { borrarEventoDeCita, depsProduccionMiCita } from "@/lib/mi-cita/gestion";
 
 export const runtime = "nodejs";
 
@@ -142,6 +145,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (body.accion === "cancelar") {
     const cita = await cancelarCita(supabase, citaId, body.motivo?.trim() || undefined);
     if (!cita) return Response.json({ error: "Esa cita ya no se puede cancelar" }, { status: 409 });
+    // Solo AMORE (el único negocio con eventos de Google Calendar): mejor esfuerzo, nunca lanza ni deshace la cancelación.
+    if (especialista.id_tenant === AMORE_TENANT_ID) {
+      await borrarEventoDeCita(depsProduccionMiCita(supabase), { id: cita.id, id_tenant: especialista.id_tenant, especialista_id: cita.especialista_id });
+    }
     if (cliente) await notificarCitaCancelada(cliente, cita);
     return Response.json({ success: true, cita });
   }
