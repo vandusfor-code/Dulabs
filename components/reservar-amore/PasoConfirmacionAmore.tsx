@@ -3,6 +3,7 @@
 import { CalendarPlus, ChevronRight, Clock } from "lucide-react";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
 import { resumirServicios, type ServicioDelPortal } from "@/lib/reservar-amore-servicios";
+import { FilaResumenAmore as Fila } from "./FilaResumenAmore";
 import { BotonPrincipalAmore, MarcoPasoAmore } from "./MarcoPasoAmore";
 import { formatearDuracion, formatearFechaLarga, formatearHora12h } from "./formato";
 import { AMORE } from "./tema";
@@ -12,19 +13,6 @@ import { AMORE } from "./tema";
 // El botón y el aviso de error van en la barra de abajo: si algo falla (ej. alguien tomó el horario) se ve de inmediato, sin buscarlo bajando.
 
 type DatosCliente = { nombre: string; telefono: string };
-
-function Fila({ label, valor }: { label: string; valor: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b py-2.5 last:border-b-0" style={{ borderColor: AMORE.borde }}>
-      <span className="text-[12.5px]" style={{ color: AMORE.textoSecundario }}>
-        {label}
-      </span>
-      <span className="text-right text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
-        {valor}
-      </span>
-    </div>
-  );
-}
 
 export function PasoConfirmacionAmore({
   negocio,

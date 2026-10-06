@@ -111,6 +111,22 @@ export function BotonPrincipalAmore({
   );
 }
 
+/** Botón secundario (con borde, de 44 px): la acción menos importante de una barra con dos botones. `peligro` es para cancelar o borrar. */
+export function BotonSecundarioAmore({ children, onClick, disabled, peligro = false }: { children: ReactNode; onClick?: () => void; disabled?: boolean; peligro?: boolean }) {
+  const color = peligro ? AMORE.rojo : AMORE.burdeos;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex h-11 w-full items-center justify-center gap-2 px-6 text-[14.5px] font-semibold transition-transform active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
+      style={{ backgroundColor: "#fff", color, border: `1.5px solid ${color}`, borderRadius: 999 }}
+    >
+      {children}
+    </button>
+  );
+}
+
 /** El «Continuar →» de siempre. */
 export function ContinuarAmore({
   onClick,

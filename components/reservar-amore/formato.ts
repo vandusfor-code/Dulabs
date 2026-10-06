@@ -50,3 +50,13 @@ export function formatearHora12h(hhmm: string): string {
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${mStr} ${periodo}`;
 }
+
+/** «Viernes, 9 de octubre» de un INSTANTE (fecha ISO con hora, ej. el `inicio` de una cita), en hora de Colombia. */
+export function formatearFechaLargaDeInstante(iso: string): string {
+  return capitalizar(new Intl.DateTimeFormat("es-CO", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Bogota" }).format(new Date(iso)));
+}
+
+/** «10:00 a. m.» de un INSTANTE, en hora de Colombia. */
+export function formatearHoraDeInstante(iso: string): string {
+  return new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" }).format(new Date(iso));
+}

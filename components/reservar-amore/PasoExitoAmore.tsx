@@ -2,8 +2,9 @@
 
 import { Check, Clock, Gem } from "lucide-react";
 import type { ServicioDelPortal } from "@/lib/reservar-amore-servicios";
+import { FilaResumenAmore as Fila } from "./FilaResumenAmore";
 import { BotonPrincipalAmore, MarcoPasoAmore } from "./MarcoPasoAmore";
-import { formatearDuracion } from "./formato";
+import { formatearDuracion, formatearFechaLargaDeInstante, formatearHoraDeInstante } from "./formato";
 import { AMORE, serifAmore } from "./tema";
 
 // AMORE (portal) — pantalla de éxito. Muestra lo que devolvió el POST de app/api/reservar/[tenant]/route.ts, incluido el enlace personal «Mi cita»
@@ -12,23 +13,9 @@ import { AMORE, serifAmore } from "./tema";
 
 type ResultadoExito = { codigo: string; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number; enlaceGestion?: string | null };
 
-function Fila({ label, valor }: { label: string; valor: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b py-2.5 last:border-b-0" style={{ borderColor: AMORE.borde }}>
-      <span className="text-[12.5px]" style={{ color: AMORE.textoSecundario }}>
-        {label}
-      </span>
-      <span className="text-right text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
-        {valor}
-      </span>
-    </div>
-  );
-}
-
 export function PasoExitoAmore({ resultado, negocio, servicios }: { resultado: ResultadoExito; negocio: string; servicios: Pick<ServicioDelPortal, "id" | "nombre">[] }) {
-  const fechaLarga = new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "long", weekday: "long", timeZone: "America/Bogota" }).format(new Date(resultado.inicio));
-  const fecha = fechaLarga.charAt(0).toUpperCase() + fechaLarga.slice(1);
-  const hora = new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" }).format(new Date(resultado.inicio));
+  const fecha = formatearFechaLargaDeInstante(resultado.inicio);
+  const hora = formatearHoraDeInstante(resultado.inicio);
   const varios = servicios.length > 1;
 
   return (

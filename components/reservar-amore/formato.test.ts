@@ -3,7 +3,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatearDuracion, formatearFechaCorta, formatearFechaLarga, formatearHora12h, formatearMesAnio, sumarDias } from "./formato";
+import { formatearDuracion, formatearFechaCorta, formatearFechaLarga, formatearFechaLargaDeInstante, formatearHora12h, formatearHoraDeInstante, formatearMesAnio, sumarDias } from "./formato";
 
 describe("formatearDuracion", () => {
   it("minutos, horas exactas y horas con minutos", () => {
@@ -35,5 +35,15 @@ describe("fechas (hora de Colombia)", () => {
     assert.equal(sumarDias("2026-10-30", 3), "2026-11-02");
     assert.equal(sumarDias("2026-12-31", 1), "2027-01-01");
     assert.equal(sumarDias("2026-03-01", -1), "2026-02-28");
+  });
+});
+
+describe("fecha y hora de un INSTANTE (el inicio de una cita), en hora de Colombia", () => {
+  it("10:00 a. m. en Bogotá es 15:00 UTC; el día no se corre aunque el instante esté cerca de medianoche UTC", () => {
+    assert.equal(formatearFechaLargaDeInstante("2026-10-09T15:00:00.000Z"), "Viernes, 9 de octubre");
+    assert.equal(formatearHoraDeInstante("2026-10-09T15:00:00.000Z"), "10:00 a. m.");
+    // 03:30 UTC del 10 de octubre = 10:30 p. m. del 9 en Colombia
+    assert.equal(formatearFechaLargaDeInstante("2026-10-10T03:30:00.000Z"), "Viernes, 9 de octubre");
+    assert.equal(formatearHoraDeInstante("2026-10-10T03:30:00.000Z"), "10:30 p. m.");
   });
 });
