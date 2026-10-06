@@ -1,15 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
-import { CalendarClock, CalendarPlus, Check, ChevronLeft, ChevronRight, Clock, Loader2, XCircle } from "lucide-react";
-import { PortalHeaderAmore } from "@/components/reservar-amore/PortalHeaderAmore";
+import { CalendarClock, Check, Loader2, XCircle } from "lucide-react";
+import { FilaResumenAmore as Fila } from "@/components/reservar-amore/FilaResumenAmore";
+import { BotonPrincipalAmore, BotonSecundarioAmore, MarcoPasoAmore } from "@/components/reservar-amore/MarcoPasoAmore";
+import { SelectorHorarioAmore } from "@/components/reservar-amore/SelectorHorarioAmore";
+import { useHistorialPasos } from "@/components/reservar-amore/useHistorialPasos";
+import { formatearDuracion, formatearFechaCorta, formatearFechaLargaDeInstante, formatearHora12h, formatearHoraDeInstante, sumarDias } from "@/components/reservar-amore/formato";
 import { AMORE, serifAmore } from "@/components/reservar-amore/tema";
-import { playfairDisplay } from "@/lib/fonts-portal-amore";
 
 // AMORE — «MI CITA»: la página del enlace personal. Ver la cita, cambiar su fecha/hora y cancelarla. Solo muestra lo que el backend devuelve
 // (/api/mi-cita/{token}/…): el id de la cita nunca viaja desde aquí, el servidor lo saca del token; los horarios son los REALES (con Google Calendar) y al
 // confirmar el backend los vuelve a comprobar desde cero.
+//
+// Pensada para el celular, igual que el portal de reservas: encabezado compacto, las acciones SIEMPRE a la vista en la barra pegada abajo (nada de bajar hasta el final
+// para poder confirmar) y el botón «atrás» del celular regresa a la pantalla anterior (ver ← modificar / cancelar) en vez de salir de la página.
 
 type Vista = {
   negocio: string;
@@ -24,31 +30,13 @@ type Vista = {
   aviso: string | null;
 };
 
-type Pantalla = "cargando" | "invalido" | "ver" | "reprogramar" | "confirmar_cancelar" | "cancelada" | "reprogramada";
+type Carga = "cargando" | "invalido" | "lista";
+type Pantalla = "ver" | "reprogramar" | "confirmar_cancelar" | "cancelada" | "reprogramada";
 
 const HORIZONTE_DIAS = 30;
-const DIAS_LABEL = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"];
 const URL_RESERVA = "/reservar/amore";
 
 const hoyISO = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date());
-const fechaDesdeISO = (iso: string) => {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d, 12));
-};
-const sumarDias = (iso: string, n: number) => {
-  const f = fechaDesdeISO(iso);
-  f.setUTCDate(f.getUTCDate() + n);
-  return f.toISOString().slice(0, 10);
-};
-const mayus = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
-const fechaLarga = (iso: string) => mayus(new Intl.DateTimeFormat("es-CO", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Bogota" }).format(new Date(iso)));
-const horaDe = (iso: string) => new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" }).format(new Date(iso));
-const hora12 = (hhmm: string) => {
-  const [h, m] = hhmm.split(":");
-  const n = Number(h);
-  return `${n % 12 === 0 ? 12 : n % 12}:${m} ${n >= 12 ? "p. m." : "a. m."}`;
-};
-const duracion = (min: number) => (min < 60 ? `${min} min` : min % 60 === 0 ? `${min / 60} h` : `${Math.floor(min / 60)} h ${min % 60} min`);
 const uuid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 const ETIQUETA_ESTADO: Record<string, string> = {
@@ -58,45 +46,11 @@ const ETIQUETA_ESTADO: Record<string, string> = {
   completada: "Realizada",
 };
 
-function Marco({ children }: { children: React.ReactNode }) {
+function Cabecera({ icono, titulo, subtitulo }: { icono: ReactNode; titulo: string; subtitulo?: string }) {
   return (
-    <div className={`relative min-h-screen w-full ${playfairDisplay.variable}`} style={{ backgroundColor: AMORE.fondo }}>
-      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col px-6 pb-9 pt-8">{children}</div>
-    </div>
-  );
-}
-
-function Fila({ label, valor }: { label: string; valor: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-2" style={{ borderColor: AMORE.borde }}>
-      <span className="text-[12.5px]" style={{ color: AMORE.textoSecundario }}>
-        {label}
-      </span>
-      <span className="text-right text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
-        {valor}
-      </span>
-    </div>
-  );
-}
-
-function Boton({ children, onClick, disabled, variante = "principal" }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; variante?: "principal" | "borde" | "peligro" }) {
-  const estilos = {
-    principal: { backgroundColor: AMORE.burdeos, color: "#fff", border: `1.5px solid ${AMORE.burdeos}` },
-    borde: { backgroundColor: "#fff", color: AMORE.burdeos, border: `1.5px solid ${AMORE.burdeos}` },
-    peligro: { backgroundColor: "#fff", color: AMORE.rojo, border: `1.5px solid ${AMORE.rojo}` },
-  }[variante];
-  return (
-    <button type="button" onClick={onClick} disabled={disabled} className="flex w-full items-center justify-center gap-2 py-3.5 text-[15px] font-semibold disabled:opacity-40" style={{ ...estilos, borderRadius: 999 }}>
-      {children}
-    </button>
-  );
-}
-
-function Titulo({ icono, titulo, subtitulo }: { icono?: React.ReactNode; titulo: string; subtitulo?: string }) {
-  return (
-    <div className="mt-8 flex flex-col items-center text-center">
+    <div className="flex flex-col items-center pt-4 text-center">
       {icono}
-      <h1 className="mt-4 text-[26px] font-semibold" style={{ ...serifAmore, color: AMORE.texto }}>
+      <h1 className="mt-4 text-[26px] font-semibold leading-tight" style={{ ...serifAmore, color: AMORE.texto }}>
         {titulo}
       </h1>
       {subtitulo && (
@@ -108,20 +62,53 @@ function Titulo({ icono, titulo, subtitulo }: { icono?: React.ReactNode; titulo:
   );
 }
 
-export function MiCitaAmore() {
-  const { token } = useParams<{ token: string }>();
-  const [pantalla, setPantalla] = useState<Pantalla>("cargando");
+function Resumen({ v }: { v: Pick<Vista, "servicio" | "profesional" | "inicio" | "duracionMin"> }) {
+  return (
+    <div className="mt-6 w-full rounded-[28px] p-4 text-left" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
+      <Fila label="Servicio" valor={v.servicio} />
+      <Fila label="Profesional" valor={v.profesional} />
+      <Fila label="Fecha" valor={formatearFechaLargaDeInstante(v.inicio)} />
+      <Fila label="Hora" valor={formatearHoraDeInstante(v.inicio)} />
+      <Fila label="Duración" valor={formatearDuracion(v.duracionMin)} />
+    </div>
+  );
+}
+
+function AvisoError({ texto }: { texto: string }) {
+  return (
+    <div role="alert" className="mb-2.5 rounded-2xl px-3.5 py-2.5 text-[12.5px] leading-snug" style={{ backgroundColor: AMORE.rojoSuave, color: AMORE.rojo }}>
+      {texto}
+    </div>
+  );
+}
+
+const iconoCirculo = (fondo: string, hijo: ReactNode) => (
+  <div className="flex size-16 items-center justify-center rounded-full" style={{ backgroundColor: fondo }}>
+    {hijo}
+  </div>
+);
+
+/** El token también se puede pasar como propiedad (la página lo lee de la dirección con `useParams`). */
+export function MiCitaAmore({ token: tokenDelPadre }: { token?: string } = {}) {
+  const parametros = useParams<{ token: string }>();
+  const token = tokenDelPadre ?? parametros?.token ?? "";
+
+  const [carga, setCarga] = useState<Carga>("cargando");
   const [vista, setVista] = useState<Vista | null>(null);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [trabajando, setTrabajando] = useState(false);
+  const [terminada, setTerminada] = useState<"cancelada" | "reprogramada" | null>(null);
 
   const [fecha, setFecha] = useState<string | null>(null);
-  const [inicioSemana, setInicioSemana] = useState(hoyISO());
   const [horarios, setHorarios] = useState<string[]>([]);
   const [cargandoHorarios, setCargandoHorarios] = useState(false);
+  const [errorHorarios, setErrorHorarios] = useState<string | null>(null);
   const [hora, setHora] = useState<string | null>(null);
   const [nueva, setNueva] = useState<{ inicio: string } | null>(null);
   const intento = useRef<{ firma: string; clave: string } | null>(null);
+  // Cada consulta de horarios lleva un número: si la clienta cambia de día mientras una respuesta vieja viaja, esa respuesta se descarta.
+  const solicitudHorariosRef = useRef(0);
 
   const base = `/api/mi-cita/${encodeURIComponent(token)}`;
 
@@ -130,14 +117,14 @@ export function MiCitaAmore() {
       const res = await fetch(base, { cache: "no-store" });
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.success) {
-        setPantalla("invalido");
+        setCarga("invalido");
         return;
       }
       setVista(body.data as Vista);
-      setPantalla("ver");
+      setCarga("lista");
     } catch {
-      setError("No pudimos cargar tu cita. Verifica tu conexión e intenta de nuevo.");
-      setPantalla("invalido");
+      setErrorCarga("No pudimos cargar tu cita. Verifica tu conexión e intenta de nuevo.");
+      setCarga("invalido");
     }
   }, [base]);
 
@@ -147,27 +134,72 @@ export function MiCitaAmore() {
     void cargar();
   }, [cargar]);
 
+  // «Atrás» del celular: de modificar o cancelar regresa a «Tu cita». Tras cancelar o reprogramar, volver lleva a «Tu cita» ya actualizada (se vuelve a consultar).
+  const { paso: pantalla, irA, volver } = useHistorialPasos<Pantalla>({
+    inicial: "ver",
+    puedeMostrar: (p) =>
+      p === "ver" ||
+      (p === "reprogramar" && vista?.puedeReprogramar === true) ||
+      (p === "confirmar_cancelar" && vista?.puedeCancelar === true) ||
+      (p === "cancelada" && terminada === "cancelada") ||
+      (p === "reprogramada" && terminada === "reprogramada" && nueva !== null),
+    esFinal: (p) => p === "cancelada" || p === "reprogramada",
+    alReiniciar: () => {
+      setTerminada(null);
+      setNueva(null);
+      setError(null);
+      void cargar();
+    },
+  });
+
+  // Cada pantalla nueva arranca desde arriba. `instant` evita el desplazamiento suave global del sitio.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
+  }, [pantalla]);
+
   const minima = hoyISO();
   const maxima = sumarDias(minima, HORIZONTE_DIAS);
-  const dias = useMemo(() => Array.from({ length: 7 }, (_, i) => sumarDias(inicioSemana, i)), [inicioSemana]);
 
-  async function elegirDia(dia: string) {
-    if (dia < minima || dia > maxima) return;
-    setFecha(dia);
-    setHora(null);
-    setError(null);
+  async function consultarHorarios(dia: string) {
+    const solicitud = ++solicitudHorariosRef.current;
+    setErrorHorarios(null);
     setHorarios([]);
     setCargandoHorarios(true);
     try {
       const res = await fetch(`${base}/horarios?fecha=${encodeURIComponent(dia)}`, { cache: "no-store" });
       const body = await res.json().catch(() => null);
-      if (!res.ok || !body?.success) setError(body?.error ?? "No pudimos consultar los horarios. Intenta de nuevo.");
+      if (solicitud !== solicitudHorariosRef.current) return;
+      if (!res.ok || !body?.success) setErrorHorarios(body?.error ?? "No pudimos consultar los horarios. Intenta de nuevo.");
       else setHorarios((body.data?.horarios as string[]) ?? []);
     } catch {
-      setError("No pudimos consultar los horarios. Verifica tu conexión e intenta de nuevo.");
+      if (solicitud === solicitudHorariosRef.current) setErrorHorarios("No pudimos consultar los horarios. Verifica tu conexión e intenta de nuevo.");
     } finally {
-      setCargandoHorarios(false);
+      if (solicitud === solicitudHorariosRef.current) setCargandoHorarios(false);
     }
+  }
+
+  function elegirDia(dia: string) {
+    if (dia < minima || dia > maxima) return;
+    setFecha(dia);
+    setHora(null);
+    setError(null);
+    void consultarHorarios(dia);
+  }
+
+  function abrirReprogramar() {
+    solicitudHorariosRef.current++;
+    setError(null);
+    setFecha(null);
+    setHora(null);
+    setHorarios([]);
+    setErrorHorarios(null);
+    setCargandoHorarios(false);
+    irA("reprogramar");
+  }
+
+  function abrirCancelar() {
+    setError(null);
+    irA("confirmar_cancelar");
   }
 
   async function confirmarCambio() {
@@ -183,13 +215,15 @@ export function MiCitaAmore() {
       if (!res.ok || !body?.success) {
         setError(body?.error ?? "No pudimos cambiar tu cita. Intenta de nuevo.");
         if (body?.codigo === "horario_ocupado") {
+          // Alguien tomó ese horario: se quita la selección y se actualiza la lista, dejando el aviso a la vista.
           setHora(null);
-          void elegirDia(fecha);
+          void consultarHorarios(fecha);
         }
         return;
       }
       setNueva({ inicio: body.data.inicio as string });
-      setPantalla("reprogramada");
+      setTerminada("reprogramada");
+      irA("reprogramada");
     } catch {
       setError("No pudimos conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
     } finally {
@@ -205,200 +239,193 @@ export function MiCitaAmore() {
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.success) {
         setError(body?.error ?? "No pudimos cancelar tu cita. Intenta de nuevo.");
-        setPantalla("ver");
+        volver();
         return;
       }
-      setPantalla("cancelada");
+      setTerminada("cancelada");
+      irA("cancelada");
     } catch {
       setError("No pudimos conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
-      setPantalla("ver");
+      volver();
     } finally {
       setTrabajando(false);
     }
   }
 
-  if (pantalla === "cargando") {
+  if (carga === "cargando") {
     return (
-      <Marco>
-        <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="size-6 animate-spin" style={{ color: AMORE.textoSecundario }} />
-        </div>
-      </Marco>
+      <div className="flex min-h-dvh items-center justify-center" style={{ backgroundColor: AMORE.fondo }}>
+        <Loader2 className="size-6 animate-spin" style={{ color: AMORE.textoSecundario }} />
+      </div>
     );
   }
 
-  if (pantalla === "invalido" || !vista) {
+  if (carga === "invalido" || !vista) {
     return (
-      <Marco>
-        <PortalHeaderAmore negocio="AMORE" />
-        <Titulo icono={<XCircle className="size-12" style={{ color: AMORE.textoSecundario }} strokeWidth={1.4} />} titulo="Enlace no válido" subtitulo={error ?? "Este enlace no es válido o ya venció."} />
+      <MarcoPasoAmore
+        negocio="AMORE"
+        accion={
+          <BotonPrincipalAmore llena href={URL_RESERVA}>
+            Reservar una cita nueva
+          </BotonPrincipalAmore>
+        }
+      >
+        <Cabecera icono={<XCircle className="size-12" style={{ color: AMORE.textoSecundario }} strokeWidth={1.4} />} titulo="Enlace no válido" subtitulo={errorCarga ?? "Este enlace no es válido o ya venció."} />
         <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
           Si necesitas ayuda con tu cita, escríbenos por WhatsApp.
         </p>
-        <div className="mt-6">
-          <a href={URL_RESERVA} className="flex w-full items-center justify-center py-3.5 text-[15px] font-semibold text-white" style={{ backgroundColor: AMORE.burdeos, borderRadius: 999 }}>
-            Reservar una cita nueva
-          </a>
-        </div>
-      </Marco>
+      </MarcoPasoAmore>
     );
   }
 
-  const resumen = (v: Pick<Vista, "servicio" | "profesional" | "inicio" | "duracionMin">) => (
-    <div className="mt-6 w-full rounded-[28px] p-5 text-left" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
-      <div className="divide-y" style={{ borderColor: AMORE.borde }}>
-        <Fila label="Servicio" valor={v.servicio} />
-        <Fila label="Profesional" valor={v.profesional} />
-        <Fila label="Fecha" valor={fechaLarga(v.inicio)} />
-        <Fila label="Hora" valor={horaDe(v.inicio)} />
-        <Fila label="Duración" valor={duracion(v.duracionMin)} />
-      </div>
-    </div>
-  );
-
   if (pantalla === "cancelada") {
     return (
-      <Marco>
-        <PortalHeaderAmore negocio={vista.negocio} />
-        <Titulo icono={<div className="flex size-16 items-center justify-center rounded-full" style={{ backgroundColor: AMORE.burdeosSuave }}><Check className="size-8" style={{ color: AMORE.burdeos }} /></div>} titulo="Cita cancelada" subtitulo="Tu cita fue cancelada correctamente." />
-        <div className="mt-8">
-          <a href={URL_RESERVA} className="flex w-full items-center justify-center py-3.5 text-[15px] font-semibold text-white" style={{ backgroundColor: AMORE.burdeos, borderRadius: 999 }}>
+      <MarcoPasoAmore
+        negocio={vista.negocio}
+        accion={
+          <BotonPrincipalAmore llena href={URL_RESERVA}>
             Reservar una cita nueva
-          </a>
-        </div>
-      </Marco>
+          </BotonPrincipalAmore>
+        }
+      >
+        <Cabecera icono={iconoCirculo(AMORE.burdeosSuave, <Check className="size-8" style={{ color: AMORE.burdeos }} />)} titulo="Cita cancelada" subtitulo="Tu cita fue cancelada correctamente." />
+      </MarcoPasoAmore>
     );
   }
 
   if (pantalla === "reprogramada" && nueva) {
     return (
-      <Marco>
-        <PortalHeaderAmore negocio={vista.negocio} />
-        <Titulo icono={<div className="flex size-16 items-center justify-center rounded-full" style={{ backgroundColor: AMORE.verdeSuave }}><Check className="size-8" style={{ color: AMORE.verde }} /></div>} titulo="¡Cita reprogramada!" subtitulo={`Te esperamos en ${vista.negocio}`} />
-        {resumen({ ...vista, inicio: nueva.inicio })}
+      <MarcoPasoAmore negocio={vista.negocio}>
+        <Cabecera icono={iconoCirculo(AMORE.verdeSuave, <Check className="size-8" style={{ color: AMORE.verde }} />)} titulo="¡Cita reprogramada!" subtitulo={`Te esperamos en ${vista.negocio}`} />
+        <Resumen v={{ ...vista, inicio: nueva.inicio }} />
         <p className="mt-4 text-center text-[12.5px]" style={{ color: AMORE.textoSecundario }}>
           Guarda este enlace: desde aquí puedes volver a modificar o cancelar tu cita.
         </p>
-      </Marco>
+      </MarcoPasoAmore>
     );
   }
 
   if (pantalla === "confirmar_cancelar") {
     return (
-      <Marco>
-        <PortalHeaderAmore negocio={vista.negocio} onVolver={() => setPantalla("ver")} />
-        <Titulo titulo="¿Cancelar tu cita?" subtitulo="Esta acción libera tu horario." />
-        {resumen(vista)}
-        {error && <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.rojo }}>{error}</p>}
-        <div className="mt-6 flex flex-col gap-3">
-          <Boton variante="peligro" onClick={confirmarCancelacion} disabled={trabajando}>
-            {trabajando ? <Loader2 className="size-5 animate-spin" /> : "Sí, cancelar mi cita"}
-          </Boton>
-          <Boton variante="borde" onClick={() => setPantalla("ver")} disabled={trabajando}>
-            No, conservar mi cita
-          </Boton>
-        </div>
-      </Marco>
+      <MarcoPasoAmore
+        negocio={vista.negocio}
+        onVolver={volver}
+        titulo="¿Cancelar tu cita?"
+        subtitulo="Esta acción libera tu horario."
+        accion={
+          <div>
+            {error && <AvisoError texto={error} />}
+            <div className="flex flex-col gap-2.5">
+              <BotonPrincipalAmore llena onClick={volver} disabled={trabajando}>
+                No, conservar mi cita
+              </BotonPrincipalAmore>
+              <BotonSecundarioAmore peligro onClick={() => void confirmarCancelacion()} disabled={trabajando}>
+                {trabajando ? "Cancelando..." : "Sí, cancelar mi cita"}
+              </BotonSecundarioAmore>
+            </div>
+          </div>
+        }
+      >
+        <Resumen v={vista} />
+      </MarcoPasoAmore>
     );
   }
 
   if (pantalla === "reprogramar") {
     return (
-      <Marco>
-        <PortalHeaderAmore negocio={vista.negocio} onVolver={() => { setError(null); setPantalla("ver"); }} />
-        <h1 className="mt-7 text-center text-[26px] font-semibold" style={{ ...serifAmore, color: AMORE.texto }}>
-          Elige tu nuevo horario
-        </h1>
-        <p className="mt-1 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
-          {vista.servicio} con {vista.profesional}
-        </p>
-
-        <div className="mt-5 rounded-[28px] p-5" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
-          <div className="flex items-center gap-2">
-            <CalendarPlus className="size-5" style={{ color: AMORE.burdeos }} strokeWidth={1.6} />
-            <span className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>Selecciona una fecha</span>
-          </div>
-          <div className="mt-3 flex items-center gap-1">
-            <button type="button" aria-label="Semana anterior" disabled={sumarDias(inicioSemana, -7) < sumarDias(minima, -6)} onClick={() => setInicioSemana(sumarDias(inicioSemana, -7))} className="flex size-7 shrink-0 items-center justify-center disabled:opacity-25" style={{ color: AMORE.burdeos }}>
-              <ChevronLeft className="size-5" />
-            </button>
-            <div className="grid flex-1 grid-cols-7 gap-1">
-              {dias.map((dia) => {
-                const fuera = dia < minima || dia > maxima;
-                const sel = dia === fecha;
-                const d = fechaDesdeISO(dia);
-                return (
-                  <button key={dia} type="button" disabled={fuera} onClick={() => void elegirDia(dia)} className="flex flex-col items-center gap-1 rounded-xl py-2 disabled:opacity-30" style={{ backgroundColor: sel ? AMORE.burdeosSuave : "transparent" }}>
-                    <span className="text-[10px] font-semibold uppercase" style={{ color: sel ? AMORE.burdeos : AMORE.textoSecundario }}>{DIAS_LABEL[d.getUTCDay()]}</span>
-                    <span className="flex size-7 items-center justify-center rounded-full text-[13px] font-semibold" style={sel ? { backgroundColor: AMORE.burdeos, color: "#fff" } : { color: AMORE.texto }}>{d.getUTCDate()}</span>
-                  </button>
-                );
-              })}
+      <MarcoPasoAmore
+        negocio={vista.negocio}
+        onVolver={volver}
+        titulo="Elige tu nuevo horario"
+        subtitulo={`${vista.servicio} con ${vista.profesional}`}
+        accion={
+          <div>
+            {error && <AvisoError texto={error} />}
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1" aria-live="polite">
+                {fecha && hora ? (
+                  <>
+                    <p className="text-[12px]" style={{ color: AMORE.textoSecundario }}>
+                      Nuevo horario
+                    </p>
+                    <p className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
+                      {formatearFechaCorta(fecha)} · {formatearHora12h(hora)}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[12.5px] leading-snug" style={{ color: AMORE.textoSecundario }}>
+                    Elige una fecha y una hora
+                  </p>
+                )}
+              </div>
+              <BotonPrincipalAmore onClick={() => void confirmarCambio()} disabled={!fecha || !hora} cargando={trabajando}>
+                Confirmar
+              </BotonPrincipalAmore>
             </div>
-            <button type="button" aria-label="Semana siguiente" disabled={sumarDias(inicioSemana, 7) > maxima} onClick={() => setInicioSemana(sumarDias(inicioSemana, 7))} className="flex size-7 shrink-0 items-center justify-center disabled:opacity-25" style={{ color: AMORE.burdeos }}>
-              <ChevronRight className="size-5" />
-            </button>
           </div>
-        </div>
-
-        <div className="mt-4 rounded-[28px] p-5" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
-          <div className="flex items-center gap-2">
-            <Clock className="size-5" style={{ color: AMORE.burdeos }} strokeWidth={1.6} />
-            <p className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>Horarios disponibles</p>
-          </div>
-          {!fecha ? (
-            <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>Elige una fecha para ver los horarios reales.</p>
-          ) : cargandoHorarios ? (
-            <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>Consultando horarios reales...</p>
-          ) : horarios.length === 0 ? (
-            <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>No encontramos horarios disponibles para esta fecha. Elige otra.</p>
-          ) : (
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {horarios.map((h) => (
-                <button key={h} type="button" onClick={() => setHora(h)} className="flex flex-col items-center gap-1 rounded-xl py-2.5" style={{ backgroundColor: h === hora ? AMORE.burdeosSuave : "#fff", border: `1.5px solid ${h === hora ? AMORE.burdeos : AMORE.borde}` }}>
-                  <span className="text-[13px] font-medium" style={{ color: AMORE.texto }}>{hora12(h)}</span>
-                  <span className="size-1.5 rounded-full" style={{ backgroundColor: h === hora ? AMORE.burdeos : AMORE.verde }} />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {error && <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.rojo }}>{error}</p>}
-        <div className="mt-5">
-          <Boton onClick={confirmarCambio} disabled={!fecha || !hora || trabajando}>
-            {trabajando ? <Loader2 className="size-5 animate-spin" /> : "Confirmar nuevo horario"}
-          </Boton>
-        </div>
-      </Marco>
+        }
+      >
+        <SelectorHorarioAmore
+          fecha={fecha}
+          hora={hora}
+          fechaMinima={minima}
+          fechaMaxima={maxima}
+          horarios={horarios}
+          cargandoHorarios={cargandoHorarios}
+          errorHorarios={errorHorarios}
+          onSeleccionarFecha={elegirDia}
+          onSeleccionarHora={(h) => {
+            setError(null);
+            setHora(h);
+          }}
+          onReintentar={() => fecha && void consultarHorarios(fecha)}
+        />
+      </MarcoPasoAmore>
     );
   }
 
   // pantalla === "ver"
   return (
-    <Marco>
-      <PortalHeaderAmore negocio={vista.negocio} />
-      <Titulo icono={<div className="flex size-14 items-center justify-center rounded-2xl" style={{ backgroundColor: AMORE.doradoSuave, color: AMORE.dorado }}><CalendarClock className="size-7" /></div>} titulo="Tu cita" subtitulo={ETIQUETA_ESTADO[vista.estado] ?? vista.estado} />
-      {resumen(vista)}
-      {vista.aviso && <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>{vista.aviso}</p>}
-      {error && <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.rojo }}>{error}</p>}
-      <div className="mt-6 flex flex-col gap-3">
-        {vista.puedeReprogramar && (
-          <Boton onClick={() => { setError(null); setFecha(null); setHora(null); setHorarios([]); setInicioSemana(hoyISO()); setPantalla("reprogramar"); }}>
-            Modificar fecha u hora
-          </Boton>
-        )}
-        {vista.puedeCancelar && (
-          <Boton variante="peligro" onClick={() => { setError(null); setPantalla("confirmar_cancelar"); }}>
-            Cancelar cita
-          </Boton>
-        )}
-        {!vista.puedeCancelar && !vista.puedeReprogramar && (
-          <a href={URL_RESERVA} className="flex w-full items-center justify-center py-3.5 text-[15px] font-semibold text-white" style={{ backgroundColor: AMORE.burdeos, borderRadius: 999 }}>
-            Reservar una cita nueva
-          </a>
-        )}
-      </div>
-    </Marco>
+    <MarcoPasoAmore
+      negocio={vista.negocio}
+      accion={
+        <div>
+          {error && <AvisoError texto={error} />}
+          <div className="flex flex-col gap-2.5">
+            {vista.puedeReprogramar && (
+              <BotonPrincipalAmore llena onClick={abrirReprogramar}>
+                Modificar fecha u hora
+              </BotonPrincipalAmore>
+            )}
+            {vista.puedeCancelar && (
+              <BotonSecundarioAmore peligro onClick={abrirCancelar}>
+                Cancelar cita
+              </BotonSecundarioAmore>
+            )}
+            {!vista.puedeCancelar && !vista.puedeReprogramar && (
+              <BotonPrincipalAmore llena href={URL_RESERVA}>
+                Reservar una cita nueva
+              </BotonPrincipalAmore>
+            )}
+          </div>
+        </div>
+      }
+    >
+      <Cabecera
+        icono={
+          <div className="flex size-14 items-center justify-center rounded-2xl" style={{ backgroundColor: AMORE.doradoSuave, color: AMORE.dorado }}>
+            <CalendarClock className="size-7" />
+          </div>
+        }
+        titulo="Tu cita"
+        subtitulo={ETIQUETA_ESTADO[vista.estado] ?? vista.estado}
+      />
+      <Resumen v={vista} />
+      {vista.aviso && (
+        <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
+          {vista.aviso}
+        </p>
+      )}
+    </MarcoPasoAmore>
   );
 }

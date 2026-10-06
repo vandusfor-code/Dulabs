@@ -220,3 +220,24 @@ deja «Elegir otro horario» como acción principal.
 **Pruebas:** `lib/disponibilidad-servicio-nylas.test.ts` (+11), `lib/mi-cita/reserva-portal.test.ts` (+12), `app/api/reservar/portal-amore-rutas.test.ts` (+11),
 `lib/reserva-portal-servicios.test.ts`, `lib/reservar-amore-servicios.test.ts`, `components/reservar-amore/formato.test.ts` y
 `components/reservar-amore/portal-amore.dom.test.tsx` (16, la página completa con la red simulada). Sin migraciones ni SQL.
+
+## 17. Botón «atrás» del celular y «Mi cita» en el celular
+
+**Botón «atrás».** Antes, el botón o el gesto de «atrás» del celular sacaba a la clienta del portal y perdía todo lo elegido. Ahora cada paso agrega una entrada al historial
+(`history.pushState`, sin cambiar la dirección: el enlace compartido sigue siendo el mismo; Next.js documenta este uso de la API nativa del historial) y «atrás» regresa al
+paso anterior con la selección intacta (`components/reservar-amore/useHistorialPasos.ts`, usado por el portal y por «Mi cita»). Reglas: un paso sin datos (p. ej. tras recargar
+la página a mitad de camino) se SALTA al ir hacia atrás y no se avanza a él con «adelante»; cambiar los servicios invalida lo que dependía de ellos (profesional, fecha, hora);
+después de una reserva hecha (o una cita cancelada/reprogramada) «atrás» NO regresa a los pasos viejos —confirmar otra vez sería confuso—: retrocede hasta el inicio y empieza
+limpio (en «Mi cita» vuelve a consultar y muestra la cita ya actualizada). La flecha de cada pantalla hace lo mismo que el botón del celular.
+
+Hallazgo real al probarlo en Next 16: el efecto de la pantalla corre ANTES de que Next parche `history` y guarde su señal (`__NA` + árbol del enrutador) en la entrada, así que el
+estado de cada entrada se arma conservando esas claves; sin ellas, al volver a una entrada Next recarga la página entera. Verificado en el navegador real (atrás, adelante,
+atrás desde la pantalla de éxito) sin recargas y con la dirección intacta.
+
+**«Mi cita» en el celular.** Mismo marco del portal (`MarcoPasoAmore`): encabezado compacto y las acciones SIEMPRE en la barra pegada abajo —«Modificar fecha u hora» /
+«Cancelar cita» en «Tu cita»; en «Elige tu nuevo horario», el resumen «Nuevo horario …» y «Confirmar» sin bajar al final; en «¿Cancelar tu cita?», «No, conservar mi cita» como
+acción principal y «Sí, cancelar» con borde rojo—. El selector de fecha y hora (`SelectorHorarioAmore`) es el MISMO del portal; los errores de red se distinguen de «no hay
+horarios» (con «Reintentar»); si alguien toma el horario, el aviso queda a la vista (antes se borraba al instante). Se retiró `PortalHeaderAmore` (ya nadie lo usaba).
+
+**Pruebas:** `components/reservar-amore/historial-pasos.dom.test.tsx` (17: el mecanismo con la API de historial y la página completa), `components/mi-cita/mi-cita-amore.dom.test.tsx`
+(14), y casos nuevos en `formato.test.ts`. Sin migraciones ni SQL.

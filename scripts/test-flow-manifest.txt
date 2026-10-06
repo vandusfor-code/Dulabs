@@ -556,3 +556,6 @@ lib/reserva-portal-servicios.test.ts
 lib/reservar-amore-servicios.test.ts
 components/reservar-amore/formato.test.ts
 components/reservar-amore/portal-amore.dom.test.tsx
+# Portal y «Mi cita» en el celular: botón «atrás» regresa al paso anterior y «Mi cita» con las acciones pegadas abajo.
+components/reservar-amore/historial-pasos.dom.test.tsx
+components/mi-cita/mi-cita-amore.dom.test.tsx

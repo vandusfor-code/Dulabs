@@ -10,6 +10,7 @@ import { PasoDatosClienteAmore, telefonoWhatsappValido, type DatosClienteAmore }
 import { PasoConfirmacionAmore } from "@/components/reservar-amore/PasoConfirmacionAmore";
 import { PasoExitoAmore } from "@/components/reservar-amore/PasoExitoAmore";
 import { AMORE } from "@/components/reservar-amore/tema";
+import { useHistorialPasos } from "@/components/reservar-amore/useHistorialPasos";
 import { MAX_SERVICIOS_POR_DEFECTO, mismosServicios, parametroServicioIds, serviciosDeIds, type ServicioDelPortal } from "@/lib/reservar-amore-servicios";
 
 // Portal público de reservas de AMORE (Fase 3, autorizado) — consumidor
@@ -76,7 +77,6 @@ export default function PortalReservasAmorePage() {
   const [maxServicios, setMaxServicios] = useState(MAX_SERVICIOS_POR_DEFECTO);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
-  const [paso, setPaso] = useState<Paso>("inicio");
   const [seleccion, setSeleccion] = useState<Seleccion>(SELECCION_VACIA);
   const [datos, setDatos] = useState<DatosClienteAmore>(DATOS_VACIOS);
 
@@ -127,16 +127,79 @@ export default function PortalReservasAmorePage() {
     };
   }, []);
 
+  const serviciosElegidos = useMemo(() => serviciosDeIds(seleccion.servicioIds, servicios), [seleccion.servicioIds, servicios]);
+
+  // Deja todo como nuevo (se usa al volver al inicio después de una reserva hecha: no queda nada de la anterior).
+  const reiniciar = useCallback(() => {
+    solicitudEspecialistasRef.current++;
+    solicitudHorariosRef.current++;
+    serviciosDeEspecialistasRef.current = [];
+    idempotencyRef.current = null;
+    setSeleccion(SELECCION_VACIA);
+    setDatos(DATOS_VACIOS);
+    setEspecialistas([]);
+    setCargandoEspecialistas(false);
+    setErrorEspecialistas(false);
+    setSinProfesionalComun(false);
+    setHorarios([]);
+    setCargandoHorarios(false);
+    setErrorHorarios(false);
+    setEnviando(false);
+    setErrorReserva(null);
+    setExito(null);
+  }, []);
+
+  // ¿Se puede mostrar ese paso con lo que hay elegido ahora? Lo consulta el historial al volver o avanzar con los botones del navegador: nunca se muestra una
+  // pantalla sin sus datos (ej. tras recargar la página a mitad de camino), ni con la lista de profesionales de OTRA combinación de servicios.
+  const puedeMostrarPaso = (p: Paso): boolean => {
+    const conServicios = serviciosElegidos.length > 0;
+    const conProfesional = conServicios && seleccion.especialistaId !== null;
+    const conHorario = conProfesional && Boolean(seleccion.fecha && seleccion.hora);
+    switch (p) {
+      case "inicio":
+      case "servicio":
+        return true;
+      case "profesional":
+        return conServicios && mismosServicios(serviciosElegidos.map((s) => s.id), serviciosDeEspecialistasRef.current);
+      case "horario":
+        return conProfesional;
+      case "datos":
+        return conHorario;
+      case "confirmar":
+        return conHorario && datos.nombre.trim().length >= 2 && telefonoWhatsappValido(datos.telefono);
+      case "exito":
+        return exito !== null;
+      default:
+        return false;
+    }
+  };
+
+  // El botón «atrás» del celular regresa al paso anterior (y no sale del portal); después de una reserva hecha, volver lleva al inicio con todo limpio.
+  const { paso, irA, volver } = useHistorialPasos<Paso>({ inicial: "inicio", puedeMostrar: puedeMostrarPaso, esFinal: (p) => p === "exito", alReiniciar: reiniciar });
+
   // Cada pantalla nueva arranca desde arriba (si no, quedaría a medio desplazar de la anterior). `instant` evita el desplazamiento suave global del sitio.
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
   }, [paso]);
 
-  const serviciosElegidos = useMemo(() => serviciosDeIds(seleccion.servicioIds, servicios), [seleccion.servicioIds, servicios]);
-
-  const cambiarSeleccionServicios = useCallback((ids: string[]) => {
-    setSeleccion((s) => ({ ...s, servicioIds: ids }));
-  }, []);
+  const cambiarSeleccionServicios = useCallback(
+    (ids: string[]) => {
+      if (mismosServicios(seleccion.servicioIds, ids)) return;
+      // Otra combinación de servicios: lo que dependía de la anterior (profesionales, fecha, hora) deja de valer.
+      solicitudEspecialistasRef.current++;
+      solicitudHorariosRef.current++;
+      serviciosDeEspecialistasRef.current = [];
+      setSeleccion({ ...SELECCION_VACIA, servicioIds: ids });
+      setEspecialistas([]);
+      setCargandoEspecialistas(false);
+      setErrorEspecialistas(false);
+      setSinProfesionalComun(false);
+      setHorarios([]);
+      setCargandoHorarios(false);
+      setErrorHorarios(false);
+    },
+    [seleccion.servicioIds],
+  );
 
   const cargarEspecialistas = useCallback(async (ids: string[]) => {
     const solicitud = ++solicitudEspecialistasRef.current;
@@ -166,7 +229,7 @@ export default function PortalReservasAmorePage() {
   const continuarDeServicios = useCallback(() => {
     const ids = serviciosElegidos.map((s) => s.id);
     if (ids.length === 0) return;
-    setPaso("profesional");
+    irA("profesional");
     // Si vuelve sin haber cambiado nada, se conserva la lista y todo lo que ya había elegido (a menos que la consulta anterior hubiera fallado).
     if (mismosServicios(ids, serviciosDeEspecialistasRef.current) && !errorEspecialistas) return;
     serviciosDeEspecialistasRef.current = ids;
@@ -174,14 +237,14 @@ export default function PortalReservasAmorePage() {
     setHorarios([]);
     setErrorHorarios(false);
     void cargarEspecialistas(ids);
-  }, [serviciosElegidos, errorEspecialistas, cargarEspecialistas]);
+  }, [serviciosElegidos, errorEspecialistas, cargarEspecialistas, irA]);
 
   const elegirEspecialista = useCallback((op: EspecialistaOpcion) => {
     setSeleccion((s) => ({ ...s, especialistaId: op.id, especialistaNombre: op.nombre, fecha: null, hora: null }));
     setHorarios([]);
     setErrorHorarios(false);
-    setPaso("horario");
-  }, []);
+    irA("horario");
+  }, [irA]);
 
   const cargarHorarios = useCallback(
     async (fecha: string) => {
@@ -221,13 +284,13 @@ export default function PortalReservasAmorePage() {
 
   const elegirHora = useCallback((hora: string) => {
     setSeleccion((s) => ({ ...s, hora }));
-    setPaso("datos");
-  }, []);
+    irA("datos");
+  }, [irA]);
 
   const irAConfirmar = useCallback(() => {
     if (datos.nombre.trim().length < 2 || !telefonoWhatsappValido(datos.telefono)) return;
-    setPaso("confirmar");
-  }, [datos]);
+    irA("confirmar");
+  }, [datos, irA]);
 
   function obtenerIdempotencyKey(): string {
     const firma = JSON.stringify([seleccion.servicioIds, seleccion.especialistaId, seleccion.fecha, seleccion.hora, datos]);
@@ -263,7 +326,7 @@ export default function PortalReservasAmorePage() {
         return;
       }
       setExito(body as ResultadoExito);
-      setPaso("exito");
+      irA("exito");
     } catch {
       setErrorReserva("No pudimos conectar con el servidor. Verifica tu conexión e intenta de nuevo.");
     } finally {
@@ -275,9 +338,9 @@ export default function PortalReservasAmorePage() {
   const volverAHorarioTrasOcupado = useCallback(() => {
     setSeleccion((s) => ({ ...s, hora: null }));
     setErrorReserva(null);
-    setPaso("horario");
+    irA("horario");
     if (seleccion.fecha) void cargarHorarios(seleccion.fecha);
-  }, [seleccion.fecha, cargarHorarios]);
+  }, [seleccion.fecha, cargarHorarios, irA]);
 
   if (cargando) {
     return (
@@ -316,13 +379,13 @@ export default function PortalReservasAmorePage() {
       maxServicios={maxServicios}
       onCambiarSeleccion={cambiarSeleccionServicios}
       onContinuar={continuarDeServicios}
-      onVolver={() => setPaso("inicio")}
+      onVolver={volver}
     />
   );
 
   switch (paso) {
     case "inicio":
-      return <PortalLandingAmore negocio={negocio} telefonoNegocio={telefonoNegocio} onComenzar={() => setPaso("servicio")} />;
+      return <PortalLandingAmore negocio={negocio} telefonoNegocio={telefonoNegocio} onComenzar={() => irA("servicio")} />;
     case "servicio":
       return pantallaServicios;
     case "profesional":
@@ -337,8 +400,8 @@ export default function PortalReservasAmorePage() {
           especialistaSeleccionadoId={seleccion.especialistaId}
           onElegir={elegirEspecialista}
           onReintentar={() => void cargarEspecialistas(serviciosDeEspecialistasRef.current)}
-          onCambiarServicios={() => setPaso("servicio")}
-          onVolver={() => setPaso("servicio")}
+          onCambiarServicios={volver}
+          onVolver={volver}
         />
       ) : (
         pantallaServicios
@@ -359,13 +422,13 @@ export default function PortalReservasAmorePage() {
           onSeleccionarFecha={elegirFecha}
           onReintentar={() => seleccion.fecha && void cargarHorarios(seleccion.fecha)}
           onContinuar={elegirHora}
-          onVolver={() => setPaso("profesional")}
+          onVolver={volver}
         />
       ) : (
         pantallaServicios
       );
     case "datos":
-      return <PasoDatosClienteAmore negocio={negocio} datos={datos} onCambiar={setDatos} onContinuar={irAConfirmar} onVolver={() => setPaso("horario")} />;
+      return <PasoDatosClienteAmore negocio={negocio} datos={datos} onCambiar={setDatos} onContinuar={irAConfirmar} onVolver={volver} />;
     case "confirmar":
       return serviciosElegidos.length > 0 && seleccion.fecha && seleccion.hora ? (
         <PasoConfirmacionAmore
@@ -380,7 +443,7 @@ export default function PortalReservasAmorePage() {
           ocupado={errorReserva !== null && errorReserva.includes("acaba de ser reservado")}
           onConfirmar={confirmarReserva}
           onElegirOtroHorario={volverAHorarioTrasOcupado}
-          onVolver={() => setPaso("datos")}
+          onVolver={volver}
         />
       ) : (
         pantallaServicios
