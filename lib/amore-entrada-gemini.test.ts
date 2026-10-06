@@ -7,6 +7,12 @@ import {
   detectarNoEntendiRepetir,
   construirMensajeNotificacionJessica,
   clasificarMensajeConGemini,
+  MODELO_RESPALDO,
+  MODELO_RESPALDO_LITE,
+  MENSAJE_PEDIR_PERSONA_EN_RESERVA,
+  respuestaDeConsultaEnReserva,
+  MAX_TOKENS_SALIDA,
+  PLAN_DE_INTENTOS,
   MENSAJE_BIENVENIDA_1,
   MENSAJE_BIENVENIDA_2,
   MENSAJE_MENU_INICIO_INVALIDO,
@@ -21,7 +27,8 @@ import {
   MENSAJE_MENU_INICIO_ORIENTACION,
   MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE,
 } from "@/lib/amore-entrada-gemini";
-import type { GeminiGenerateContentClient } from "@/lib/flow/gemini/gemini-types";
+import { GEMINI_DEFAULT_MODEL } from "@/lib/flow/gemini/gemini-client";
+import type { GeminiGenerateContentClient, GeminiGenerateContentParams } from "@/lib/flow/gemini/gemini-types";
 
 describe("Textos exactos pedidos", () => {
   it("MENSAJE_BIENVENIDA_1 / MENSAJE_BIENVENIDA_2 (dos mensajes separados, con opción 3)", () => {
@@ -114,6 +121,21 @@ describe("Detección determinística de atención humana -- detectarSolicitudAte
     for (const frase of negativos) {
       assert.equal(detectarSolicitudAtencionHumana(frase), false, `"${frase}" NUNCA debía activar atención humana`);
     }
+  });
+
+  it("Hallazgo con Gemini real -- variantes «hablar con un/una …» (asesor, humano, agente) también activan la atención humana; las menciones sueltas NO", () => {
+    const si = [
+      "necesito hablar con un asesor humano",
+      "quiero hablar con un asesor",
+      "Hablar con una asesora",
+      "quiero hablar con un humano",
+      "¿puedo hablar con un agente?",
+      "pásame con un agente humano",
+      "quiero una persona de verdad",
+    ];
+    for (const frase of si) assert.equal(detectarSolicitudAtencionHumana(frase), true, `"${frase}" debía activar atención humana`);
+    const no = ["¿tienen asesor de imagen?", "Mary es muy buena asesora", "¿el agente de ventas de Jessica?", "me atendió un humano muy amable ayer, gracias", "¿qué es un humectante?"];
+    for (const frase of no) assert.equal(detectarSolicitudAtencionHumana(frase), false, `"${frase}" NUNCA debía activar atención humana`);
   });
 
   it("Glosario de intenciones AMORE (autorizado) -- nuevas frases reales de HABLAR_CON_ASESOR", () => {
@@ -261,6 +283,8 @@ describe("NUEVA FASE (autorizado) -- detectarDespedida / detectarNoEntendiRepeti
   });
 });
 
+const sinEspera = async () => {};
+
 function crearFakeGeminiClient(respuesta: unknown): GeminiGenerateContentClient {
   return {
     async generateContent() {
@@ -308,7 +332,7 @@ describe("clasificarMensajeConGemini -- salida estructurada, nunca crea/modifica
         throw new Error("gemini_http_500");
       },
     };
-    const resultado = await clasificarMensajeConGemini({ mensaje: "hola" }, { geminiClient: clienteQueLanza, resolveApiKey: () => "fake-key" });
+    const resultado = await clasificarMensajeConGemini({ mensaje: "hola" }, { geminiClient: clienteQueLanza, resolveApiKey: () => "fake-key", esperar: sinEspera });
     assert.equal(resultado.intent, "CONSULTA");
     assert.equal(resultado.replyText, MENSAJE_ERROR_GEMINI);
   });
@@ -316,7 +340,7 @@ describe("clasificarMensajeConGemini -- salida estructurada, nunca crea/modifica
   it("salida fuera del enum ('OTRO') -- nunca se acepta, responde CONSULTA con mensaje de error genérico (fail-safe, nunca dispara Agenda V2 por error)", async () => {
     const resultado = await clasificarMensajeConGemini(
       { mensaje: "hola" },
-      { geminiClient: crearFakeGeminiClient({ intent: "OTRO", reply_text: "algo" }), resolveApiKey: () => "fake-key" },
+      { geminiClient: crearFakeGeminiClient({ intent: "OTRO", reply_text: "algo" }), resolveApiKey: () => "fake-key", esperar: sinEspera },
     );
     assert.equal(resultado.intent, "CONSULTA");
     assert.equal(resultado.replyText, MENSAJE_ERROR_GEMINI);
@@ -328,14 +352,14 @@ describe("clasificarMensajeConGemini -- salida estructurada, nunca crea/modifica
         return { text: "esto no es JSON" };
       },
     };
-    const resultado = await clasificarMensajeConGemini({ mensaje: "hola" }, { geminiClient: clienteMalformado, resolveApiKey: () => "fake-key" });
+    const resultado = await clasificarMensajeConGemini({ mensaje: "hola" }, { geminiClient: clienteMalformado, resolveApiKey: () => "fake-key", esperar: sinEspera });
     assert.equal(resultado.intent, "CONSULTA");
   });
 
   it("reply_text ausente/no-string -- fuera del schema, responde CONSULTA con mensaje de error genérico", async () => {
     const resultado = await clasificarMensajeConGemini(
       { mensaje: "hola" },
-      { geminiClient: crearFakeGeminiClient({ intent: "CONSULTA" }), resolveApiKey: () => "fake-key" },
+      { geminiClient: crearFakeGeminiClient({ intent: "CONSULTA" }), resolveApiKey: () => "fake-key", esperar: sinEspera },
     );
     assert.equal(resultado.intent, "CONSULTA");
     assert.equal(resultado.replyText, MENSAJE_ERROR_GEMINI);
@@ -364,6 +388,31 @@ describe("clasificarMensajeConGemini -- salida estructurada, nunca crea/modifica
       { geminiClient: crearFakeGeminiClient({ intent: "REPROGRAMAR_CITA", reply_text: "texto ignorado" }), resolveApiKey: () => "fake-key" },
     );
     assert.equal(resultado.intent, "REPROGRAMAR_CITA");
+  });
+
+  it("intent=ATENCION_HUMANA se acepta (Gemini detectó que la clienta pide o acepta hablar con una persona) y se devuelve tal cual", async () => {
+    const resultado = await clasificarMensajeConGemini(
+      { mensaje: "¿me puede atender alguien del salón?" },
+      { geminiClient: crearFakeGeminiClient({ intent: "ATENCION_HUMANA", reply_text: "ignorado" }), resolveApiKey: () => "fake-key" },
+    );
+    assert.equal(resultado.intent, "ATENCION_HUMANA");
+    assert.equal(resultado.errorTecnico, undefined);
+  });
+
+  it("el system prompt real prohíbe PROMETER contacto humano (solo sucede con intent=ATENCION_HUMANA), no negar lo que no sabe y no saludar en cada mensaje", async () => {
+    let sistema = "";
+    const cliente: GeminiGenerateContentClient = {
+      async generateContent(req) {
+        sistema = req.systemInstruction;
+        return { text: JSON.stringify({ intent: "CONSULTA", reply_text: "ok" }) };
+      },
+    };
+    await clasificarMensajeConGemini({ mensaje: "hola" }, { geminiClient: cliente, resolveApiKey: () => "fake-key" });
+    assert.match(sistema, /ATENCION_HUMANA: la clienta pide hablar con una persona/);
+    assert.match(sistema, /NUNCA digas ni insinúes que una persona se va a comunicar con ella/);
+    assert.match(sistema, /NO digas que no existe ni que no hay/);
+    assert.match(sistema, /NO empieces tus mensajes con «¡Hola!»/);
+    assert.match(sistema, /una de estas cinco categorías/);
   });
 
   it("el system prompt real enviado a Gemini documenta la regla de ambigüedad cancelar vs reprogramar", async () => {
@@ -431,5 +480,212 @@ describe("Fase 1 (autorizado) -- el historial real llega tal cual a Gemini (cont
       { geminiClient: crearFakeGeminiClient({ intent: "CONSULTA", reply_text: "Depende del servicio...", detected_service_mention: null }), resolveApiKey: () => "fake-key" },
     );
     assert.equal(resultado.intent, "CONSULTA");
+  });
+});
+
+describe("Resiliencia ante el proveedor -- causa raíz de los «problema técnico» medidos con Gemini real (503, JSON cortado por el tope de tokens, latencia)", () => {
+  const RESPUESTA_OK = JSON.stringify({ intent: "CONSULTA", reply_text: "El dipping cuesta $60.000 💗", detected_service_mention: "dipping" });
+  const error = (status: number) => Object.assign(new Error(`gemini_http_${status}: UNAVAILABLE`), { status });
+  type Paso = "ok" | "cortado" | "vacio" | "colgado" | number | Error;
+
+  /** Cliente que responde según un guion (un elemento por llamada) y registra con qué parámetros se le llamó y si la llamada fue cancelada. */
+  function clienteConGuion(guion: Paso[]) {
+    const llamadas: Array<{ params: GeminiGenerateContentParams; signal?: AbortSignal }> = [];
+    const cliente: GeminiGenerateContentClient = {
+      generateContent(params, signal) {
+        llamadas.push({ params, signal });
+        const paso = guion[llamadas.length - 1] ?? "ok";
+        if (paso === "ok") return Promise.resolve({ text: RESPUESTA_OK, finishReason: "STOP" });
+        if (paso === "cortado") return Promise.resolve({ text: '{\n  "intent": "CONSULTA",\n  "reply_te', finishReason: "MAX_TOKENS" });
+        if (paso === "vacio") return Promise.resolve({ text: null });
+        if (paso === "colgado") {
+          // No responde nunca por sí sola: solo termina cuando la cancelan (por ganador o por tiempo máximo).
+          return new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")));
+          });
+        }
+        return Promise.reject(typeof paso === "number" ? error(paso) : paso);
+      },
+    };
+    return { cliente, llamadas };
+  }
+  /** Sin esperas ni refuerzo en paralelo (determinista): los intentos corren uno tras otro, solo cuando el anterior falla. */
+  const dependencias = (cliente: GeminiGenerateContentClient, extra: Record<string, unknown> = {}) => ({
+    geminiClient: cliente,
+    resolveApiKey: () => "fake-key",
+    esperar: sinEspera,
+    refuerzoMs: Infinity,
+    ...extra,
+  });
+
+  it("camino feliz: UNA sola llamada, al modelo principal, con pensamiento mínimo, tope de tokens holgado y un tiempo máximo", async () => {
+    const { cliente, llamadas } = clienteConGuion(["ok"]);
+    const r = await clasificarMensajeConGemini({ mensaje: "¿cuánto cuesta el dipping?" }, dependencias(cliente));
+    assert.equal(r.errorTecnico, undefined);
+    assert.equal(r.replyText, "El dipping cuesta $60.000 💗");
+    assert.equal(llamadas.length, 1);
+    const p = llamadas[0]!.params;
+    assert.equal(p.model, GEMINI_DEFAULT_MODEL);
+    assert.equal(p.thinkingLevel, "minimal", "clasificar y redactar 2 líneas no necesita razonar: 12-14 s -> 1,5 s medido");
+    assert.ok(p.maxOutputTokens >= 2048, `el tope (${p.maxOutputTokens}) debe cubrir el JSON aunque el modelo piense: con 500 el JSON salía cortado`);
+    assert.equal(p.maxOutputTokens, MAX_TOKENS_SALIDA);
+    assert.ok(llamadas[0]!.signal instanceof AbortSignal, "cada intento tiene un tiempo máximo");
+  });
+
+  it("503 «high demand» del modelo principal -> se atiende con el modelo de respaldo, la clienta nunca ve el error", async () => {
+    const { cliente, llamadas } = clienteConGuion([503, "ok"]);
+    const r = await clasificarMensajeConGemini({ mensaje: "¿cuánto cuesta el dipping?" }, dependencias(cliente));
+    assert.equal(r.errorTecnico, undefined);
+    assert.equal(r.replyText, "El dipping cuesta $60.000 💗");
+    assert.deepEqual(llamadas.map((l) => l.params.model), [GEMINI_DEFAULT_MODEL, MODELO_RESPALDO]);
+    assert.equal(llamadas[1]!.params.thinkingLevel, undefined, "gemini-2.5 NO admite thinkingLevel (lo rechazaría con 400)");
+    assert.equal(llamadas[1]!.params.maxOutputTokens, MAX_TOKENS_SALIDA);
+  });
+
+  it("JSON cortado por el tope de tokens (finishReason=MAX_TOKENS) -> se reintenta en vez de mandarle a la clienta «problema técnico»", async () => {
+    const { cliente, llamadas } = clienteConGuion(["cortado", "ok"]);
+    const r = await clasificarMensajeConGemini({ mensaje: "tengo una boda, ¿qué me recomiendas?" }, dependencias(cliente));
+    assert.equal(r.errorTecnico, undefined);
+    assert.equal(llamadas.length, 2);
+  });
+
+  it("respuesta vacía, error de red y 429 también pasan al siguiente intento", async () => {
+    for (const fallo of ["vacio", new TypeError("fetch failed"), 429] as const) {
+      const { cliente, llamadas } = clienteConGuion([fallo, "ok"]);
+      const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente));
+      assert.equal(r.errorTecnico, undefined, String(fallo));
+      assert.deepEqual(llamadas.map((l) => l.params.model), [GEMINI_DEFAULT_MODEL, MODELO_RESPALDO]);
+    }
+  });
+
+  it("el plan recorre modelos DISTINTOS (principal -> respaldo estable -> otra familia -> principal) y todos devuelven la misma clasificación válida", async () => {
+    const { cliente, llamadas } = clienteConGuion([503, 503, 503, "ok"]);
+    const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente));
+    assert.equal(r.errorTecnico, undefined);
+    assert.deepEqual(llamadas.map((l) => l.params.model), [GEMINI_DEFAULT_MODEL, MODELO_RESPALDO, MODELO_RESPALDO_LITE, GEMINI_DEFAULT_MODEL]);
+    assert.deepEqual(PLAN_DE_INTENTOS.map((i) => i.model), [GEMINI_DEFAULT_MODEL, MODELO_RESPALDO, MODELO_RESPALDO_LITE, GEMINI_DEFAULT_MODEL]);
+    assert.equal(new Set(PLAN_DE_INTENTOS.slice(0, 3).map((i) => i.model)).size, 3, "los 3 primeros intentos usan modelos distintos (no comparten saturación)");
+    const { cliente: c3, llamadas: l3 } = clienteConGuion([503, 503, "ok"]);
+    const r3 = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(c3));
+    assert.equal(r3.errorTecnico, undefined);
+    assert.equal(l3[2]!.params.model, MODELO_RESPALDO_LITE);
+    assert.equal(l3[2]!.params.thinkingLevel, undefined, "solo el principal lleva thinkingLevel");
+  });
+
+  it("si TODOS los intentos fallan -> mensaje genérico marcado como error técnico (así el router escala a una persona al segundo seguido), y nunca más de 4 llamadas", async () => {
+    const { cliente, llamadas } = clienteConGuion([503, 503, 503, 503, 503, 503]);
+    const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente));
+    assert.equal(r.errorTecnico, true);
+    assert.equal(r.intent, "CONSULTA");
+    assert.equal(r.replyText, MENSAJE_ERROR_GEMINI);
+    assert.equal(llamadas.length, PLAN_DE_INTENTOS.length);
+    assert.equal(llamadas.length, 4);
+  });
+
+  it("clave inválida o sin permiso (401/403, o «API key not valid») -> NO se reintenta: ningún reintento lo arregla y cada uno hace esperar a la clienta", async () => {
+    for (const fallo of [error(401), error(403), new Error("gemini_http_400: API key not valid. Please pass a valid API key.")]) {
+      const { cliente, llamadas } = clienteConGuion([fallo, "ok"]);
+      const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente));
+      assert.equal(r.errorTecnico, true, fallo.message);
+      assert.equal(llamadas.length, 1, fallo.message);
+    }
+  });
+
+  it("espera corta entre intentos solo cuando el anterior FALLÓ (300 / 500 / 1000 ms) y ninguna en el camino feliz", async () => {
+    const esperas: number[] = [];
+    const { cliente } = clienteConGuion([503, 503, 503, 503]);
+    await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente, { esperar: async (ms: number) => void esperas.push(ms) }));
+    assert.deepEqual(esperas, [300, 500, 1000]);
+    const sinFallo = clienteConGuion(["ok"]);
+    esperas.length = 0;
+    await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(sinFallo.cliente, { esperar: async (ms: number) => void esperas.push(ms) }));
+    assert.deepEqual(esperas, [], "el camino feliz no espera nada");
+  });
+
+  it("el tiempo máximo por intento corta una llamada colgada (la señal se aborta) y se sigue con el respaldo", async () => {
+    const { cliente, llamadas } = clienteConGuion(["colgado", "ok"]);
+    const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente, { timeoutPorIntentoMs: 20 }));
+    assert.equal(r.errorTecnico, undefined);
+    assert.equal(llamadas.length, 2);
+    assert.deepEqual(llamadas.map((l) => l.params.model), [GEMINI_DEFAULT_MODEL, MODELO_RESPALDO]);
+  });
+
+  it("REFUERZO EN PARALELO: si el intento en curso no responde a tiempo, se lanza el siguiente sin esperar su tiempo máximo; gana el que responde y el lento se cancela", async () => {
+    const esperas: number[] = [];
+    const { cliente, llamadas } = clienteConGuion(["colgado", "ok"]);
+    const t0 = Date.now();
+    const r = await clasificarMensajeConGemini(
+      { mensaje: "hola" },
+      dependencias(cliente, { refuerzoMs: 15, timeoutPorIntentoMs: 60_000, esperar: async (ms: number) => void esperas.push(ms) }),
+    );
+    assert.ok(Date.now() - t0 < 5_000, "no esperó el tiempo máximo (60 s) del intento colgado");
+    assert.equal(r.errorTecnico, undefined);
+    assert.equal(r.replyText, "El dipping cuesta $60.000 💗");
+    assert.deepEqual(llamadas.map((l) => l.params.model), [GEMINI_DEFAULT_MODEL, MODELO_RESPALDO]);
+    assert.equal(llamadas[0]!.signal!.aborted, true, "el intento lento se canceló al haber ganador");
+    assert.deepEqual(esperas, [], "el refuerzo no aplica la espera de «el anterior falló»: el anterior sigue vivo");
+  });
+
+  it("REFUERZO EN PARALELO: si el primer intento acaba respondiendo antes que el refuerzo, gana el primero (no se descarta una respuesta buena)", async () => {
+    const llamadas: string[] = [];
+    const cliente: GeminiGenerateContentClient = {
+      generateContent(params) {
+        llamadas.push(params.model);
+        const lento = params.model === GEMINI_DEFAULT_MODEL;
+        return new Promise((resolve) => setTimeout(() => resolve({ text: JSON.stringify({ intent: "CONSULTA", reply_text: lento ? "respuesta del principal" : "respuesta del respaldo" }) }), lento ? 60 : 400));
+      },
+    };
+    const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente, { refuerzoMs: 25 }));
+    assert.equal(r.replyText, "respuesta del principal");
+    assert.equal(llamadas[0], GEMINI_DEFAULT_MODEL);
+    assert.ok(llamadas.length >= 2, "el refuerzo sí se lanzó (el principal tardó más que el refuerzo), pero ganó el principal");
+  });
+
+  it("REFUERZO EN PARALELO: nunca más de una salida (no se manda doble respuesta) aunque dos intentos acaben válidos casi a la vez", async () => {
+    const cliente: GeminiGenerateContentClient = {
+      generateContent(params) {
+        return new Promise((resolve) => setTimeout(() => resolve({ text: JSON.stringify({ intent: "CONSULTA", reply_text: `respuesta ${params.model}` }) }), 30));
+      },
+    };
+    const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente, { refuerzoMs: 10 }));
+    assert.equal(typeof r.replyText, "string");
+    assert.match(r.replyText, /^respuesta gemini/);
+    assert.equal(r.errorTecnico, undefined);
+  });
+
+  it("los mismos datos (instrucción, historial, mensaje) viajan en TODOS los intentos: el respaldo contesta con la misma información real", async () => {
+    const { cliente, llamadas } = clienteConGuion([503, "ok"]);
+    const historial = [{ role: "user" as const, text: "hola" }, { role: "model" as const, text: "¡Hola! 💗" }];
+    await clasificarMensajeConGemini({ mensaje: "¿y el precio?", historial, contextoNegocio: "SERVICIOS REALES: Dipping $60.000" }, dependencias(cliente));
+    assert.equal(llamadas.length, 2);
+    assert.equal(llamadas[0]!.params.systemInstruction, llamadas[1]!.params.systemInstruction);
+    assert.match(llamadas[1]!.params.systemInstruction, /Dipping \$60\.000/);
+    assert.deepEqual(llamadas[0]!.params.contents, llamadas[1]!.params.contents);
+    assert.deepEqual(llamadas[1]!.params.contents, [...historial, { role: "user", text: "¿y el precio?" }]);
+  });
+});
+
+describe("respuestaDeConsultaEnReserva -- qué se le responde a una pregunta hecha a mitad de una reserva abierta", () => {
+  const base = { detectedServiceMention: null, detectedProfessionalMention: null, detectedDateMention: null, detectedTimeMention: null };
+
+  it("una consulta normal (sin fallo técnico) -> el texto de la IA, sin espacios sobrantes", () => {
+    assert.equal(respuestaDeConsultaEnReserva({ ...base, intent: "CONSULTA", replyText: "  El dipping cuesta $60.000 💗 " }), "El dipping cuesta $60.000 💗");
+  });
+
+  it("pide a una persona con palabras que el detector fijo no cubre (ATENCION_HUMANA) -> le dice la frase exacta, que SÍ activa el aviso real; nunca «No reconocí esa opción»", () => {
+    const texto = respuestaDeConsultaEnReserva({ ...base, intent: "ATENCION_HUMANA", replyText: "una persona te contactará (no debe usarse)" });
+    assert.equal(texto, MENSAJE_PEDIR_PERSONA_EN_RESERVA);
+    assert.match(texto!, /hablar con una persona/);
+    assert.equal(detectarSolicitudAtencionHumana("hablar con una persona"), true, "la frase que se le indica activa de verdad la atención humana");
+    assert.doesNotMatch(texto!, /ya le notifiqué|se pondrá en contacto|te contactará/i, "no promete lo que todavía no ocurrió");
+  });
+
+  it("fallo técnico, texto vacío o cualquier otra intención -> null (se repite el menú de siempre)", () => {
+    assert.equal(respuestaDeConsultaEnReserva({ ...base, intent: "CONSULTA", replyText: MENSAJE_ERROR_GEMINI, errorTecnico: true }), null);
+    assert.equal(respuestaDeConsultaEnReserva({ ...base, intent: "CONSULTA", replyText: "   " }), null);
+    for (const intent of ["TRIGGER_AGENDA", "CANCELAR_CITA", "REPROGRAMAR_CITA"] as const) {
+      assert.equal(respuestaDeConsultaEnReserva({ ...base, intent, replyText: "no debía usarse" }), null, intent);
+    }
+    assert.equal(respuestaDeConsultaEnReserva({ ...base, intent: "ATENCION_HUMANA", replyText: "x", errorTecnico: true }), null, "con fallo técnico no se da instrucciones sobre una salida dudosa");
   });
 });

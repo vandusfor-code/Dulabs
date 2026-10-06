@@ -23,7 +23,7 @@ import {
 } from "@/lib/amore-entrada-router";
 import type { ProductoInventario } from "@/lib/amore-inventario";
 import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
-import { MENSAJE_TRANSFERENCIA_ERROR_TECNICO, type ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
+import { MENSAJE_TRANSFERENCIA_ERROR_TECNICO, MENSAJE_ATENCION_HUMANA_CLIENTE, NUMERO_JESSICA, type ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
@@ -1666,5 +1666,53 @@ describe("NUEVA FASE (autorizado) -- CANCELAR_CITA/REPROGRAMAR_CITA detectados p
     const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "no puedo ir, ya no quiero la cita", wamid: "w3" }, deps);
     assert.equal(r.manejado, true);
     assert.equal(iniciarGestionCitas.llamadas.length, 1, "nunca reprocesa el mismo wamid");
+  });
+});
+
+describe("ATENCION_HUMANA detectada por Gemini (la clienta pide una persona con palabras que el detector determinista no cubre)", () => {
+  const PEDIDOS = ["¿me puede atender alguien del salón por favor?", "sí, por favor"];
+
+  for (const texto of PEDIDOS) {
+    it(`«${texto}» (Gemini clasifica ATENCION_HUMANA) -> avisa de verdad a Jessica, pausa el bot y le responde a la clienta; NUNCA solo promete que alguien la contactará`, async () => {
+      const fakeClasificador = crearFakeClasificador({ intent: "ATENCION_HUMANA", replyText: "una persona se pondrá en contacto contigo (texto que NO debe usarse)", detectedServiceMention: null });
+      const { deps, entradas, envios, iniciarAgenda, iniciarGestionCitas } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+      await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+      const antes = envios.enviados.length;
+      const r = await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto, wamid: "w3" }, deps);
+      assert.equal(r.manejado, true);
+      const nuevos = envios.enviados.slice(antes);
+      assert.equal(nuevos.length, 2, "un aviso a Jessica y una respuesta a la clienta");
+      assert.equal(nuevos[0]!.telefono, NUMERO_JESSICA, "se avisa de verdad a Jessica");
+      assert.match(nuevos[0]!.mensaje, /atención directa/);
+      assert.equal(nuevos[1]!.telefono, TELEFONO);
+      assert.equal(nuevos[1]!.mensaje, MENSAJE_ATENCION_HUMANA_CLIENTE, "el texto que se le manda es el del sistema, nunca el que redactó la IA");
+      assert.equal(entradas.filas[0]!.modo, "atencion_humana");
+      assert.equal(entradas.filas[0]!.notificadoAJessica, true);
+      assert.equal(iniciarAgenda.llamadas.length, 0);
+      assert.equal(iniciarGestionCitas.llamadas.length, 0);
+    });
+  }
+
+  it("la IA contesta una consulta normal (CONSULTA) -> NO se avisa a Jessica ni se pausa el bot", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "CONSULTA", replyText: "El dipping cuesta $60.000 💗", detectedServiceMention: "dipping" });
+    const { deps, entradas, envios } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿cuánto cuesta el dipping?", wamid: "w3" }, deps);
+    assert.ok(!envios.enviados.some((m) => m.telefono === NUMERO_JESSICA));
+    assert.equal(entradas.filas[0]!.modo, "gemini");
+    assert.equal(entradas.filas[0]!.notificadoAJessica, false);
+  });
+
+  it("no se avisa dos veces a Jessica si la conversación ya había sido notificada (idempotente)", async () => {
+    const fakeClasificador = crearFakeClasificador({ intent: "ATENCION_HUMANA", replyText: "x", detectedServiceMention: null });
+    const { deps, entradas, envios } = armarDeps({ clasificarConGemini: fakeClasificador.clasificarConGemini });
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "hola", wamid: "w1" }, deps);
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "2", wamid: "w2" }, deps);
+    entradas.filas[0]!.notificadoAJessica = true;
+    await procesarEntradaAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TELEFONO, texto: "¿me atiende alguien?", wamid: "w3" }, deps);
+    assert.equal(envios.enviados.filter((m) => m.telefono === NUMERO_JESSICA).length, 0);
+    assert.equal(entradas.filas[0]!.modo, "atencion_humana");
   });
 });

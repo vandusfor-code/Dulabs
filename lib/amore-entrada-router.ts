@@ -338,6 +338,18 @@ export async function procesarEntradaAmore(
       return { manejado: true };
     }
 
+    if (intent === "ATENCION_HUMANA") {
+      // La clienta pidió (o aceptó) hablar con una persona con palabras que el detector determinista no cubre. Gemini solo clasificó:
+      // quien avisa a Jessica y pausa el bot es el MISMO mecanismo de la opción «3» -- nunca un «una persona te contactará» sin aviso real.
+      return await activarAtencionHumana(params, {
+        fila,
+        enviarMensaje,
+        crearEntrada,
+        actualizarEntrada,
+        buscarNombreConocidoDep: deps.buscarNombreConocido ?? nombreConocido,
+      });
+    }
+
     // Fallo TÉCNICO de Gemini (sin API key, red, salida fuera del schema): nunca un bucle de "¿puedes reformularlo?".
     // Al MAX_ERRORES_TECNICOS_SEGUIDOS-ésimo seguido se pasa a una persona con el mecanismo YA existente, diciendo la
     // verdad. Reutiliza intentos_fallidos_consecutivos (mensajes seguidos que el bot no pudo atender) -- sin migración.

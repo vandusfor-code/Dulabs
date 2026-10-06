@@ -127,7 +127,9 @@ describe("2. Seguridad del enlace", () => {
     const inicioB = new Date(`${a.otroDia}T14:00:00-05:00`);
     a.mundo.sembrarCita({ id: 701, inicio: inicioB });
     const entorno = { deps: () => a.deps };
-    const nuevoDia = diaHabil(a.mundo.ahora(), 6);
+    // Los martes, +4 días cae en sábado y +6 en domingo: ambos saltan al lunes y el nuevo horario chocaba con la cita B (409). Se busca un día distinto al de la cita B.
+    let nuevoDia = diaHabil(a.mundo.ahora(), 6);
+    for (let minimo = 7; nuevoDia === a.otroDia; minimo++) nuevoDia = diaHabil(a.mundo.ahora(), minimo);
     const r = await atenderReprogramarMiCita(a.token, { fecha: nuevoDia, hora: "15:00", idempotencyKey: "intento-0001", citaId: 701, id: 701, cita_id: 701, especialistaId: 1262, idTenant: "otro" }, entorno);
     assert.equal(r.status, 200, await r.clone().text());
     const citas = a.mundo.citas();

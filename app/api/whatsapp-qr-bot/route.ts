@@ -4,6 +4,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { atenderMensajeWhatsAppQR } from "@/lib/whatsapp-qr-pipeline";
 
 export const runtime = "nodejs";
+// El pipeline llama a Gemini y, si el proveedor está saturado, reintenta con un modelo de respaldo (lib/amore-entrada-gemini.ts, PLAN_DE_INTENTOS: peor caso ~37 s).
+// Sin esto la ruta heredaba el límite por defecto de la plataforma, que no está escrito en ningún lado.
+export const maxDuration = 60;
 
 // Bot real para WhatsApp-QR (autorizado) — ÚNICA ruta que el worker llama
 // hacia Next.js (dirección nueva; hasta esta fase Next.js solo llamaba AL

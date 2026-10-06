@@ -17,6 +17,8 @@ import {
   resolveGeminiApiKeyFromEnv,
   GEMINI_DEFAULT_MODEL,
 } from "@/lib/flow/gemini/gemini-client";
+import { classifyGeminiError } from "@/lib/flow/gemini/gemini-error-classifier";
+import { EFFECT_RESULT_CLASSIFICATIONS } from "@/lib/flow/executor-types";
 import type { GeminiGenerateContentClient } from "@/lib/flow/gemini/gemini-types";
 
 export const MENSAJE_BIENVENIDA_1 = "¡Hola! 💗 Bienvenido/a a AMORE.\n\nEstoy aquí para ayudarte a encontrar el servicio ideal o reservar tu cita.";
@@ -55,6 +57,12 @@ export const NUMERO_JESSICA = "573227298600";
 
 export const MENSAJE_ATENCION_HUMANA_CLIENTE =
   "Entiendo que quieres hablar directamente con Jessica. 💗\nYa le notifiqué que deseas comunicarte con ella. En un momento te responderá directamente.";
+
+/**
+ * A mitad de una reserva/reprogramación abierta la clienta pide una persona con palabras que el detector fijo no cubre (la IA sí lo entiende, intent=ATENCION_HUMANA): ahí no se puede
+ * pasar a Jessica desde Agenda V2 (ciclo de imports), pero tampoco dejarla con «No reconocí esa opción». Se le dice la frase exacta, que SÍ activa el aviso real en cualquier momento.
+ */
+export const MENSAJE_PEDIR_PERSONA_EN_RESERVA = "Claro 💗 Para que una persona del equipo te atienda, escribe *hablar con una persona* y le aviso de inmediato.";
 
 /** Único motivo real disponible en esta fase -- deliberadamente NO se llama a Gemini para resumir un motivo (sección PRIORIZAMOS CONFIABILIDAD del pedido). */
 export const MOTIVO_ATENCION_HUMANA_DEFECTO = "Solicita atención directa.";
@@ -151,6 +159,19 @@ const FRASES_ATENCION_HUMANA_DETERMINISTA = [
   "quiero hablar con atencion al cliente",
   "quiero servicio al cliente",
   "necesito servicio al cliente",
+  // Variantes con «hablar con un/una …» (hallazgo con Gemini real: «necesito hablar con un asesor humano» no calzaba con ninguna y la IA prometía una llamada que nadie hacía).
+  "hablar con un asesor",
+  "hablar con una asesora",
+  "hablar con un humano",
+  "hablar con una humana",
+  "hablar con un agente",
+  "hablar con una agente",
+  "hablar con un representante",
+  "asesor humano",
+  "asesora humana",
+  "agente humano",
+  "persona de verdad",
+  "hablar con la duena",
 ];
 
 export function detectarSolicitudAtencionHumana(mensaje: string): boolean {
@@ -517,7 +538,10 @@ export function detectarNoEntendiRepetir(mensaje: string): boolean {
 // sigue evaluándose PRIMERO (antes de llegar a Gemini, ver
 // lib/agenda-v2/router.ts::procesarMensajeConAgendaV2) -- estas dos
 // categorías nuevas solo se alcanzan para frases que ese detector no cubrió.
-export type IntentGemini = "CONSULTA" | "TRIGGER_AGENDA" | "CANCELAR_CITA" | "REPROGRAMAR_CITA";
+// ATENCION_HUMANA: la clienta pide (o acepta) hablar con una persona con palabras que el detector determinista no prevé. Hallazgo con Gemini real: sin esta salida el modelo
+// le PROMETÍA «una persona se pondrá en contacto contigo» y no se avisaba a nadie (lib/amore-conversacion-gemini-real.e2e.ts, caso 5.3). Se resuelve con el MISMO mecanismo
+// de siempre (activarAtencionHumana: avisa a Jessica y pausa el bot).
+export type IntentGemini = "CONSULTA" | "TRIGGER_AGENDA" | "CANCELAR_CITA" | "REPROGRAMAR_CITA" | "ATENCION_HUMANA";
 
 export interface ResultadoClasificacionGemini {
   intent: IntentGemini;
@@ -542,7 +566,7 @@ export interface ResultadoClasificacionGemini {
 const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
-    intent: { type: "string", enum: ["CONSULTA", "TRIGGER_AGENDA", "CANCELAR_CITA", "REPROGRAMAR_CITA"] },
+    intent: { type: "string", enum: ["CONSULTA", "TRIGGER_AGENDA", "CANCELAR_CITA", "REPROGRAMAR_CITA", "ATENCION_HUMANA"] },
     reply_text: { type: "string" },
     detected_service_mention: { type: "string", nullable: true },
     detected_professional_mention: { type: "string", nullable: true },
@@ -554,28 +578,30 @@ const RESPONSE_SCHEMA = {
 
 const SYSTEM_INSTRUCTION = `Eres la asistente virtual de AMORE, un salón de belleza/estética. Tu ÚNICO trabajo en este turno es CLASIFICAR la intención del mensaje del cliente y, si aplica, redactar una respuesta natural y cálida a su duda.
 
-Debes responder EXCLUSIVAMENTE en el JSON pedido, con "intent" siendo una de estas cuatro categorías:
+Debes responder EXCLUSIVAMENTE en el JSON pedido, con "intent" siendo una de estas cinco categorías:
 
 - CONSULTA: el cliente busca información (precios, servicios, duración, recomendaciones, horarios generales, información del salón) y TODAVÍA NO decidió iniciar una reserva. Ejemplos: "¿Cuánto cuesta?", "¿Qué servicios tienen?", "¿Qué me recomiendas?", "¿Cuánto dura?", "¿Atienden los domingos?", "¿Qué horarios manejan?", "¿Cuánto cuesta una cita?", "¿Qué horarios tienen para citas?", "¿Atienden citas los sábados?".
 - TRIGGER_AGENDA: el cliente expresa CLARAMENTE que quiere iniciar el proceso de reserva de una cita NUEVA. Ejemplos: "Quiero una cita.", "Quiero agendar.", "Me gustaría reservar.", "Me interesa, quiero agendarlo.", "Sí, quiero reservar.", "Quiero hacerlo el sábado.", "Me puedes separar un espacio.", "¿Tienen disponibilidad para mañana?", "¿Me pueden atender el viernes?", "¿Será que me hacen un espacio?", "¿Tendrán un campito para mí?", "¿Me regalan un espacio esta semana?". También aplica si el cliente responde afirmativamente a una pregunta tuya sobre si quiere agendar.
   - Cuidado: una pregunta sobre disponibilidad puede ser puramente informativa según el contexto ("¿manejan turnos los domingos, en general?" sin mencionar una fecha propia sigue siendo CONSULTA_HORARIO). Si el cliente pregunta por SU propia disponibilidad para ir ("¿tienen espacio para mí mañana?", "¿me pueden atender el viernes?"), es TRIGGER_AGENDA; si pregunta por el horario general del negocio sin intención personal de ir ("¿a qué hora abren?", "¿qué días trabajan?"), sigue siendo CONSULTA.
 - CANCELAR_CITA: el cliente habla de una cita que YA TIENE (nunca una nueva) y expresa que no va a poder asistir, SIN proponer ni aceptar una fecha/hora alternativa. Ejemplos: "ya no quiero la cita", "me salió una vuelta y no voy a poder ir", "vea que no alcanzo a llegar", "se me presentó un compromiso", "no puedo ir" (sola, sin mencionar otro día ni querer cambiarla).
 - REPROGRAMAR_CITA: el cliente habla de una cita que YA TIENE y expresa que no puede asistir COMO ESTABA, pero SÍ quiere ir en otro momento -- propone, pide o acepta otra fecha/hora, o deja claro que prefiere cambiarla en vez de cancelarla. Ejemplos: "no puedo ir mañana, ¿la pasamos para el viernes?", "no puedo ese día, ¿me la pueden cambiar?", "esa hora no me sirve, ¿puedo ir más tarde?", "me salió un compromiso pero quiero ir otro día", "no puedo ir, pero quiero otra fecha".
+- ATENCION_HUMANA: la clienta pide hablar con una persona del equipo ("un asesor", "una asesora", "un humano", "alguien del salón", "Jessica", "la dueña", "una persona real", "¿me puede atender alguien?") o ACEPTA tu ofrecimiento de comunicarla con una persona (un afirmativo como "sí" o "sí, por favor" justo después de que TÚ le preguntaste si quería que la comunicaras con alguien del equipo). Con este intent el sistema avisa de verdad al equipo; con cualquier otro NO se avisa a nadie.
 
 [REGLA DE AMBIGÜEDAD CANCELAR vs REPROGRAMAR -- MUY IMPORTANTE]
 "No puedo ir" (o equivalentes) por sí solo, SIN ninguna mención de otro día/hora ni de querer cambiar/mover la cita, es CANCELAR_CITA. Si el mismo mensaje además pide, sugiere o acepta otra fecha/hora, es REPROGRAMAR_CITA -- nunca canceles cuando el cliente en realidad quiere mantener la cita en otro momento. Si el mensaje es TAN corto o ambiguo que de verdad no puedes decidir con confianza entre cancelar/reprogramar/otra cosa (y NO tienes contexto previo en el historial que lo aclare), NUNCA elijas una al azar: responde intent=CONSULTA con un "reply_text" breve y natural preguntando cuál prefiere, ej.: "Claro 💗 ¿Quieres cancelar tu cita o prefieres cambiarla para otro día?". Pero si el contexto ya deja clara la intención, no hagas una pregunta innecesaria.
 
 Reglas estrictas:
 - NUNCA inventes que ya creaste, modificaste o cancelaste una cita -- tú NO tienes esa capacidad, solo clasificas. La cancelación/reprogramación/reserva real las hace otro sistema después de tu clasificación, y SIEMPRE le pedirá confirmación al cliente antes de ejecutar nada.
-- Cuando intent=CONSULTA, "reply_text" debe ser una respuesta natural, cálida y breve a la duda del cliente. Si en este mensaje de sistema hay un bloque [DATOS REALES DE AMORE], respóndele con ESOS datos exactos (precio, duración, quién lo realiza, qué es y para qué sirve). Lo que NO esté en esos datos no lo afirmes nunca: ni servicios, ni precios, ni duraciones, ni promociones, descuentos o bonos de regalo, ni dirección, ni medios de pago. Si te preguntan algo que no está, dilo con naturalidad y ofrece que una persona del equipo lo confirme (la clienta puede escribir "hablar con una persona"). Si no hay bloque de datos, sé honesta: nunca inventes una cifra ni un servicio.
+- Cuando intent=CONSULTA, "reply_text" debe ser una respuesta natural, cálida y breve a la duda del cliente. Si en este mensaje de sistema hay un bloque [DATOS REALES DE AMORE], respóndele con ESOS datos exactos (precio, duración, quién lo realiza, qué es y para qué sirve). Lo que NO esté en esos datos no lo afirmes nunca: ni servicios, ni precios, ni duraciones, ni promociones, descuentos o bonos de regalo, ni dirección, ni medios de pago. Si te preguntan algo que no está, NO digas que no existe ni que no hay (no lo sabes): di con naturalidad que no lo tienes registrado y pregúntale si quiere que la comuniques con alguien del equipo para confirmarlo ("¿Quieres que te comunique con alguien del equipo? 💗"). NUNCA digas ni insinúes que una persona se va a comunicar con ella: eso solo sucede cuando ella acepta y tú respondes con intent=ATENCION_HUMANA. Si no hay bloque de datos, sé honesta: nunca inventes una cifra ni un servicio.
 - NUNCA digas qué días u horarios tiene libres una profesional ni prometas un espacio: eso solo lo sabe el sistema de agenda consultando el calendario real. Si la clienta pregunta por disponibilidad para ella, es TRIGGER_AGENDA.
-- Cuando intent=TRIGGER_AGENDA/CANCELAR_CITA/REPROGRAMAR_CITA, igual completa "reply_text" con cualquier texto breve (será ignorado por el sistema).
+- Cuando intent=TRIGGER_AGENDA/CANCELAR_CITA/REPROGRAMAR_CITA/ATENCION_HUMANA, igual completa "reply_text" con cualquier texto breve (será ignorado por el sistema).
 - "detected_service_mention": si el cliente mencionó un servicio concreto (ej. "sombreado", "manicure"), pon ese texto tal cual; si no mencionó ninguno, usa null.
 - Nunca actives TRIGGER_AGENDA solo porque la palabra "cita" aparece en el mensaje -- una pregunta sobre citas (precio, horarios, disponibilidad general) sigue siendo CONSULTA.
 - Nunca confundas CANCELAR_CITA/REPROGRAMAR_CITA con TRIGGER_AGENDA -- son sobre una cita que el cliente YA TIENE reservada, nunca sobre agendar una cita nueva.
 
 [CÓMO CONVERSAR -- ERES UNA RECEPCIONISTA CÁLIDA, NO UN FORMULARIO]
 - Estilo WhatsApp: frases cortas, cercanas, en español colombiano neutro; como máximo 3-4 frases y un emoji (💗) por mensaje. Nunca listas largas: si recomiendas, 2 o 3 opciones reales con precio.
+- NO empieces tus mensajes con «¡Hola!» ni te presentes: el saludo de bienvenida ya lo da otro sistema y repetirlo en cada mensaje suena a robot. Responde directo, con calidez.
 - Saludos y charla casual ("hola hermosa", "jajaja", "gracias"): responde con calidez y brevedad, y reconduce con una pregunta abierta hacia lo que necesita.
 - Si la clienta cuenta su contexto ("es para una boda", "algo sencillo", "no tan exagerado", "es para mi mamá"), reconócelo con naturalidad y oriéntala con servicios REALES del catálogo que encajen, explicando en una frase por qué.
 - Cuando ya parezca decidida ("me gusta ese", "ese quiero"), pregúntale si quiere reservarlo y ofrécele el enlace de reserva ("¿Quieres que te pase el enlace para reservarlo? 💗"). Las citas NUEVAS se reservan SOLO por ese enlace (lo entrega el sistema cuando la clienta quiere reservar): NUNCA digas que tú puedes agendar, elegir profesional u horario, ni reservar por el chat, y no inventes otro enlace.
@@ -630,7 +656,54 @@ Ejemplo (dato parcial, el resto queda null):
 export interface DepsClasificarGemini {
   geminiClient?: GeminiGenerateContentClient;
   resolveApiKey?: typeof resolveGeminiApiKeyFromEnv;
+  /** Espera corta tras un intento que FALLÓ antes de lanzar el siguiente (inyectable: las pruebas no esperan de verdad). */
+  esperar?: (ms: number) => Promise<void>;
+  /** Tiempo máximo de CADA intento (inyectable en pruebas). */
+  timeoutPorIntentoMs?: number;
+  /** Si un intento sigue sin responder pasado este tiempo, se lanza el siguiente EN PARALELO (el primero sigue vivo). `Infinity` lo desactiva (pruebas). */
+  refuerzoMs?: number;
 }
+
+// --- Resiliencia ante el proveedor (medido en vivo con Gemini real, 2026-10-05) ---------------------------------------------------------------------
+//
+// Causa raíz de los «tuve un problema técnico» que veía la clienta de AMORE, hallada al correr conversaciones reales (lib/amore-conversacion-gemini-real.e2e.ts):
+//  1. TOPE DE TOKENS: con 500, gemini-3.x descuenta sus tokens de «pensamiento» interno del MISMO presupuesto (finishReason=MAX_TOKENS: hasta 478 de 500 se iban en
+//     pensar y quedaban 6 para el JSON) -> el JSON salía cortado, «fuera del schema», y la clienta recibía el mensaje de error. Mismo hallazgo ya documentado para Du
+//     (lib/lead-solicitud-ia.ts: 1024 truncaba ~12 %; 2048 -> 0 truncamientos).
+//  2. LATENCIA: clasificar una intención y redactar 2 líneas NO necesita razonar: con el pensamiento por defecto cada respuesta tardaba 12-14 s; con thinkingLevel
+//     «minimal» tarda 1,3-1,8 s, con la misma calidad de clasificación.
+//  3. DISPONIBILIDAD: el modelo principal (gemini-3.6-flash, «preview») respondió 503 «high demand» en 6 de 8 llamadas seguidas, y en la misma hora también el de
+//     respaldo estable respondió 503 o tardó 10-25 s. Sin reintento, cada 503 era un mensaje de error a la clienta (y dos seguidos la pasaban a una persona).
+//     Ahora hay un plan acotado de intentos con modelos DISTINTOS, y un intento lento NO se espera hasta su tiempo máximo: a los REFUERZO_MS se lanza el siguiente en
+//     paralelo y gana la primera salida válida (el resto se cancela).
+//
+// Todo vive aquí (solo AMORE): el cliente compartido y los demás negocios (Flow Engine, Du) no cambian de comportamiento.
+
+/** Modelo estable (GA) de respaldo: no comparte la saturación del principal «preview». Medido: 8 de 8 respuestas correctas en 1,5-5,6 s cuando el principal fallaba. */
+export const MODELO_RESPALDO = "gemini-2.5-flash";
+/** Último recurso, de otra familia (menos demanda): 8 de 8 clasificaciones y respuestas válidas en la medición. */
+export const MODELO_RESPALDO_LITE = "gemini-3.1-flash-lite";
+/** Cubre el JSON (~150 tokens) con holgura incluso si el modelo piensa; es un tope, no un objetivo: no cuesta más. */
+export const MAX_TOKENS_SALIDA = 2048;
+/** Una respuesta sana tarda 1-6 s; en horas malas del proveedor se vieron 10-25 s. Pasado esto el intento se corta. */
+export const TIMEOUT_POR_INTENTO_MS = 15_000;
+/** Si el intento en curso no respondió a los 5 s, se lanza el siguiente en paralelo. */
+export const REFUERZO_MS = 5_000;
+
+export interface IntentoGemini {
+  model: string;
+  /** Solo gemini-3.x principal lo usa (2.5 usa otro parámetro y rechazaría este con 400). */
+  thinkingLevel?: "minimal";
+  /** Espera corta antes de lanzar este intento cuando el anterior FALLÓ (no aplica al refuerzo en paralelo). */
+  esperaAntesMs: number;
+}
+/** Peor caso ~35 s (los intentos se solapan); lo normal es 1-3 s con UN solo intento. maxDuration de la ruta: app/api/whatsapp-qr-bot/route.ts. */
+export const PLAN_DE_INTENTOS: readonly IntentoGemini[] = [
+  { model: GEMINI_DEFAULT_MODEL, thinkingLevel: "minimal", esperaAntesMs: 0 },
+  { model: MODELO_RESPALDO, esperaAntesMs: 300 },
+  { model: MODELO_RESPALDO_LITE, esperaAntesMs: 500 },
+  { model: GEMINI_DEFAULT_MODEL, thinkingLevel: "minimal", esperaAntesMs: 1_000 },
+];
 
 /**
  * Clasifica UN mensaje del cliente (más el historial reciente de esta
@@ -659,6 +732,15 @@ export function instruccionConDatosReales(contextoNegocio?: string): string {
   return `${SYSTEM_INSTRUCTION}\n\n[DATOS REALES DE AMORE -- única fuente válida para servicios, precios, duraciones y quién realiza cada servicio]\n${contextoNegocio}\n[FIN DE DATOS REALES]`;
 }
 
+/** Pausa que NO mantiene vivo el proceso (si es lo único pendiente, no lo retiene). `Infinity` = nunca. */
+function pausaSinRetener(ms: number): Promise<void> {
+  if (!Number.isFinite(ms)) return new Promise<void>(() => {});
+  return new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    (t as { unref?: () => void }).unref?.();
+  });
+}
+
 export async function clasificarMensajeConGemini(
   params: { mensaje: string; historial?: Array<{ role: "user" | "model"; text: string }>; contextoNegocio?: string },
   deps: DepsClasificarGemini = {},
@@ -670,28 +752,90 @@ export async function clasificarMensajeConGemini(
     return respuestaErrorTecnico();
   }
   const client = deps.geminiClient ?? createGeminiGenerateContentClient(apiKey);
+  const esperar = deps.esperar ?? pausaSinRetener;
+  const timeoutMs = deps.timeoutPorIntentoMs ?? TIMEOUT_POR_INTENTO_MS;
+  const refuerzoMs = deps.refuerzoMs ?? REFUERZO_MS;
+  const systemInstruction = instruccionConDatosReales(params.contextoNegocio);
+  const contents = [...(params.historial ?? []), { role: "user" as const, text: params.mensaje }];
 
-  let resultado;
-  try {
-    resultado = await client.generateContent({
-      model: GEMINI_DEFAULT_MODEL,
-      systemInstruction: instruccionConDatosReales(params.contextoNegocio),
-      contents: [...(params.historial ?? []), { role: "user", text: params.mensaje }],
-      responseSchema: RESPONSE_SCHEMA,
-      maxOutputTokens: 500,
-      temperature: 0.4,
+  let ganador: ResultadoClasificacionGemini | null = null;
+  let detener = false;
+  let despertar: () => void = () => {};
+  const hayNovedad = new Promise<void>((resolve) => {
+    despertar = resolve;
+  });
+  const abortadores: AbortController[] = [];
+  const enVuelo = new Set<Promise<void>>();
+
+  /** UN intento: llama, valida el JSON y, si es válido y todavía no hay ganador, lo deja como ganador. Nunca lanza. */
+  const intentar = async (i: number, cancelacion: AbortController): Promise<void> => {
+    const intento = PLAN_DE_INTENTOS[i]!;
+    const etiqueta = `intento ${i + 1}/${PLAN_DE_INTENTOS.length} (${intento.model})`;
+    let resultado;
+    try {
+      // Clasificar es PURO (no escribe nada): repetir o duplicar la llamada ante un fallo o una lentitud del proveedor es seguro.
+      resultado = await client.generateContent(
+        {
+          model: intento.model,
+          systemInstruction,
+          contents,
+          responseSchema: RESPONSE_SCHEMA,
+          maxOutputTokens: MAX_TOKENS_SALIDA,
+          temperature: 0.4,
+          ...(intento.thinkingLevel ? { thinkingLevel: intento.thinkingLevel } : {}),
+        },
+        AbortSignal.any([cancelacion.signal, AbortSignal.timeout(timeoutMs)]),
+      );
+    } catch (err) {
+      if (cancelacion.signal.aborted) return; // lo cancelamos nosotros porque otro intento ya ganó: no es un fallo
+      const { classification, error } = classifyGeminiError(err);
+      console.error(`[amore-entrada] ${etiqueta} falló (${error}):`, err instanceof Error ? err.message.slice(0, 200) : "error desconocido");
+      // Clave inválida o sin permiso: ningún reintento lo arregla, y cada uno hace esperar a la clienta para nada.
+      if (classification === EFFECT_RESULT_CLASSIFICATIONS.AUTH_ERROR) detener = true;
+      return;
+    }
+    const parseado = parsearSalidaGemini(resultado.text);
+    if (parseado) {
+      ganador ??= parseado;
+      return;
+    }
+    console.error(`[amore-entrada] ${etiqueta}: salida fuera del schema esperado (finishReason=${resultado.finishReason ?? "?"}, ${(resultado.text ?? "").length} caracteres)`);
+  };
+
+  const terminoAlgo = () => ganador !== null || detener;
+  for (let i = 0; i < PLAN_DE_INTENTOS.length && !terminoAlgo(); i++) {
+    const cancelacion = new AbortController();
+    abortadores.push(cancelacion);
+    const p: Promise<void> = intentar(i, cancelacion).finally(() => {
+      enVuelo.delete(p);
+      if (terminoAlgo()) despertar();
     });
-  } catch (err) {
-    console.error("[amore-entrada] error técnico llamando a Gemini -- se responde CONSULTA con mensaje de error genérico:", err instanceof Error ? err.message : "error desconocido");
-    return respuestaErrorTecnico();
+    enVuelo.add(p);
+    // Se avanza al siguiente intento cuando ESTE falla, cuando pasa el tiempo de refuerzo sin respuesta, o cuando ya hay un ganador.
+    await Promise.race([p, pausaSinRetener(refuerzoMs), hayNovedad]);
+    if (!terminoAlgo() && !enVuelo.has(p)) {
+      // Falló rápido: espera corta (no aplica si solo fue lento y se lanza el refuerzo en paralelo).
+      const siguiente = PLAN_DE_INTENTOS[i + 1];
+      if (siguiente && siguiente.esperaAntesMs > 0) await esperar(siguiente.esperaAntesMs);
+    }
   }
+  // Ya no se lanzan más intentos: se espera al primero que dé una salida válida, o a que todos terminen.
+  while (!terminoAlgo() && enVuelo.size > 0) await Promise.race([...enVuelo, hayNovedad]);
+  for (const c of abortadores) c.abort(); // lo que siga en vuelo (más lento que el ganador) ya no hace falta
 
-  const parseado = parsearSalidaGemini(resultado.text);
-  if (!parseado) {
-    console.error("[amore-entrada] salida de Gemini fuera del schema esperado -- se responde CONSULTA con mensaje de error genérico");
-    return respuestaErrorTecnico();
-  }
-  return parseado;
+  if (ganador) return ganador;
+  console.error("[amore-entrada] ningún intento con Gemini dio una salida válida -- se responde CONSULTA con mensaje de error genérico");
+  return respuestaErrorTecnico();
+}
+
+/**
+ * Qué texto usar cuando la clienta hace una pregunta a mitad de una reserva abierta (lib/agenda-v2/router.ts): la respuesta de la IA si fue una consulta sin fallo técnico; la instrucción
+ * para hablar con una persona si pidió una; nada (`null`, y se repite el menú de siempre) en cualquier otro caso. Pura: nunca elige ni cambia nada de la reserva.
+ */
+export function respuestaDeConsultaEnReserva(r: ResultadoClasificacionGemini): string | null {
+  if (r.errorTecnico) return null;
+  if (r.intent === "ATENCION_HUMANA") return MENSAJE_PEDIR_PERSONA_EN_RESERVA;
+  return r.intent === "CONSULTA" && r.replyText.trim() ? r.replyText.trim() : null;
 }
 
 /** `undefined`/`null`/no-string -> null (nunca inventa un texto ni deja `undefined` pasar como si fuera un dato real). */
@@ -709,7 +853,7 @@ function parsearSalidaGemini(texto: string | null): ResultadoClasificacionGemini
   }
   if (typeof data !== "object" || data === null) return null;
   const obj = data as Record<string, unknown>;
-  if (obj.intent !== "CONSULTA" && obj.intent !== "TRIGGER_AGENDA" && obj.intent !== "CANCELAR_CITA" && obj.intent !== "REPROGRAMAR_CITA") return null;
+  if (obj.intent !== "CONSULTA" && obj.intent !== "TRIGGER_AGENDA" && obj.intent !== "CANCELAR_CITA" && obj.intent !== "REPROGRAMAR_CITA" && obj.intent !== "ATENCION_HUMANA") return null;
   if (typeof obj.reply_text !== "string") return null;
   const camposTexto = [obj.detected_service_mention, obj.detected_professional_mention, obj.detected_date_mention, obj.detected_time_mention];
   if (camposTexto.some((v) => v !== null && v !== undefined && typeof v !== "string")) return null;
