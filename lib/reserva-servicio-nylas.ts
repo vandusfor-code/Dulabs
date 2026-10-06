@@ -55,7 +55,7 @@ import type { NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nyla
 // borra el evento que ya tenía este invitado, así que Google le notifica la
 // cancelación solo, sin ningún paso adicional acá. Exclusivo de AMORE (este
 // archivo entero ya está tenant-gateado arriba) -- nunca afecta a otro tenant.
-const CORREO_INVITADO_FIJO_AMORE = "Amoresalon34@gmail.com";
+export const CORREO_INVITADO_FIJO_AMORE = "Amoresalon34@gmail.com";
 
 export type MotivoRechazoCitaNylas =
   | "tenant_no_autorizado"
@@ -101,7 +101,7 @@ export interface DepsCrearCitaNylas {
  * de uno, la primera línea pasa a ser una lista -- el resto (profesional,
  * cliente, teléfono, origen) no cambia.
  */
-function construirDescripcionEvento(datos: { servicios: string[]; especialista: string; cliente: string; telefono: string | null }): string {
+export function construirDescripcionEvento(datos: { servicios: string[]; especialista: string; cliente: string; telefono: string | null }): string {
   const lineaServicios = datos.servicios.length === 1 ? `Servicio: ${datos.servicios[0]}` : `Servicios:\n${datos.servicios.map((s) => `- ${s}`).join("\n")}`;
   return [lineaServicios, `Profesional: ${datos.especialista}`, `Cliente: ${datos.cliente}`, datos.telefono ? `Teléfono: ${datos.telefono}` : null, "Origen: Piloto AMORE (DuLabs + Nylas)"]
     .filter(Boolean)

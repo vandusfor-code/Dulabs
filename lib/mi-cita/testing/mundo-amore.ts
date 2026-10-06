@@ -67,6 +67,9 @@ export function crearGoogleCalendarFalso() {
     async deleteEvent(p) {
       llamadas.borrar++;
       if (falla.borrar) throw new Error("nylas no pudo borrar el evento");
+      // Como el Google real: un evento solo se borra desde SU calendario (borrarlo desde otro responde «no existe»).
+      const existente = eventos.get(p.eventId);
+      if (existente && existente.calendarId !== p.calendarId) throw new Error("el evento no está en ese calendario");
       eventos.delete(p.eventId);
     },
   } as NylasEventsWriteClient;

@@ -6,8 +6,6 @@
 process.env.TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, it } from "node:test";
 import { borrarEventoDeCita, cancelarMiCita, gestionDeCita, horariosParaReprogramar, reprogramarMiCita, verMiCita, type DepsMiCita } from "@/lib/mi-cita/gestion";
 import { atenderCancelarMiCita, atenderHorariosMiCita, atenderReprogramarMiCita, atenderVerMiCita } from "@/lib/mi-cita/rutas";
@@ -517,7 +515,7 @@ describe("6. Las rutas HTTP", () => {
   });
 });
 
-describe("7. Cancelar desde el panel de la profesional también libera el evento de Google Calendar", () => {
+describe("7. Borrar el evento de Google de una cita (lo que usa el panel al cancelar o rechazar; el cableado de las rutas se prueba en panel.test.ts)", () => {
   it("borrarEventoDeCita (lo que usa el panel) borra el evento y su mapeo; repetirlo no falla ni repite el borrado", async () => {
     const { deps, mundo, citaId, eventoId } = await armar();
     const cita = mundo.citas()[0]!;
@@ -539,19 +537,5 @@ describe("7. Cancelar desde el panel de la profesional también libera el evento
     await borrarEventoDeCita({ ...b.deps, nylas: null }, { id: b.citaId, id_tenant: T, especialista_id: b.mundo.citas()[0]!.especialista_id as number });
     assert.equal(b.mundo.google.llamadas.borrar, 0);
     assert.equal((b.mundo.tablas.dulabs_agenda_v2_citas_nylas ?? []).length, 1);
-  });
-
-  it("cableado de la ruta del panel: SOLO la acción «cancelar», SOLO para AMORE y SOLO después de que la cita quedó cancelada (nada más cambia de comportamiento)", () => {
-    const fuente = readFileSync(path.join(process.cwd(), "app", "api", "agenda", "[token]", "citas", "[id]", "route.ts"), "utf8").replace(/\r\n/g, "\n");
-    const inicio = fuente.indexOf('body.accion === "cancelar"');
-    const fin = fuente.indexOf('body.accion === "completar"');
-    assert.ok(inicio > 0 && fin > inicio, "bloque de cancelar localizado");
-    const bloque = fuente.slice(inicio, fin);
-    const iCancelar = bloque.indexOf("await cancelarCita(");
-    const iNoSePuede = bloque.indexOf("if (!cita) return");
-    const iCondicion = bloque.indexOf("especialista.id_tenant === AMORE_TENANT_ID");
-    const iBorrar = bloque.indexOf("borrarEventoDeCita(");
-    assert.ok(iCancelar >= 0 && iNoSePuede > iCancelar && iCondicion > iNoSePuede && iBorrar > iCondicion, "cancelar → comprobar → ¿AMORE? → borrar el evento");
-    assert.equal(fuente.split("borrarEventoDeCita(").length - 1, 1, "ninguna otra acción del panel borra eventos");
   });
 });

@@ -23,9 +23,16 @@ import {
 import { planDelTenant } from "@/lib/plan-limits";
 import { requireAuth } from "@/lib/auth/authz";
 import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
-// AMORE: cancelar una cita desde el panel también debe liberar su evento de Google Calendar (si no, el evento huérfano seguiría bloqueando ese horario).
+// AMORE: cada acción del panel deja Google Calendar igual que la agenda (ver lib/mi-cita/panel.ts). Solo AMORE: los demás negocios siguen por su camino de siempre.
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
-import { borrarEventoDeCita, depsProduccionMiCita } from "@/lib/mi-cita/gestion";
+import { depsProduccionMiCita } from "@/lib/mi-cita/gestion";
+import {
+  cancelarCitaDelPanelAmore,
+  confirmarCitaDelPanelAmore,
+  editarCitaDelPanelAmore,
+  reagendarCitaDelPanelAmore,
+  rechazarCitaDelPanelAmore,
+} from "@/lib/mi-cita/panel";
 
 export const runtime = "nodejs";
 
@@ -127,28 +134,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const cliente = await clienteDeEspecialista(supabase, especialista.phone_number_id);
+  // Solo AMORE tiene Google Calendar: sus acciones pasan por lib/mi-cita/panel.ts (mismas reglas de la base, más el evento de Google).
+  const amore = especialista.id_tenant === AMORE_TENANT_ID ? depsProduccionMiCita(supabase) : null;
 
   if (body.accion === "confirmar") {
-    const cita = await confirmarCita(supabase, citaId);
+    // AMORE: la clienta recibe la confirmación por WhatsApp-QR con su enlace «Mi cita» (el aviso de Meta de abajo nunca le llegaba: AMORE no tiene token de Meta).
+    const cita = amore ? await confirmarCitaDelPanelAmore(amore, citaId) : await confirmarCita(supabase, citaId);
     if (!cita) return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
-    if (cliente) await notificarCitaConfirmada(cliente, cita);
+    if (cliente && !amore) await notificarCitaConfirmada(cliente, cita);
     return Response.json({ success: true, cita });
   }
 
   if (body.accion === "rechazar") {
-    const cita = await rechazarCita(supabase, citaId, body.motivo?.trim() || undefined);
+    const motivo = body.motivo?.trim() || undefined;
+    const cita = amore ? await rechazarCitaDelPanelAmore(amore, citaId, motivo) : await rechazarCita(supabase, citaId, motivo);
     if (!cita) return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
     if (cliente) await notificarCitaRechazada(cliente, cita);
     return Response.json({ success: true, cita });
   }
 
   if (body.accion === "cancelar") {
-    const cita = await cancelarCita(supabase, citaId, body.motivo?.trim() || undefined);
+    const motivo = body.motivo?.trim() || undefined;
+    const cita = amore ? await cancelarCitaDelPanelAmore(amore, citaId, motivo) : await cancelarCita(supabase, citaId, motivo);
     if (!cita) return Response.json({ error: "Esa cita ya no se puede cancelar" }, { status: 409 });
-    // Solo AMORE (el único negocio con eventos de Google Calendar): mejor esfuerzo, nunca lanza ni deshace la cancelación.
-    if (especialista.id_tenant === AMORE_TENANT_ID) {
-      await borrarEventoDeCita(depsProduccionMiCita(supabase), { id: cita.id, id_tenant: especialista.id_tenant, especialista_id: cita.especialista_id });
-    }
     if (cliente) await notificarCitaCancelada(cliente, cita);
     return Response.json({ success: true, cita });
   }
@@ -172,8 +180,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (Number.isNaN(nuevoInicio.getTime())) return Response.json({ error: "Fecha/hora inválida" }, { status: 400 });
 
     const duracionMin = duracionForzadaMin ?? body.duracion_min ?? especialista.duracion_min;
-    const resultado = await proponerReagendamiento(supabase, citaId, nuevoInicio, duracionMin);
+    const resultado = amore ? await reagendarCitaDelPanelAmore(amore, citaId, nuevoInicio, duracionMin) : await proponerReagendamiento(supabase, citaId, nuevoInicio, duracionMin);
     if (!resultado.ok) {
+      if (resultado.motivo === "calendario_no_disponible") return Response.json({ error: resultado.detalle }, { status: 503 });
       if (resultado.motivo === "ocupado") return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
       if (resultado.motivo === "no_encontrada") return Response.json({ error: "Esa solicitud ya fue procesada" }, { status: 409 });
       return Response.json({ error: resultado.detalle ?? "No se pudo proponer el horario" }, { status: 500 });
@@ -204,7 +213,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
   }
 
-  const resultado = await editarCitaConfirmada(supabase, citaId, {
+  const cambiosEdicion = {
     nuevoInicio,
     duracionMin: duracionForzadaMin ?? body.duracion_min,
     // Una cita estructurada conserva su snapshot de servicio tal cual quedó
@@ -212,8 +221,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // puede tener su texto libre editado desde acá.
     servicio: citaExistente.servicio_id ? undefined : body.servicio,
     especialistaId: body.nuevo_especialista_id,
-  });
+  };
+  // AMORE: además de la base, mueve el evento de Google (otra hora, duración o profesional); si Google no responde no se cambia nada.
+  const resultado = amore ? await editarCitaDelPanelAmore(amore, citaId, cambiosEdicion) : await editarCitaConfirmada(supabase, citaId, cambiosEdicion);
   if (!resultado.ok) {
+    if (resultado.motivo === "calendario_no_disponible") return Response.json({ error: resultado.detalle }, { status: 503 });
     if (resultado.motivo === "ocupado") return Response.json({ error: "Ese horario ya está ocupado" }, { status: 409 });
     if (resultado.motivo === "no_encontrada") return Response.json({ error: "Esa cita no está confirmada" }, { status: 409 });
     return Response.json({ error: resultado.detalle ?? "No se pudo editar la cita" }, { status: 500 });
