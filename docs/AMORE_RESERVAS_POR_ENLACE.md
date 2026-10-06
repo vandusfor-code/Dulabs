@@ -4,7 +4,7 @@ Rama `feat/amore-reservas-por-enlace`. Negocio: AMORE (`ed6ae77f-8a0c-483e-a5d9-
 portal `https://www.dulabs.co/reservar/amore`.
 
 > **Estado de producción al escribir esto: NADA de esto está aplicado ni desplegado.** La migración `20261209000000_dulabs_cita_enlaces.sql` y los scripts
-> de `supabase/provisioning/amore/` los corre el dueño. El bot **no** se reactivó para tráfico general. Ver §13 y §14.
+> de `supabase/provisioning/amore/` los corre el dueño. El bot **no** se reactivó para tráfico general. Ver §13 y §15.
 
 ## 1. Qué estaba mal
 
@@ -53,7 +53,7 @@ Hallazgos con causa raíz (no parches):
   mapeo en `dulabs_agenda_v2_citas_nylas`.
 - No toqué Delacour, ASLC ni ningún otro negocio (ramas con compuerta por `AMORE_TENANT_ID`; hay pruebas que lo demuestran), ni DNS, ni infraestructura, ni
   credenciales nuevas, ni la activación del bot.
-- El panel de edición/«reagendar» de la profesional **no** se modificó (ver riesgos).
+- ~~El panel de edición/«reagendar» de la profesional no se modificó~~ — **corregido en el PR de seguimiento «panel ↔ Google»** (ver §14).
 
 ## 5. Cómo funciona la nueva reserva
 
@@ -139,7 +139,7 @@ de Postgres que importan (EXCLUDE de solapes, unicidad de idempotencia) y un Goo
 
 1. **No se probó contra Google Calendar, Nylas ni WhatsApp reales.** Las pruebas usan una base en memoria con las reglas de Postgres que importan y un Google
    Calendar falso con estado. La verificación real es una prueba controlada del dueño (§13, paso 6).
-2. **Editar/reagendar una cita desde el panel de la profesional no mueve el evento de Google** (solo la acción «cancelar» se corrigió). Pendiente de decidir.
+2. ~~Editar/reagendar desde el panel no mueve el evento de Google~~ — **resuelto** en el PR de seguimiento (§14).
 3. Reprogramar a un horario que se solapa con el horario actual de la propia cita se rechaza como «ocupado» (falla segura; la clienta elige otro).
 4. Las citas que creó el portal antiguo **no tienen evento en Google Calendar** (no bloquean el calendario de la profesional). El script 02 corrige su identidad
    para que el bot las encuentre, pero no crea los eventos.
@@ -168,7 +168,26 @@ afirmar cuántas citas futuras tienen identidad legacy: eso lo responde el diagn
 Reversa: el rollback de la migración (`supabase/rollbacks/20261209000000_dulabs_cita_enlaces.down.sql`) se niega a borrar si hay enlaces activos; revertir el PR vuelve al
 comportamiento anterior (con las citas del portal antiguo otra vez invisibles para el bot).
 
-## 14. Estado de producción
+## 14. Seguimiento: el panel de la profesional y Google Calendar (PR «panel ↔ Google»)
+
+El panel solo cambiaba la base. Ahora, para AMORE, cada acción deja Google Calendar igual que la agenda (\`lib/mi-cita/panel.ts\`; las rutas del panel solo hacen de puente y los demás negocios siguen exactamente igual):
+
+| Acción del panel | Qué pasa ahora (solo AMORE) |
+|---|---|
+| **Editar** una cita confirmada (hora, duración, profesional) | Se crea el evento nuevo (en el calendario de la profesional de destino) → se cambia la base → se borra el viejo (del calendario de la profesional anterior) y el mapeo apunta al nuevo. **Si Google no responde no se cambia nada** (503 con un mensaje claro); si la base rechaza el cambio (choque de horario) el evento nuevo se deshace. No se revalida contra lo ocupado en Google: es una decisión de la administradora (como antes). El enlace «Mi cita» se extiende si la cita se mueve lejos. |
+| **Proponer otro horario** a una solicitud pendiente | Igual que editar: el evento acompaña al horario retenido. |
+| **Rechazar** una solicitud | Se borra el evento de Google (antes seguía bloqueando ese horario). |
+| **Cancelar** | Se borra el evento de Google (ya estaba en el PR anterior; ahora vive en el mismo módulo). |
+| **Confirmar** una pendiente | La clienta recibe la confirmación por WhatsApp-QR **con su enlace «Mi cita»**. El aviso antiguo de este panel usa la API de Meta, que AMORE no tiene, así que nunca le llegaba nada; además su texto es la política de otro negocio. |
+| **Nueva cita** a mano | Teléfono **normalizado** (antes se guardaba tal cual: el bot no encontraba esa cita ni a la clienta), clienta conocida con la identidad del chat, y confirmación con el enlace. Un teléfono que no se pueda interpretar se conserva como lo escribieron y no recibe avisos. |
+
+Hallazgos que cerró este seguimiento: (1) las citas creadas a mano desde el panel tampoco eran visibles para el bot por el teléfono sin normalizar; (2) su confirmación no llevaba el enlace; (3) confirmar una pendiente no le avisaba a la clienta.
+
+**Sigue sin cubrirse (decisión del negocio, no se inventó texto):** avisar a la clienta cuando el SALÓN cancela, rechaza o edita su cita desde el panel (los avisos antiguos usan la API de Meta y tampoco le llegan a AMORE); la propuesta de horario no tiene camino de respuesta por WhatsApp-QR (la clienta no puede «aceptarla» por el bot).
+
+Pruebas: \`lib/mi-cita/panel.test.ts\` (27) y 21 mutaciones del módulo y sus rutas, todas detectadas. El Google Calendar falso ahora también rechaza borrar un evento desde un calendario que no es el suyo, como el real.
+
+## 15. Estado de producción
 
 Sin cambios aplicados. Pendientes del dueño: fusionar el PR, migración 20261209, diagnóstico/reparación de citas legacy y la prueba controlada. El bot de AMORE no se
 reactivó para tráfico general.
