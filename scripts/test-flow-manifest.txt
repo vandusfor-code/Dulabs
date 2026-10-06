@@ -551,3 +551,8 @@ lib/mi-cita/reserva-portal.test.ts
 lib/mi-cita/mi-cita.test.ts
 app/api/reservar/portal-amore-rutas.test.ts
 lib/mi-cita/panel.test.ts
+# Portal de AMORE: varios servicios en una cita (manos + pies) y versión móvil con la barra «Continuar» pegada abajo.
+lib/reserva-portal-servicios.test.ts
+lib/reservar-amore-servicios.test.ts
+components/reservar-amore/formato.test.ts
+components/reservar-amore/portal-amore.dom.test.tsx

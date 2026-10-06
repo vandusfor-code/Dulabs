@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { listarHorariosDisponiblesPorServicioConNylas, calcularHorariosDeEspecialista } from "@/lib/disponibilidad-servicio-nylas";
+import { listarHorariosDisponiblesPorServicioConNylas, listarHorariosDisponiblesPorServiciosConNylas, calcularHorariosDeEspecialista } from "@/lib/disponibilidad-servicio-nylas";
 import type { NylasEvent, NylasEventsClient } from "@/lib/nylas/nylas-types";
 
 const TENANT = "amore-test";
@@ -487,5 +487,142 @@ describe("CORRECCIÓN (autorizada, 'agendar hoy') -- filtro de horarios ya pasad
       "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30",
       "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PORTAL AMORE (autorizado) -- varios servicios en UNA sola reserva (manos + pies).
+// UNA profesional que haga TODOS (intersección real) y un bloque continuo con la
+// duración SUMADA. Con un solo servicio es EXACTAMENTE la función de siempre.
+// ---------------------------------------------------------------------------
+describe("MULTI-SERVICIO (portal) -- listarHorariosDisponiblesPorServiciosConNylas", () => {
+  const MANOS = { id: "s-manos", id_tenant: TENANT, nombre: "Manos Semi", duracion_min: 60, activo: true };
+  const PIES = { id: "s-pies", id_tenant: TENANT, nombre: "Pies Semi", duracion_min: 60, activo: true };
+  const MAQUILLAJE_SUAVE = { id: "s-maq-suave", id_tenant: TENANT, nombre: "Maquillaje Suave", duracion_min: 90, activo: true };
+  const MAQUILLAJE_PRO = { id: "s-maq-pro", id_tenant: TENANT, nombre: "Maquillaje Pro", duracion_min: 120, activo: true };
+  const PESTANAS = { id: "s-pestanas", id_tenant: TENANT, nombre: "Pestañas", duracion_min: 30, activo: true };
+
+  const paraTodas = (servicioId: string) => ESPECIALISTAS.map((e) => ({ id_tenant: TENANT, servicio_id: servicioId, especialista_id: e.id }));
+  const soloEsta = (servicioId: string, especialistaId: number) => [{ id_tenant: TENANT, servicio_id: servicioId, especialista_id: especialistaId }];
+
+  const TABLAS = {
+    servicios: [MANOS, PIES, MAQUILLAJE_SUAVE, MAQUILLAJE_PRO, PESTANAS, { ...SERVICIO_DIPPING, activo: false }],
+    asociaciones: [...paraTodas("s-manos"), ...paraTodas("s-pies"), ...paraTodas("s-pestanas"), ...soloEsta("s-maq-suave", 1), ...soloEsta("s-maq-pro", 4)],
+  };
+
+  async function consultarVarios(
+    servicioIds: string[],
+    eventosPorCalendario: Record<string, NylasEvent[] | "error" | "timeout"> = {},
+    extra: { especialistaId?: number } = {},
+  ) {
+    return listarHorariosDisponiblesPorServiciosConNylas(
+      crearSupabaseFalso(construirTablas(TABLAS)),
+      { idTenant: TENANT, servicioIds, fecha: LUNES, especialistaId: extra.especialistaId },
+      { nylasClient: mockNylasClient(eventosPorCalendario), grantId: "grant-amore", ahora: () => new Date("2026-08-25T00:00:00-05:00") },
+    );
+  }
+
+  it("un solo servicio -> idéntico a la función de siempre (mismos horarios, una sola entrada en servicios)", async () => {
+    const varios = await consultarVarios(["s-manos"], { "cal-mary": [evento(`${LUNES}T09:00:00-05:00`, `${LUNES}T10:00:00-05:00`)] });
+    const uno = await consultar({ "cal-mary": [evento(`${LUNES}T09:00:00-05:00`, `${LUNES}T10:00:00-05:00`)] }, { servicioId: "s-manos" }, TABLAS);
+    assert.equal(varios.ok, true);
+    assert.equal(uno.ok, true);
+    if (!varios.ok || !uno.ok) return;
+    assert.deepEqual(varios.especialistas, uno.especialistas);
+    assert.deepEqual(varios.servicio, uno.servicio);
+    assert.deepEqual(varios.servicios, [uno.servicio]);
+  });
+
+  it("manos + pies con las 4 profesionales en común -> duración SUMADA, nombre «A + B» y todas ofrecen horarios", async () => {
+    const r = await consultarVarios(["s-manos", "s-pies"]);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.servicio, { id: "s-manos", nombre: "Manos Semi + Pies Semi", duracionMin: 120 });
+    assert.deepEqual(r.servicios.map((s) => s.id), ["s-manos", "s-pies"]);
+    assert.deepEqual(r.especialistas.map((e) => e.nombre), ["Mary", "Cristal", "Nata", "Jessica"]);
+    const mary = r.especialistas.find((e) => e.nombre === "Mary")!;
+    assert.ok(mary.horarios.includes("09:00"));
+    assert.ok(mary.horarios.includes("17:00"), "120 min caben justo desde las 17:00 (cierra a las 19:00)");
+    assert.ok(!mary.horarios.includes("17:30"), "17:30 + 120 min se pasaría de la jornada");
+  });
+
+  it("el bloque es CONTINUO: un evento a mitad del bloque combinado descarta los inicios que lo cruzan (y solo en esa profesional)", async () => {
+    const r = await consultarVarios(["s-manos", "s-pies"], { "cal-mary": [evento(`${LUNES}T10:00:00-05:00`, `${LUNES}T11:00:00-05:00`)] });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    const mary = r.especialistas.find((e) => e.nombre === "Mary")!;
+    const cristal = r.especialistas.find((e) => e.nombre === "Cristal")!;
+    for (const hora of ["09:00", "09:30", "10:00", "10:30"]) assert.ok(!mary.horarios.includes(hora), `Mary no puede empezar a las ${hora}: el bloque de 2 h cruzaría su evento de 10:00-11:00`);
+    assert.ok(mary.horarios.includes("11:00"));
+    assert.ok(cristal.horarios.includes("09:00"), "lógica OR: Cristal sigue libre desde las 9:00");
+  });
+
+  it("solo ofrece a las profesionales que hacen TODOS los servicios (Maquillaje Suave solo la hace Mary)", async () => {
+    const r = await consultarVarios(["s-maq-suave", "s-manos"]);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.especialistas.map((e) => e.nombre), ["Mary"]);
+    assert.equal(r.servicio.duracionMin, 150);
+  });
+
+  it("combinación SIN profesional en común -> combinacion_sin_profesional (nunca se ofrece algo imposible)", async () => {
+    const r = await consultarVarios(["s-maq-suave", "s-maq-pro"]);
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.motivo, "combinacion_sin_profesional");
+  });
+
+  it("pedir una profesional concreta filtra dentro de la intersección", async () => {
+    const r = await consultarVarios(["s-manos", "s-pies"], {}, { especialistaId: 2 });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.especialistas.map((e) => e.nombre), ["Cristal"]);
+  });
+
+  it("pedir una profesional que NO hace todos los servicios -> sin_especialistas_habilitados", async () => {
+    const r = await consultarVarios(["s-maq-suave", "s-manos"], {}, { especialistaId: 2 });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.motivo, "sin_especialistas_habilitados");
+  });
+
+  it("un servicio inexistente o inactivo en la lista -> servicio_no_encontrado", async () => {
+    const inexistente = await consultarVarios(["s-manos", "s-no-existe"]);
+    assert.equal(inexistente.ok, false);
+    if (!inexistente.ok) assert.equal(inexistente.motivo, "servicio_no_encontrado");
+    const inactivo = await consultarVarios(["s-manos", "s-dipping"]);
+    assert.equal(inactivo.ok, false);
+    if (!inactivo.ok) assert.equal(inactivo.motivo, "servicio_no_encontrado");
+  });
+
+  it("lista vacía -> servicio_no_encontrado; más de 3 -> demasiados_servicios", async () => {
+    const vacia = await consultarVarios([]);
+    assert.equal(vacia.ok, false);
+    if (!vacia.ok) assert.equal(vacia.motivo, "servicio_no_encontrado");
+    const muchos = await consultarVarios(["s-manos", "s-pies", "s-pestanas", "s-maq-suave"]);
+    assert.equal(muchos.ok, false);
+    if (!muchos.ok) assert.equal(muchos.motivo, "demasiados_servicios");
+  });
+
+  it("repetidos se ignoran (manos, manos, pies = manos + pies) y 3 servicios suman las tres duraciones", async () => {
+    const repetidos = await consultarVarios(["s-manos", "s-manos", "s-pies"]);
+    assert.equal(repetidos.ok, true);
+    if (repetidos.ok) assert.equal(repetidos.servicio.duracionMin, 120);
+    const tres = await consultarVarios(["s-manos", "s-pies", "s-pestanas"]);
+    assert.equal(tres.ok, true);
+    if (tres.ok) {
+      assert.equal(tres.servicio.duracionMin, 150);
+      assert.equal(tres.servicio.nombre, "Manos Semi + Pies Semi + Pestañas");
+    }
+  });
+
+  it("Nylas caído para UNA profesional -> esa queda no_confirmado con horarios vacíos y las demás siguen ok", async () => {
+    const r = await consultarVarios(["s-manos", "s-pies"], { "cal-mary": "error" });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    const mary = r.especialistas.find((e) => e.nombre === "Mary")!;
+    assert.equal(mary.estado, "no_confirmado");
+    assert.deepEqual(mary.horarios, []);
+    assert.ok(r.especialistas.filter((e) => e.nombre !== "Mary").every((e) => e.estado === "ok" && e.horarios.length > 0));
   });
 });
