@@ -46,17 +46,9 @@ import { resolverCalendarIdNylasDeEspecialista } from "@/lib/nylas/nylas-calenda
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import type { NylasEventsClient, NylasEventsWriteClient } from "@/lib/nylas/nylas-types";
 
-// Correo fijo de AMORE (autorizado) -- se agrega como invitado real en TODO
-// evento de Google Calendar que este archivo cree (cita nueva o
-// reprogramada, que acá siempre se implementa como crear+borrar, ver
-// ejecutarCreacionReal/ejecutarReprogramacionReal más abajo) -- es la
-// "copia" real que la dueña de esta cuenta necesita ver en su propio
-// calendario, sin depender de que acepte la invitación. Cancelar una cita
-// borra el evento que ya tenía este invitado, así que Google le notifica la
-// cancelación solo, sin ningún paso adicional acá. Exclusivo de AMORE (este
-// archivo entero ya está tenant-gateado arriba) -- nunca afecta a otro tenant.
-export const CORREO_INVITADO_FIJO_AMORE = "Amoresalon34@gmail.com";
-
+// Los eventos de AMORE se crean SIN invitados: desde la migración de la cuenta principal (2026-10-06) los calendarios de las profesionales pertenecen a la cuenta
+// de la dueña (amoresalon34), así que ve cada cita directo en su calendario, ya aceptada. Antes los calendarios eran de otra cuenta y se le agregaba como
+// invitada fija, lo que le llegaba como una invitación «en espera».
 export type MotivoRechazoCitaNylas =
   | "tenant_no_autorizado"
   | "servicio_no_encontrado"
@@ -238,7 +230,6 @@ async function ejecutarCreacionReal(
       startUnix: Math.floor(params.inicio.getTime() / 1000),
       endUnix: Math.floor(fin.getTime() / 1000),
       timezone: "America/Bogota",
-      participants: [{ email: CORREO_INVITADO_FIJO_AMORE }],
     });
     nylasEventId = creado.id;
   } catch (err) {
@@ -528,7 +519,6 @@ async function ejecutarActualizacionReal(
       startUnix: Math.floor(params.nuevoInicio.getTime() / 1000),
       endUnix: Math.floor(nuevoFin.getTime() / 1000),
       timezone: "America/Bogota",
-      participants: [{ email: CORREO_INVITADO_FIJO_AMORE }],
     });
     nylasEventIdNuevo = creado.id;
   } catch (err) {
