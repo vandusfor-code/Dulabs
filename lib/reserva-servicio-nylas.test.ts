@@ -538,12 +538,14 @@ describe("22. Evento creado en el calendar_id correcto", () => {
   });
 });
 
-describe("Invitado fijo de AMORE (autorizado) -- Amoresalon34@gmail.com SIEMPRE como participante real del evento", () => {
-  it("toda cita NUEVA incluye a Amoresalon34@gmail.com como invitado, sin excepción", async () => {
-    let participantesCapturados: { email: string; name?: string }[] | undefined;
+describe("Sin invitados (migración a la cuenta de la dueña, 2026-10-06) -- los eventos de AMORE ya no llevan participantes", () => {
+  it("toda cita NUEVA se crea SIN invitados (la dueña ve la cita directo en su calendario, no una invitación «en espera»)", async () => {
+    let participantesCapturados: { email: string; name?: string }[] | undefined = [{ email: "centinela@example.com" }];
+    let llamadas = 0;
     const supabase = crearSupabaseFalso(construirTablas());
     const write: NylasEventsWriteClient = {
       async createEvent(params) {
+        llamadas++;
         participantesCapturados = params.participants;
         return { id: "evt-1" };
       },
@@ -555,11 +557,12 @@ describe("Invitado fijo de AMORE (autorizado) -- Amoresalon34@gmail.com SIEMPRE 
       { nylasReadClient: mockNylasRead(), nylasWriteClient: write, grantId: "grant-amore" },
     );
     assert.equal(resultado.ok, true);
-    assert.deepEqual(participantesCapturados, [{ email: "Amoresalon34@gmail.com" }]);
+    assert.equal(llamadas, 1);
+    assert.equal(participantesCapturados, undefined, "el evento no lleva ningún invitado");
   });
 
-  it("una cita REPROGRAMADA (crea evento nuevo + borra el viejo) también incluye el correo fijo en el evento NUEVO", async () => {
-    let participantesCapturados: { email: string; name?: string }[] | undefined;
+  it("una cita REPROGRAMADA (crea evento nuevo + borra el viejo) tampoco lleva invitados en el evento NUEVO", async () => {
+    let participantesCapturados: { email: string; name?: string }[] | undefined = [{ email: "centinela@example.com" }];
     const supabase = crearSupabaseFalso(construirTablas({ citas: [{ ...CITA_EXISTENTE_BASE }] }));
     const write: NylasEventsWriteClient = {
       async createEvent(params) {
@@ -574,7 +577,7 @@ describe("Invitado fijo de AMORE (autorizado) -- Amoresalon34@gmail.com SIEMPRE 
       { nylasReadClient: mockNylasRead(), nylasWriteClient: write, grantId: "grant-amore", nylasEventIdActual: "evt-viejo-1" },
     );
     assert.equal(resultado.ok, true);
-    assert.deepEqual(participantesCapturados, [{ email: "Amoresalon34@gmail.com" }]);
+    assert.equal(participantesCapturados, undefined);
   });
 });
 

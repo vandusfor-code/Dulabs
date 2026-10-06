@@ -25,7 +25,7 @@ import { AMORE_TENANT_ID, phoneNumberIdWhatsappQr } from "@/lib/nylas/nylas-gran
 import { resolverCalendarIdNylasDeEspecialista } from "@/lib/nylas/nylas-calendario-especialista";
 import { guardarNylasEventIdDeCita, obtenerNylasEventIdDeCita } from "@/lib/agenda-v2/citas-nylas";
 import { obtenerNombresServiciosDeCita } from "@/lib/agenda-v2/multi-servicio";
-import { CORREO_INVITADO_FIJO_AMORE, construirDescripcionEvento, crearCitaConNylas, type ResultadoCrearCitaNylas } from "@/lib/reserva-servicio-nylas";
+import { construirDescripcionEvento, crearCitaConNylas, type ResultadoCrearCitaNylas } from "@/lib/reserva-servicio-nylas";
 import { enviarConfirmacionReservaWhatsApp, notificarNuevaCitaProfesional } from "@/lib/reserva-notificaciones-whatsapp";
 import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { borrarEventoDeCita, type DepsMiCita } from "@/lib/mi-cita/gestion";
@@ -123,7 +123,6 @@ async function conEventoSincronizado(
       startUnix: Math.floor(destino.inicio.getTime() / 1000),
       endUnix: Math.floor(destino.fin.getTime() / 1000),
       timezone: "America/Bogota",
-      participants: [{ email: CORREO_INVITADO_FIJO_AMORE }],
     });
     eventoNuevo = creado.id;
   } catch (err) {
