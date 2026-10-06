@@ -10,9 +10,31 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Fila = Record<string, unknown>;
 export type TablasEnMemoria = Record<string, Fila[]>;
+/** Un error de base de datos como lo devolvería PostgREST (code de Postgres + mensaje). */
+export interface ErrorBd {
+  code: string;
+  message: string;
+}
+/**
+ * Restricción de una tabla (clave única, EXCLUDE...). Recibe las filas actuales, la fila que quedaría y la operación; devuelve el error de Postgres que
+ * produciría, o null si la cumple. En un update, 'objetivo' es la fila que se está cambiando (para ignorarla a sí misma).
+ */
+export type RestriccionTabla = (existentes: Fila[], candidata: Fila, operacion: "insert" | "update", objetivo?: Fila) => ErrorBd | null;
+
 export interface OpcionesSupabaseEnMemoria {
   /** Valores por defecto por tabla, aplicados en cada insert (equivalen a los DEFAULT de las migraciones). */
   defaults?: Record<string, Fila | (() => Fila)>;
+  /**
+   * Restricciones por tabla (opcional, aditivo: sin esto el helper se comporta exactamente como siempre). Un insert/update que la viole NO escribe nada y
+   * devuelve { data: null, error }, igual que Postgres (p. ej. 23505 clave única, 23P01 solape EXCLUDE).
+   */
+  restricciones?: Record<string, RestriccionTabla>;
+}
+
+class ErrorRestriccion extends Error {
+  constructor(readonly error: ErrorBd) {
+    super(error.message);
+  }
 }
 
 type Filtro = (fila: Fila) => boolean;
@@ -43,7 +65,7 @@ function parsearOr(expresion: string): Filtro {
   return (f) => condiciones.some((c) => c(f));
 }
 
-class Consulta implements PromiseLike<{ data: unknown; error: null }> {
+class Consulta implements PromiseLike<{ data: unknown; error: ErrorBd | null }> {
   private filtros: Filtro[] = [];
   /** Varias llamadas a order() se aplican en secuencia (ORDER BY a, b), igual que PostgREST. */
   private ordenes: { columna: string; ascendente: boolean; nulosPrimero: boolean }[] = [];
@@ -54,6 +76,7 @@ class Consulta implements PromiseLike<{ data: unknown; error: null }> {
   constructor(
     private readonly filas: Fila[],
     private readonly nuevaFila: (fila: Fila) => Fila,
+    private readonly restriccion?: RestriccionTabla,
   ) {}
 
   /** Las columnas se ignoran a propósito: devuelve filas completas (los consumidores reales solo leen campos existentes). */
@@ -128,6 +151,13 @@ class Consulta implements PromiseLike<{ data: unknown; error: null }> {
     const op = this.operacion;
     if (op.tipo === "insert") {
       const nuevas = op.filas.map((f) => this.nuevaFila(f));
+      // Todo o nada (como un INSERT de varias filas en Postgres): si una viola la restricción, no se escribe ninguna.
+      const aceptadas: Fila[] = [];
+      for (const n of nuevas) {
+        const error = this.restriccion?.([...this.filas, ...aceptadas], n, "insert");
+        if (error) throw new ErrorRestriccion(error);
+        aceptadas.push(n);
+      }
       this.filas.push(...nuevas);
       return nuevas.map((f) => ({ ...f }));
     }
@@ -143,6 +173,10 @@ class Consulta implements PromiseLike<{ data: unknown; error: null }> {
     }
     if (op.tipo === "update") {
       const afectadas = this.filtradas();
+      for (const f of afectadas) {
+        const error = this.restriccion?.(this.filas.filter((x) => x !== f), { ...f, ...op.cambios }, "update", f);
+        if (error) throw new ErrorRestriccion(error);
+      }
       for (const f of afectadas) Object.assign(f, op.cambios);
       return afectadas.map((f) => ({ ...f }));
     }
@@ -176,24 +210,42 @@ class Consulta implements PromiseLike<{ data: unknown; error: null }> {
   }
 
   async maybeSingle() {
-    const filas = this.ejecutar();
+    let filas: Fila[];
+    try {
+      filas = this.ejecutar();
+    } catch (e) {
+      if (e instanceof ErrorRestriccion) return { data: null, error: e.error };
+      throw e;
+    }
     if (filas.length > 1) throw new Error("[supabase-en-memoria] maybeSingle() con más de una fila");
     return { data: filas[0] ?? null, error: null };
   }
 
   async single() {
-    const filas = this.ejecutar();
+    let filas: Fila[];
+    try {
+      filas = this.ejecutar();
+    } catch (e) {
+      if (e instanceof ErrorRestriccion) return { data: null, error: e.error };
+      throw e;
+    }
     if (filas.length !== 1) return { data: null, error: { message: `single() con ${filas.length} filas`, code: "PGRST116" } };
     return { data: filas[0]!, error: null };
   }
 
-  then<R1 = { data: unknown; error: null }, R2 = never>(
-    onfulfilled?: ((value: { data: unknown; error: null }) => R1 | PromiseLike<R1>) | null,
+  then<R1 = { data: unknown; error: ErrorBd | null }, R2 = never>(
+    onfulfilled?: ((value: { data: unknown; error: ErrorBd | null }) => R1 | PromiseLike<R1>) | null,
     onrejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
   ): PromiseLike<R1 | R2> {
-    const filas = this.ejecutar();
+    let filas: Fila[];
+    try {
+      filas = this.ejecutar();
+    } catch (e) {
+      if (e instanceof ErrorRestriccion) return Promise.resolve({ data: null as unknown, error: e.error as ErrorBd | null }).then(onfulfilled, onrejected);
+      throw e;
+    }
     const data = this.operacion.tipo === "select" || this.devolverFilas ? filas : null;
-    return Promise.resolve({ data: data as unknown, error: null as null }).then(onfulfilled, onrejected);
+    return Promise.resolve({ data: data as unknown, error: null as ErrorBd | null }).then(onfulfilled, onrejected);
   }
 }
 
@@ -209,7 +261,7 @@ export function crearSupabaseEnMemoria(tablas: TablasEnMemoria, opciones: Opcion
         const ahora = new Date().toISOString();
         return { id: siguienteId++, created_at: ahora, updated_at: ahora, ...base, ...fila };
       };
-      return new Consulta(filas, nuevaFila);
+      return new Consulta(filas, nuevaFila, opciones.restricciones?.[tabla]);
     },
   } as unknown as SupabaseClient;
 }

@@ -2,6 +2,10 @@ import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { planDelTenant } from "@/lib/plan-limits";
 import { listarHorariosDisponiblesPorServicio } from "@/lib/disponibilidad-servicio";
+// AMORE: la disponibilidad del portal es la REAL (jornada + bloqueos + citas + Google Calendar), la misma que usan el chat y el panel.
+import { listarHorariosDisponiblesPorServicioConNylas } from "@/lib/disponibilidad-servicio-nylas";
+import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
+import { depsProduccionMiCita } from "@/lib/mi-cita/gestion";
 
 export const runtime = "nodejs";
 
@@ -30,6 +34,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const supabase = supabaseAdmin();
   const plan = await planDelTenant(supabase, tenant);
   if (plan.id === "sin_plan") return Response.json({ especialistas: [] });
+
+  if (tenant === AMORE_TENANT_ID) {
+    // Sin integración de calendario no se ofrece ningún horario (nunca disponibilidad a ciegas: la reserva se rechazaría igual).
+    const nylas = depsProduccionMiCita(supabase).nylas;
+    if (!nylas) return Response.json({ especialistas: [] });
+    const real = await listarHorariosDisponiblesPorServicioConNylas(supabase, { idTenant: tenant, servicioId, fecha, especialistaId }, { nylasClient: nylas.read, grantId: nylas.grantId });
+    if (!real.ok) return Response.json({ especialistas: [] });
+    return Response.json({ servicio: real.servicio, especialistas: real.especialistas });
+  }
 
   const resultado = await listarHorariosDisponiblesPorServicio(supabase, { idTenant: tenant, servicioId, fecha, especialistaId });
   if (!resultado.ok) return Response.json({ especialistas: [] });

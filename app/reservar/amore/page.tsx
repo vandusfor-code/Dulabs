@@ -53,7 +53,7 @@ type Seleccion = {
   hora: string | null;
 };
 
-type ResultadoExito = { codigo: string; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number };
+type ResultadoExito = { codigo: string; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number; enlaceGestion?: string | null };
 
 const SELECCION_VACIA: Seleccion = { servicioId: null, especialistaId: null, especialistaNombre: null, fecha: null, hora: null };
 const DATOS_VACIOS: DatosClienteAmore = { nombre: "", telefono: "", cumpleDia: "", cumpleMes: "" };

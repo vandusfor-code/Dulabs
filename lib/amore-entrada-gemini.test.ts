@@ -47,7 +47,7 @@ describe("Textos exactos pedidos", () => {
 
   it("MENSAJE_GEMINI_BIENVENIDA / MENSAJE_TRANSICION_AGENDA", () => {
     assert.equal(MENSAJE_GEMINI_BIENVENIDA, "Claro 💗 Cuéntame, ¿qué te gustaría saber?");
-    assert.equal(MENSAJE_TRANSICION_AGENDA, "Perfecto 💗 Vamos a agendar tu cita.");
+    assert.equal(MENSAJE_TRANSICION_AGENDA, "Perfecto 💗 Vamos a agendar tu cita."); // constante conservada; ya no se envía (la reserva por chat se retiró)
   });
 
   it("MENSAJE_ATENCION_HUMANA_CLIENTE -- texto exacto pedido", () => {

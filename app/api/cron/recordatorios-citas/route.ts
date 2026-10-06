@@ -21,6 +21,7 @@ type CitaPendienteRecordatorio = {
   nombre_cliente: string;
   servicio: string;
   inicio: string;
+  fin?: string;
 };
 
 export interface DepsEjecutarRecordatorios {
@@ -96,7 +97,7 @@ export async function ejecutarRecordatoriosCitas(deps: DepsEjecutarRecordatorios
 
   let consulta = supabase
     .from("dulabs_citas_especialista")
-    .select("id, id_tenant, especialista_id, phone_number_id, telefono_cliente, nombre_cliente, servicio, inicio")
+    .select("id, id_tenant, especialista_id, phone_number_id, telefono_cliente, nombre_cliente, servicio, inicio, fin")
     .eq("estado", "confirmada")
     .eq("recordatorio_enviado", false)
     .not("telefono_cliente", "is", null)

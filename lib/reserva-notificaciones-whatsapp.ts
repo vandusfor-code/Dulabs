@@ -3,6 +3,7 @@ import { enviarWhatsApp } from "@/lib/whatsapp-outbound";
 import { normalizarTelefono } from "@/lib/marketplace-store";
 import type { ClienteConfig } from "@/lib/supabase";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
+import { textoEnlaceGestion } from "@/lib/mi-cita/mensajes";
 
 /**
  * FASE FINAL (autorizado) — los dos mensajes de WhatsApp que siguen a una
@@ -26,9 +27,11 @@ import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 export type ResultadoNotificacionReserva = { enviado: true } | { enviado: false; motivo: "sin_cliente" | "sin_telefono" | "error" };
 
 /** Función PURA -- construye el texto del mensaje 1 (confirmación). Nunca recibe datos inventados: todo viene de la cita/servicio/especialista reales ya creados. */
-export function construirMensajeConfirmacionReserva(params: { servicio: string; profesional: string; inicioISO: string }): string {
+export function construirMensajeConfirmacionReserva(params: { servicio: string; profesional: string; inicioISO: string; enlaceGestion?: string | null }): string {
   const fechaHora = formatearFechaHoraColombia(params.inicioISO);
-  return `¡Tu cita ha sido confirmada! 💗\n\nTe esperamos el ${fechaHora}.\n\n📌 Servicio: ${params.servicio}\n💅 Profesional: ${params.profesional}\n\n¡Gracias por elegirnos! ✨`;
+  // AMORE «Mi cita»: si la cita tiene enlace personal, la confirmación lo lleva (junto a cómo usarlo). Sin él (otros negocios, o si no se pudo emitir) el texto es el de siempre.
+  const gestion = params.enlaceGestion ? `\n\n${textoEnlaceGestion(params.enlaceGestion)}` : "";
+  return `¡Tu cita ha sido confirmada! 💗\n\nTe esperamos el ${fechaHora}.\n\n📌 Servicio: ${params.servicio}\n💅 Profesional: ${params.profesional}${gestion}\n\n¡Gracias por elegirnos! ✨`;
 }
 
 /** Texto fijo del mensaje 2 -- es una política del negocio, no un dato de la cita puntual. Se envía INMEDIATAMENTE después del mensaje 1, nunca programado. */
@@ -60,7 +63,7 @@ export async function enviarConfirmacionReservaWhatsApp(
   supabase: SupabaseClient,
   idTenant: string,
   telefonoClienteCrudo: string,
-  cita: { servicio: string; profesional: string; inicioISO: string }
+  cita: { servicio: string; profesional: string; inicioISO: string; enlaceGestion?: string | null }
 ): Promise<ResultadoNotificacionReserva> {
   try {
     const telefono = normalizarTelefono(telefonoClienteCrudo);

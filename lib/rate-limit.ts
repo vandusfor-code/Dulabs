@@ -44,6 +44,8 @@ export const LIMITES_TASA = {
   catalogoPaginaIp: { ventanaSeg: 60, limite: 600 },
   catalogoBusquedaIp: { ventanaSeg: 60, limite: 120 },
   catalogoBusquedaCatalogo: { ventanaSeg: 60, limite: 3000 },
+  // AMORE «Mi cita» (lib/mi-cita/rutas.ts) -- por ENLACE (hash del token): protege la cuota de Nylas/Google Calendar de un enlace que se refresque o se abuse.
+  miCita: { ventanaSeg: 60, limite: 60 },
 } as const;
 
 export type CategoriaLimiteTasa = keyof typeof LIMITES_TASA;

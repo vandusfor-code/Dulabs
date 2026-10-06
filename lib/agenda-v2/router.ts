@@ -121,6 +121,9 @@ import {
   type CitaParaMenu,
 } from "@/lib/agenda-v2/gestion-citas";
 import { renderizarResumenCambio } from "@/lib/agenda-v2/confirmacion";
+// AMORE: las citas NUEVAS se reservan SOLO por el enlace; el chat conserva consultar / cancelar / reprogramar y ofrece el enlace personal «Mi cita».
+import { MENSAJE_RESERVA_POR_ENLACE, MENSAJE_SIN_CITAS_CON_ENLACE } from "@/lib/mi-cita/mensajes";
+import { sufijoEnlaceParaChat } from "@/lib/mi-cita/chat";
 import { guardarNylasEventIdDeCita, obtenerNylasEventIdDeCita, borrarNylasEventIdDeCita } from "@/lib/agenda-v2/citas-nylas";
 // NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- la IA
 // (lib/amore-entrada-gemini.ts) solo extrae texto crudo de lo que dijo la
@@ -194,6 +197,13 @@ export interface AgendaV2RouterDeps {
   guardarNylasEventIdDeCita?: typeof guardarNylasEventIdDeCita;
   obtenerNylasEventIdDeCita?: typeof obtenerNylasEventIdDeCita;
   borrarNylasEventIdDeCita?: typeof borrarNylasEventIdDeCita;
+  /**
+   * AMORE: las citas NUEVAS ya NO se reservan por el chat (solo por el enlace del portal). Esto existe ÚNICAMENTE para las pruebas del flujo antiguo de reserva
+   * guiada (que sigue en el código porque la reprogramación reutiliza sus pasos). NUNCA se activa en producción.
+   */
+  permitirReservaPorChat?: boolean;
+  /** AMORE «Mi cita»: línea con el enlace personal de la cita que el bot está gestionando (default real: lib/mi-cita/chat.ts). Solo para AMORE. */
+  sufijoEnlaceCita?: (supabase: SupabaseClient, idTenant: string, cita: { id: number; fin: string }) => Promise<string>;
   /** Respuesta conversacional (IA con los datos REALES del negocio) a una pregunta hecha a mitad de la reserva. `null` = no se pudo responder. Default real: solo AMORE (ver responderConsultaAmoreEnReserva). */
   /** Profesionales activas del salón (para reconocer un nombre dicho antes de elegir servicio). Default real: especialistasActivasDelTenant. */
   listarEspecialistasActivas?: typeof especialistasActivasDelTenant;
@@ -266,6 +276,15 @@ export async function iniciarNuevaSesionAgendaV2(
   const cargarCatalogo = deps.cargarCatalogoReal ?? listarCatalogoServiciosReal;
   const crearSesion = deps.crearSesion ?? crearSesionAgendaV2;
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+
+  // AMORE: las citas NUEVAS ya NO se reservan por el chat. Este es el ÚNICO punto por el que entran las tres vías de reserva guiada (opción «1», frases como «quiero una
+  // cita» y la clasificación de la IA) y el registro de clientas nuevas que las precedía: aquí se conduce a la clienta al enlace del portal (donde elige servicio,
+  // profesional y horario con la disponibilidad real) y no se crea ninguna sesión, ni se consulta disponibilidad, ni se toca Nylas. Cancelar, reprogramar y
+  // consultar NO pasan por aquí: siguen funcionando por el chat (ver iniciarGestionCitas...).
+  if (params.idTenant === AMORE_TENANT_ID && !deps.permitirReservaPorChat) {
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_RESERVA_POR_ENLACE, origen: "automatico" });
+    return;
+  }
 
   // FASE 2 (autorizado, registro de clientes nuevos) -- EXCLUSIVO de AMORE:
   // antes de mostrar categorías, comprueba si esta clienta ya existe en
@@ -651,6 +670,24 @@ async function iniciarRegistroCliente(
   await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_REGISTRO_NOMBRE, origen: "automatico" });
 }
 
+/** AMORE «Mi cita»: ¿esta sesión es de una reserva NUEVA guiada (no una gestión ni una reprogramación)? Una reprogramación siempre tiene la cita objetivo fijada. */
+function esSesionDeReservaNueva(sesion: { citaObjetivoId?: number | null; step: string }): boolean {
+  return !sesion.citaObjetivoId && !sesion.step.startsWith("SG_");
+}
+
+/** AMORE «Mi cita»: la línea con el enlace personal de la cita (vacía para cualquier otro negocio o si no se pudo emitir). Nunca lanza. */
+async function sufijoEnlaceCitaAmore(supabase: SupabaseClient, idTenant: string, cita: { id: number; fin: string }, deps: AgendaV2RouterDeps): Promise<string> {
+  if (idTenant !== AMORE_TENANT_ID) return "";
+  try {
+    return await (deps.sufijoEnlaceCita ?? sufijoEnlaceParaChat)(supabase, idTenant, cita);
+  } catch {
+    return "";
+  }
+}
+
+/** Cuando la clienta pide gestionar una cita y no hay ninguna a su número: AMORE ofrece el enlace personal / el de reserva; el resto de negocios, el texto de siempre. */
+const mensajeSinCitas = (idTenant: string): string => (idTenant === AMORE_TENANT_ID ? MENSAJE_SIN_CITAS_CON_ENLACE : MENSAJE_SIN_CITAS_FUTURAS);
+
 /**
  * NUEVA FASE (autorizado, reconocimiento semántico/contextual de
  * CANCELAR_CITA/REPROGRAMAR_CITA) -- entrega el control a la MISMA gestión
@@ -732,7 +769,7 @@ export async function iniciarGestionCitasAgendaV2(
       await enviarMensajeDep({
         tenantId: params.idTenant,
         telefono: params.telefono,
-        mensaje: renderizarConsultaCita({ ...datos, duracionMin, precio: servicioCatalogo.precio, estado: cita.estado }),
+        mensaje: renderizarConsultaCita({ ...datos, duracionMin, precio: servicioCatalogo.precio, estado: cita.estado }) + (await sufijoEnlaceCitaAmore(params.supabase, params.idTenant, cita, deps)),
         origen: "automatico",
       });
       return;
@@ -757,7 +794,7 @@ export async function iniciarGestionCitasAgendaV2(
           opcionesMostradas: opciones,
         });
       }
-      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionCancelar(datos), origen: "automatico" });
+      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionCancelar(datos) + (await sufijoEnlaceCitaAmore(params.supabase, params.idTenant, cita, deps)), origen: "automatico" });
       return;
     }
 
@@ -780,7 +817,7 @@ export async function iniciarGestionCitasAgendaV2(
         opcionesMostradas: opcionesReprogramar,
       });
     }
-    await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionReprogramarInicio(datos), origen: "automatico" });
+    await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionReprogramarInicio(datos) + (await sufijoEnlaceCitaAmore(params.supabase, params.idTenant, cita, deps)), origen: "automatico" });
   }
 
   async function iniciarGestionCitas(accion: AccionGestionCitasDetectada): Promise<void> {
@@ -788,7 +825,7 @@ export async function iniciarGestionCitasAgendaV2(
     const citas = resultadoCitas.citas;
 
     if (citas.length === 0) {
-      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_SIN_CITAS_FUTURAS, origen: "automatico" });
+      await enviarMensajeDep({ tenantId: params.idTenant, telefono: params.telefono, mensaje: mensajeSinCitas(params.idTenant), origen: "automatico" });
       return;
     }
 
@@ -952,7 +989,7 @@ export async function procesarMensajeConAgendaV2(
           duracionMin,
           precio: servicioCatalogo.precio,
           estado: cita.estado,
-        }),
+        }) + (await sufijoEnlaceCitaAmore(params.supabase, params.idTenant, cita, deps)),
         origen: "automatico",
       });
       return { manejado: true };
@@ -977,7 +1014,7 @@ export async function procesarMensajeConAgendaV2(
           opcionesMostradas: opciones,
         });
       }
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionCancelar(datos), origen: "automatico" });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionCancelar(datos) + (await sufijoEnlaceCitaAmore(params.supabase, params.idTenant, cita, deps)), origen: "automatico" });
       return { manejado: true };
     }
 
@@ -1000,7 +1037,7 @@ export async function procesarMensajeConAgendaV2(
         opcionesMostradas: opcionesReprogramar,
       });
     }
-    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionReprogramarInicio(datos), origen: "automatico" });
+    await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: renderizarConfirmacionReprogramarInicio(datos) + (await sufijoEnlaceCitaAmore(params.supabase, params.idTenant, cita, deps)), origen: "automatico" });
     return { manejado: true };
   }
 
@@ -1010,7 +1047,7 @@ export async function procesarMensajeConAgendaV2(
     const citas = resultadoCitas.citas;
 
     if (citas.length === 0) {
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_SIN_CITAS_FUTURAS, origen: "automatico" });
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: mensajeSinCitas(params.idTenant), origen: "automatico" });
       return { manejado: true };
     }
 
@@ -1061,6 +1098,14 @@ export async function procesarMensajeConAgendaV2(
     // Sección 14 del pedido -- mismo wamid ya procesado por esta sesión
     // (incluida la que la creó): nunca se reprocesa ni se reenvía nada.
     if (sesion && sesion.ultimoWamidProcesado === params.wamid) {
+      return { manejado: true };
+    }
+
+    // AMORE: una sesión de reserva NUEVA que quedó abierta (p. ej. la clienta iba a mitad de la reserva cuando se dejó de reservar por el chat) ya no se continúa:
+    // se cierra y se le da el enlace. Las gestiones (cancelar / reprogramar / consultar) y las reprogramaciones en curso NO se tocan.
+    if (sesion && params.idTenant === AMORE_TENANT_ID && !deps.permitirReservaPorChat && esSesionDeReservaNueva(sesion)) {
+      await cerrarSesion(params.supabase, sesion.id);
+      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_RESERVA_POR_ENLACE, origen: "automatico" });
       return { manejado: true };
     }
 

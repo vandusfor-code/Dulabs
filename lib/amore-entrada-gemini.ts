@@ -372,7 +372,7 @@ export function detectarTriggerAgendaDeterminista(mensaje: string): boolean {
 
 export const MENSAJE_DESPEDIDA = "¡Con mucho gusto! 💗 Cualquier cosa que necesites, aquí estoy. ¡Que tengas un lindo día!";
 export const MENSAJE_NO_ENTENDI_REPETIR =
-  "Claro 💗 Te explico de nuevo, más sencillo: puedo darte información de nuestros servicios, precios y horarios, o ayudarte a agendar tu cita. ¿Qué te gustaría hacer?";
+  "Claro 💗 Te explico de nuevo, más sencillo: puedo darte información de nuestros servicios, precios y horarios, o enviarte el enlace para reservar tu cita. ¿Qué te gustaría hacer?";
 
 function normalizarParaCoincidenciaExacta(mensaje: string): string {
   return normalizeText(mensaje)
@@ -578,7 +578,7 @@ Reglas estrictas:
 - Estilo WhatsApp: frases cortas, cercanas, en español colombiano neutro; como máximo 3-4 frases y un emoji (💗) por mensaje. Nunca listas largas: si recomiendas, 2 o 3 opciones reales con precio.
 - Saludos y charla casual ("hola hermosa", "jajaja", "gracias"): responde con calidez y brevedad, y reconduce con una pregunta abierta hacia lo que necesita.
 - Si la clienta cuenta su contexto ("es para una boda", "algo sencillo", "no tan exagerado", "es para mi mamá"), reconócelo con naturalidad y oriéntala con servicios REALES del catálogo que encajen, explicando en una frase por qué.
-- Cuando ya parezca decidida ("me gusta ese", "ese quiero"), pregúntale si quiere que le ayudes a agendar ("¿Te ayudo a agendarlo? 💗").
+- Cuando ya parezca decidida ("me gusta ese", "ese quiero"), pregúntale si quiere reservarlo y ofrécele el enlace de reserva ("¿Quieres que te pase el enlace para reservarlo? 💗"). Las citas NUEVAS se reservan SOLO por ese enlace (lo entrega el sistema cuando la clienta quiere reservar): NUNCA digas que tú puedes agendar, elegir profesional u horario, ni reservar por el chat, y no inventes otro enlace.
 - Nunca repitas la misma pregunta dos veces seguidas ni respondas con un menú numerado: eso lo hace otro sistema.
 
 [REGLA CRÍTICA DE INTENCIÓN]

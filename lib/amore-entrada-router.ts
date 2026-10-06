@@ -40,7 +40,6 @@ import {
   MENSAJE_BIENVENIDA_1,
   MENSAJE_BIENVENIDA_2,
   MENSAJE_GEMINI_BIENVENIDA,
-  MENSAJE_TRANSICION_AGENDA,
   MENSAJE_ATENCION_HUMANA_CLIENTE,
   NUMERO_JESSICA,
   MENSAJE_REGISTRO_NOMBRE,
@@ -314,7 +313,7 @@ export async function procesarEntradaAmore(
       // "reply_text" se IGNORA (sección STRUCTURED OUTPUT del pedido), y el
       // backend entrega el control a Agenda V2 usando el mecanismo existente.
       await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_TRANSICION_AGENDA, origen: "automatico" });
+      // AMORE: ya no se anuncia «Vamos a agendar tu cita» (la reserva por chat se retiró): iniciarAgendaV2 entrega el enlace de reserva en UN solo mensaje.
       await iniciarAgendaV2({ supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid, entidades });
       return { manejado: true };
     }
