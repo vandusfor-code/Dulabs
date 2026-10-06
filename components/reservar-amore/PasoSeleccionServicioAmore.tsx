@@ -1,28 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Check, ChevronRight, ShieldCheck, Hand, Footprints, Eye, Smile, Sparkles, Clock } from "lucide-react";
-import { playfairDisplay } from "@/lib/fonts-portal-amore";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Clock, Eye, Footprints, Hand, Smile, Sparkles, X } from "lucide-react";
 import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
-import { PortalHeaderAmore } from "./PortalHeaderAmore";
-import { AMORE, serifAmore } from "./tema";
+import { alternarServicio, categoriaDelServicio, ordenarCategorias, resumirServicios, serviciosDeIds, type ServicioDelPortal } from "@/lib/reservar-amore-servicios";
+import { ContinuarAmore, MarcoPasoAmore } from "./MarcoPasoAmore";
+import { formatearDuracion } from "./formato";
+import { AMORE } from "./tema";
 
-// AMORE (Fase 3 del portal, autorizado) — SOLO esta pantalla ("Selecciona
-// tu servicio"). Consumidor puro de los `servicios` que ya trae el GET de
-// /api/reservar/[tenant] (catálogo real de AMORE cargado en la Fase 1 --
-// cero datos inventados). Seleccionar acá NO dispara nada por sí solo: el
-// botón "Continuar" llama a `onElegir`, el MISMO handler que ya existe en
-// app/reservar/amore/page.tsx.
-
-type Servicio = {
-  id: string;
-  nombre: string;
-  categoria: string | null;
-  descripcion: string | null;
-  duracion_min: number;
-  precio: number | null;
-  imagen_url: string | null;
-};
+// AMORE (portal) — paso 1, «Elige tus servicios». Consumidor puro de los `servicios` que ya trae el GET de /api/reservar/[tenant] (catálogo real de AMORE).
+// La clienta puede marcar VARIOS servicios para una misma cita (ej. uñas de manos + uñas de pies; hasta `maxServicios`, que manda el servidor), incluso de
+// categorías distintas: la selección vive en la página (`seleccionIds`) y no se pierde al cambiar de categoría ni al volver desde otro paso. Marcar no dispara
+// nada por sí solo: «Continuar» llama a `onContinuar` y el backend vuelve a validar todo (que UNA misma profesional haga todos, la disponibilidad, etc.).
 
 function iconoParaCategoria(categoria: string) {
   const c = categoria.toLowerCase();
@@ -33,144 +22,179 @@ function iconoParaCategoria(categoria: string) {
   return Sparkles;
 }
 
-function formatearDuracion(min: number): string {
-  if (min < 60) return `${min} min`;
-  const horas = Math.floor(min / 60);
-  const minutos = min % 60;
-  return minutos === 0 ? `${horas} h` : `${horas} h ${minutos} min`;
-}
-
-function PasoIndicador({ activo, completado, numero, label }: { activo: boolean; completado: boolean; numero: number; label: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1.5">
-      <div
-        className="flex size-8 items-center justify-center rounded-full text-[13px] font-semibold"
-        style={
-          activo || completado
-            ? { backgroundColor: AMORE.burdeos, color: "#fff" }
-            : { backgroundColor: "#fff", color: AMORE.textoSecundario, border: `1px solid ${AMORE.borde}` }
-        }
-      >
-        {completado ? <Check className="size-3.5" strokeWidth={2.5} /> : numero}
-      </div>
-      <span className="text-center text-[10px] font-medium leading-tight" style={{ color: activo || completado ? AMORE.texto : AMORE.textoSecundario }}>
-        {label}
-      </span>
-    </div>
-  );
-}
-
 export function PasoSeleccionServicioAmore({
   negocio,
   servicios,
-  onElegir,
+  seleccionIds,
+  maxServicios,
+  onCambiarSeleccion,
+  onContinuar,
   onVolver,
 }: {
   negocio: string;
-  servicios: Servicio[];
-  onElegir: (s: Servicio) => void;
+  servicios: ServicioDelPortal[];
+  seleccionIds: string[];
+  maxServicios: number;
+  onCambiarSeleccion: (ids: string[]) => void;
+  onContinuar: () => void;
   onVolver: () => void;
 }) {
-  const categorias = useMemo(() => {
-    const vistas: string[] = [];
-    for (const s of servicios) {
-      const c = s.categoria?.trim() || "Otros";
-      if (!vistas.includes(c)) vistas.push(c);
-    }
-    return vistas;
-  }, [servicios]);
+  const categorias = useMemo(() => ordenarCategorias(servicios), [servicios]);
+  const elegidos = useMemo(() => serviciosDeIds(seleccionIds, servicios), [seleccionIds, servicios]);
+  const resumen = useMemo(() => resumirServicios(elegidos), [elegidos]);
 
-  const [categoriaActiva, setCategoriaActiva] = useState<string | null>(categorias[0] ?? null);
-  const [servicioSeleccionadoId, setServicioSeleccionadoId] = useState<string | null>(null);
+  // Al abrir (o al volver desde otro paso) se muestra la categoría del primer servicio ya elegido; si no hay ninguno, la primera.
+  const [categoriaActiva, setCategoriaActiva] = useState<string | null>(() => (elegidos[0] ? categoriaDelServicio(elegidos[0]) : null));
+  const categoriaActual = categoriaActiva && categorias.includes(categoriaActiva) ? categoriaActiva : (categorias[0] ?? null);
 
-  const serviciosDeCategoria = useMemo(
-    () => servicios.filter((s) => (s.categoria?.trim() || "Otros") === categoriaActiva),
-    [servicios, categoriaActiva]
+  const serviciosDeCategoria = useMemo(() => servicios.filter((s) => categoriaDelServicio(s) === categoriaActual), [servicios, categoriaActual]);
+  const marcadosPorCategoria = useMemo(() => {
+    const cuentas = new Map<string, number>();
+    for (const s of elegidos) cuentas.set(categoriaDelServicio(s), (cuentas.get(categoriaDelServicio(s)) ?? 0) + 1);
+    return cuentas;
+  }, [elegidos]);
+
+  // La categoría activa siempre queda a la vista dentro de la fila (que se desplaza de lado).
+  const chipActivoRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    chipActivoRef.current?.scrollIntoView?.({ inline: "center", block: "nearest" });
+  }, [categoriaActual]);
+
+  const limiteAlcanzado = elegidos.length >= maxServicios;
+
+  const categoriasUI = categorias.length > 0 && (
+    <div className="-mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Categorías de servicios">
+      {categorias.map((cat) => {
+        const Icono = iconoParaCategoria(cat);
+        const activa = cat === categoriaActual;
+        const marcados = marcadosPorCategoria.get(cat) ?? 0;
+        return (
+          <button
+            key={cat}
+            ref={activa ? chipActivoRef : undefined}
+            type="button"
+            role="tab"
+            aria-selected={activa}
+            onClick={() => setCategoriaActiva(cat)}
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-full pl-3.5 pr-3.5 text-[13px] font-medium"
+            style={activa ? { backgroundColor: AMORE.burdeos, color: "#fff", border: `1px solid ${AMORE.burdeos}` } : { backgroundColor: "#fff", color: AMORE.texto, border: `1px solid ${AMORE.borde}` }}
+          >
+            <Icono className="size-4" strokeWidth={1.6} />
+            <span className="whitespace-nowrap">{cat}</span>
+            {marcados > 0 && (
+              <span
+                className="flex size-[18px] items-center justify-center rounded-full text-[11px] font-semibold"
+                style={activa ? { backgroundColor: "#fff", color: AMORE.burdeos } : { backgroundColor: AMORE.burdeos, color: "#fff" }}
+                aria-label={`${marcados} elegidos`}
+              >
+                {marcados}
+              </span>
+            )}
+          </button>
+        );
+      })}
+      <span className="w-2 shrink-0" aria-hidden />
+    </div>
   );
 
-  const servicioSeleccionado = servicios.find((s) => s.id === servicioSeleccionadoId) ?? null;
+  const accion = (
+    <div>
+      {elegidos.length > 0 && (
+        <div className="-mx-4 mb-2.5 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Servicios elegidos">
+          {elegidos.map((s) => (
+            <span key={s.id} className="flex h-8 shrink-0 items-center gap-1 rounded-full pl-3 pr-1 text-[12.5px] font-medium" style={{ backgroundColor: AMORE.burdeosSuave, color: AMORE.texto }}>
+              <span className="max-w-[170px] truncate">{s.nombre}</span>
+              <button
+                type="button"
+                aria-label={`Quitar ${s.nombre}`}
+                onClick={() => onCambiarSeleccion(seleccionIds.filter((id) => id !== s.id))}
+                className="flex size-6 items-center justify-center rounded-full active:bg-black/10"
+              >
+                <X className="size-3.5" strokeWidth={2} />
+              </button>
+            </span>
+          ))}
+          <span className="w-2 shrink-0" aria-hidden />
+        </div>
+      )}
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1" aria-live="polite">
+          {elegidos.length === 0 ? (
+            <p className="text-[12.5px] leading-snug" style={{ color: AMORE.textoSecundario }}>
+              Elige uno o más servicios
+            </p>
+          ) : (
+            <>
+              <p className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
+                {resumen.cantidad === 1 ? "1 servicio" : `${resumen.cantidad} servicios`}
+              </p>
+              <p className="text-[12px]" style={{ color: AMORE.textoSecundario }}>
+                {formatearDuracion(resumen.duracionMin)}
+                {resumen.precioTotal != null && (
+                  <>
+                    {" · "}
+                    <span className="font-semibold" style={{ color: AMORE.burdeos }}>
+                      {formatearPrecioCop(resumen.precioTotal)}
+                    </span>
+                  </>
+                )}
+              </p>
+            </>
+          )}
+        </div>
+        <ContinuarAmore disabled={elegidos.length === 0} onClick={onContinuar} />
+      </div>
+    </div>
+  );
 
   return (
-    <div className={`relative min-h-screen w-full ${playfairDisplay.variable}`} style={{ backgroundColor: AMORE.fondo }}>
-      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col px-6 pb-9 pt-8">
-        <PortalHeaderAmore negocio={negocio} onVolver={onVolver} />
-
-        <div className="mt-6 flex w-full items-start justify-between">
-          <PasoIndicador activo completado={false} numero={1} label="Servicio" />
-          <div className="mt-3.5 h-px flex-1" style={{ backgroundColor: AMORE.borde }} />
-          <PasoIndicador activo={false} completado={false} numero={2} label="Profesional" />
-          <div className="mt-3.5 h-px flex-1" style={{ backgroundColor: AMORE.borde }} />
-          <PasoIndicador activo={false} completado={false} numero={3} label="Horario" />
-          <div className="mt-3.5 h-px flex-1" style={{ backgroundColor: AMORE.borde }} />
-          <PasoIndicador activo={false} completado={false} numero={4} label="Datos" />
-          <div className="mt-3.5 h-px flex-1" style={{ backgroundColor: AMORE.borde }} />
-          <PasoIndicador activo={false} completado={false} numero={5} label="Listo" />
-        </div>
-
-        <h1 className="mt-7 text-center text-[27px] font-semibold" style={{ ...serifAmore, color: AMORE.texto }}>
-          Selecciona tu servicio
-        </h1>
-        <p className="mt-1 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
-          Elige la categoría y el servicio que deseas.
+    <MarcoPasoAmore
+      negocio={negocio}
+      onVolver={onVolver}
+      paso={1}
+      titulo="Elige tus servicios"
+      subtitulo={maxServicios > 1 ? `Puedes combinar hasta ${maxServicios} en una misma cita, por ejemplo manos y pies.` : "Elige el servicio que deseas."}
+      superior={categoriasUI || undefined}
+      accion={servicios.length > 0 ? accion : undefined}
+    >
+      {servicios.length === 0 ? (
+        <p className="mt-6 text-center text-[14px]" style={{ color: AMORE.textoSecundario }}>
+          AMORE todavía no tiene servicios disponibles para reservar en línea.
         </p>
-
-        {servicios.length === 0 ? (
-          <p className="mt-10 text-center text-[14px]" style={{ color: AMORE.textoSecundario }}>
-            AMORE todavía no tiene servicios disponibles para reservar en línea.
-          </p>
-        ) : (
-          <>
-            <p className="mt-6 text-[11.5px] font-semibold uppercase tracking-wide" style={{ color: AMORE.texto }}>
-              Categoría
+      ) : (
+        <>
+          {limiteAlcanzado && maxServicios > 1 && (
+            <p className="mb-2.5 rounded-xl px-3 py-2 text-center text-[12px]" style={{ backgroundColor: AMORE.doradoSuave, color: AMORE.texto }}>
+              Llegaste al máximo de {maxServicios} servicios por cita. Quita uno para elegir otro.
             </p>
-            <div className="mt-2.5 flex gap-2.5 overflow-x-auto pb-1">
-              {categorias.map((cat) => {
-                const Icono = iconoParaCategoria(cat);
-                const activa = cat === categoriaActiva;
-                return (
+          )}
+          <ul className="flex flex-col gap-2.5" aria-label={categoriaActual ? `Servicios de ${categoriaActual}` : "Servicios"}>
+            {serviciosDeCategoria.map((s) => {
+              const marcado = seleccionIds.includes(s.id);
+              const bloqueado = !marcado && limiteAlcanzado;
+              return (
+                <li key={s.id}>
                   <button
-                    key={cat}
                     type="button"
+                    role="checkbox"
+                    aria-checked={marcado}
+                    aria-disabled={bloqueado}
                     onClick={() => {
-                      setCategoriaActiva(cat);
-                      setServicioSeleccionadoId(null);
+                      if (!bloqueado) onCambiarSeleccion(alternarServicio(seleccionIds, s.id, maxServicios));
                     }}
-                    className="flex shrink-0 flex-col items-center gap-1.5 rounded-2xl px-4 py-3"
-                    style={{ backgroundColor: activa ? AMORE.burdeosSuave : "#fff", border: `1px solid ${activa ? AMORE.burdeos : AMORE.borde}` }}
+                    className="flex w-full items-center gap-3 rounded-2xl px-3.5 py-3 text-left transition-colors"
+                    style={{ backgroundColor: marcado ? AMORE.burdeosSuave : "#fff", border: `1.5px solid ${marcado ? AMORE.burdeos : AMORE.borde}`, opacity: bloqueado ? 0.5 : 1 }}
                   >
-                    <Icono className="size-5" style={{ color: AMORE.burdeos }} strokeWidth={1.6} />
-                    <span className="whitespace-nowrap text-[12px] font-medium" style={{ color: activa ? AMORE.texto : AMORE.textoSecundario }}>
-                      {cat}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <p className="mt-6 text-[11.5px] font-semibold uppercase tracking-wide" style={{ color: AMORE.texto }}>
-              Servicio
-            </p>
-            <div className="mt-2.5 flex flex-col gap-2.5">
-              {serviciosDeCategoria.map((s) => {
-                const seleccionado = s.id === servicioSeleccionadoId;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setServicioSeleccionadoId(s.id)}
-                    className="flex items-start gap-3 rounded-2xl p-4 text-left"
-                    style={{ backgroundColor: seleccionado ? AMORE.burdeosSuave : "#fff", border: `1.5px solid ${seleccionado ? AMORE.burdeos : AMORE.borde}` }}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[14.5px] font-semibold" style={{ color: AMORE.texto }}>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[14.5px] font-semibold leading-snug" style={{ color: AMORE.texto }}>
                         {s.nombre}
-                      </p>
+                      </span>
                       {s.descripcion ? (
-                        <p className="mt-0.5 text-[12px] leading-snug" style={{ color: AMORE.textoSecundario }}>
+                        <span className="mt-0.5 line-clamp-2 block text-[12px] leading-snug" style={{ color: AMORE.textoSecundario }}>
                           {s.descripcion}
-                        </p>
+                        </span>
                       ) : null}
-                      <div className="mt-2 flex items-center gap-3">
+                      <span className="mt-1.5 flex items-center gap-3">
                         {s.precio != null && (
                           <span className="text-[13.5px] font-semibold" style={{ color: AMORE.burdeos }}>
                             {formatearPrecioCop(s.precio)}
@@ -180,42 +204,21 @@ export function PasoSeleccionServicioAmore({
                           <Clock className="size-3.5" strokeWidth={1.6} />
                           {formatearDuracion(s.duracion_min)}
                         </span>
-                      </div>
-                    </div>
-                    <div className="mt-0.5 shrink-0">
-                      {seleccionado ? (
-                        <div className="flex size-6 items-center justify-center rounded-full" style={{ backgroundColor: AMORE.burdeos }}>
-                          <Check className="size-3.5 text-white" strokeWidth={2.5} />
-                        </div>
-                      ) : (
-                        <ChevronRight className="size-5" style={{ color: AMORE.borde }} />
-                      )}
-                    </div>
+                      </span>
+                    </span>
+                    <span
+                      className="flex size-6 shrink-0 items-center justify-center rounded-md"
+                      style={marcado ? { backgroundColor: AMORE.burdeos, border: `1.5px solid ${AMORE.burdeos}` } : { backgroundColor: "#fff", border: `1.5px solid ${AMORE.borde}` }}
+                    >
+                      {marcado ? <Check className="size-4 text-white" strokeWidth={2.75} /> : null}
+                    </span>
                   </button>
-                );
-              })}
-            </div>
-
-            <button
-              type="button"
-              disabled={!servicioSeleccionado}
-              onClick={() => servicioSeleccionado && onElegir(servicioSeleccionado)}
-              className="mt-6 flex w-full items-center justify-center gap-2 py-4 text-[15.5px] font-semibold text-white transition-transform disabled:opacity-40"
-              style={{ backgroundColor: AMORE.burdeos, borderRadius: 999 }}
-            >
-              Continuar
-              <ChevronRight className="size-5" strokeWidth={2} />
-            </button>
-
-            <div className="mt-4 flex items-center justify-center gap-1.5">
-              <ShieldCheck className="size-3.5" style={{ color: AMORE.dorado }} strokeWidth={1.5} />
-              <span className="text-[11px]" style={{ color: AMORE.textoSecundario }}>
-                Tus datos están protegidos
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+    </MarcoPasoAmore>
   );
 }

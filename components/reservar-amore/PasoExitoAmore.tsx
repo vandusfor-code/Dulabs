@@ -1,46 +1,58 @@
 "use client";
 
 import { Check, Clock, Gem } from "lucide-react";
-import { playfairDisplay } from "@/lib/fonts-portal-amore";
+import type { ServicioDelPortal } from "@/lib/reservar-amore-servicios";
+import { BotonPrincipalAmore, MarcoPasoAmore } from "./MarcoPasoAmore";
+import { formatearDuracion } from "./formato";
 import { AMORE, serifAmore } from "./tema";
 
-// AMORE (Fase 3 del portal, autorizado) — pantalla de éxito. Muestra lo que devolvió el POST de app/api/reservar/[tenant]/route.ts, incluido el enlace
-// personal «Mi cita» (enlaceGestion) para ver, modificar o cancelar la cita. Solo presentación: el enlace lo emite el servidor.
+// AMORE (portal) — pantalla de éxito. Muestra lo que devolvió el POST de app/api/reservar/[tenant]/route.ts, incluido el enlace personal «Mi cita»
+// (enlaceGestion) para ver, modificar o cancelar la cita. Solo presentación: el enlace lo emite el servidor. Con varios servicios los lista uno por uno (la
+// respuesta trae «A + B» y la duración TOTAL); el botón del enlace queda en la barra de abajo, siempre a la vista.
 
 type ResultadoExito = { codigo: string; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number; enlaceGestion?: string | null };
 
 function Fila({ label, valor }: { label: string; valor: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-2">
+    <div className="flex items-center justify-between gap-3 border-b py-2.5 last:border-b-0" style={{ borderColor: AMORE.borde }}>
       <span className="text-[12.5px]" style={{ color: AMORE.textoSecundario }}>
         {label}
       </span>
-      <span className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
+      <span className="text-right text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
         {valor}
       </span>
     </div>
   );
 }
 
-function formatearDuracion(min: number): string {
-  if (min < 60) return `${min} min`;
-  const horas = Math.floor(min / 60);
-  const minutos = min % 60;
-  return minutos === 0 ? `${horas} h` : `${horas} h ${minutos} min`;
-}
-
-export function PasoExitoAmore({ resultado, negocio }: { resultado: ResultadoExito; negocio: string }) {
-  const fecha = new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "long", weekday: "long", timeZone: "America/Bogota" }).format(new Date(resultado.inicio));
+export function PasoExitoAmore({ resultado, negocio, servicios }: { resultado: ResultadoExito; negocio: string; servicios: Pick<ServicioDelPortal, "id" | "nombre">[] }) {
+  const fechaLarga = new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "long", weekday: "long", timeZone: "America/Bogota" }).format(new Date(resultado.inicio));
+  const fecha = fechaLarga.charAt(0).toUpperCase() + fechaLarga.slice(1);
   const hora = new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Bogota" }).format(new Date(resultado.inicio));
+  const varios = servicios.length > 1;
 
   return (
-    <div className={`relative min-h-screen w-full ${playfairDisplay.variable}`} style={{ backgroundColor: AMORE.fondo }}>
-      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col items-center px-6 pb-9 pt-16 text-center">
+    <MarcoPasoAmore
+      negocio={negocio}
+      accion={
+        resultado.enlaceGestion ? (
+          <div>
+            <p className="mb-2 text-center text-[12px] leading-snug" style={{ color: AMORE.textoSecundario }}>
+              También te enviamos este enlace por WhatsApp para modificar o cancelar tu cita.
+            </p>
+            <BotonPrincipalAmore llena href={resultado.enlaceGestion}>
+              Ver o modificar mi cita
+            </BotonPrincipalAmore>
+          </div>
+        ) : undefined
+      }
+    >
+      <div className="flex flex-col items-center pt-4 text-center">
         <div className="flex size-16 items-center justify-center rounded-full" style={{ backgroundColor: AMORE.verdeSuave }}>
           <Check className="size-8" style={{ color: AMORE.verde }} strokeWidth={2} />
         </div>
 
-        <h1 className="mt-5 text-[28px] font-semibold" style={{ ...serifAmore, color: AMORE.texto }}>
+        <h1 className="mt-4 text-[26px] font-semibold leading-tight" style={{ ...serifAmore, color: AMORE.texto }}>
           ¡Cita confirmada!
         </h1>
         <p className="mt-1 text-[13.5px]" style={{ color: AMORE.textoSecundario }}>
@@ -53,15 +65,30 @@ export function PasoExitoAmore({ resultado, negocio }: { resultado: ResultadoExi
           <span className="h-px w-14" style={{ backgroundColor: AMORE.dorado }} />
         </div>
 
-        <div className="mt-7 w-full rounded-[28px] p-5 text-left" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
-          <div className="divide-y" style={{ borderColor: AMORE.borde }}>
+        <div className="mt-6 w-full rounded-[28px] p-4 text-left" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
+          {varios ? (
+            <div className="border-b py-2.5" style={{ borderColor: AMORE.borde }}>
+              <span className="text-[12.5px]" style={{ color: AMORE.textoSecundario }}>
+                Servicios
+              </span>
+              <ul className="mt-1 flex flex-col gap-0.5">
+                {servicios.map((s) => (
+                  <li key={s.id} className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
+                    {s.nombre}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
             <Fila label="Servicio" valor={resultado.servicio} />
+          )}
+          <div>
             <Fila label="Profesional" valor={resultado.profesional} />
             <Fila label="Fecha" valor={fecha} />
             <Fila label="Hora" valor={hora} />
-            <Fila label="Duración" valor={formatearDuracion(resultado.duracionMin)} />
+            <Fila label={varios ? "Duración total" : "Duración"} valor={formatearDuracion(resultado.duracionMin)} />
           </div>
-          <div className="mt-2 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: AMORE.borde }}>
+          <div className="mt-1 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: AMORE.borde }}>
             <span className="flex items-center gap-1.5 text-[12.5px]" style={{ color: AMORE.textoSecundario }}>
               <Clock className="size-3.5" strokeWidth={1.6} /> Código
             </span>
@@ -70,25 +97,7 @@ export function PasoExitoAmore({ resultado, negocio }: { resultado: ResultadoExi
             </span>
           </div>
         </div>
-
-        {resultado.enlaceGestion && (
-          <div className="mt-4 w-full rounded-[28px] p-5 text-left" style={{ backgroundColor: AMORE.doradoSuave }}>
-            <p className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
-              Gestiona tu cita
-            </p>
-            <p className="mt-1 text-[12.5px] leading-relaxed" style={{ color: AMORE.textoSecundario }}>
-              Si necesitas modificar o cancelar tu cita, puedes hacerlo desde este enlace. También te lo enviamos por WhatsApp.
-            </p>
-            <a
-              href={resultado.enlaceGestion}
-              className="mt-3 flex w-full items-center justify-center py-3 text-[14.5px] font-semibold text-white"
-              style={{ backgroundColor: AMORE.burdeos, borderRadius: 999 }}
-            >
-              Ver o modificar mi cita
-            </a>
-          </div>
-        )}
       </div>
-    </div>
+    </MarcoPasoAmore>
   );
 }

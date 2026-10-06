@@ -15,7 +15,7 @@ import { createMemoryEnlacesStore, hashDeToken } from "@/lib/mi-cita/enlaces";
 import { reservarCitaPorServicio } from "@/lib/disponibilidad-servicio";
 import { consultarCitasActivasEspecialista } from "@/lib/especialistas-flow-adaptador";
 import { textoEnlaceGestion } from "@/lib/mi-cita/mensajes";
-import { T, SERVICIO_DIPPING, TELEFONO_CLIENTA, crearMundoAmore, diaLaborable, type MundoAmore } from "@/lib/mi-cita/testing/mundo-amore";
+import { T, PROFESIONALES, SERVICIO_DIPPING, TELEFONO_CLIENTA, crearMundoAmore, diaLaborable, type MundoAmore } from "@/lib/mi-cita/testing/mundo-amore";
 
 const sinLog = () => {};
 
@@ -381,5 +381,167 @@ describe("8. El recordatorio lleva el MISMO enlace personal", () => {
   it("solo AMORE tiene enlaces «Mi cita»: para otro negocio no hay ninguno", async () => {
     const p = await preparar();
     assert.equal(await urlEnlaceDeCita(p.mundo.supabase, "otro-negocio", { id: 1, fin: p.cita.fin }, p.mundo.enlaces), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VARIOS SERVICIOS EN UNA SOLA CITA (manos + pies): una sola profesional que haga TODOS, un bloque continuo con la duración SUMADA, un solo evento en Google
+// Calendar y una sola cita en DuLabs (con el detalle de cada servicio). Mismo motor real, sobre la misma base en memoria.
+// ---------------------------------------------------------------------------
+describe("VARIOS SERVICIOS por el portal -- manos + pies en UNA sola cita", () => {
+  type Fila = Record<string, unknown>;
+  const servicio = (id: string, nombre: string, duracion_min: number, precio: number | null): Fila => ({ id, id_tenant: T, nombre, precio, duracion_min, categoria: "Uñas", descripcion: null, activo: true });
+
+  /** El mundo de siempre + manos (60 min, $40.000), pies (60 min, $35.000), uno sin precio, y dos que hace cada una por separado (Mary / Cristal). */
+  function armarVarios(sobre: Partial<DepsReservaPortalAmore> = {}) {
+    const base = armar({}, sobre);
+    const tablas = base.mundo.tablas;
+    (tablas.dulabs_servicios as Fila[]).push(
+      servicio("s-manos", "Manos Semi", 60, 40000),
+      servicio("s-pies", "Pies Semi", 60, 35000),
+      servicio("s-sin-precio", "Keratina", 60, null),
+      servicio("s-solo-mary", "Maquillaje Suave", 60, 90000),
+      servicio("s-solo-cristal", "Maquillaje Pro", 60, 150000),
+    );
+    const asociar = (servicioId: string, ids: number[]) => ids.forEach((especialista_id) => (tablas.dulabs_servicio_especialista as Fila[]).push({ id_tenant: T, servicio_id: servicioId, especialista_id }));
+    const ambas = PROFESIONALES.map((p) => p.id);
+    asociar("s-manos", ambas);
+    asociar("s-pies", ambas);
+    asociar("s-sin-precio", ambas);
+    asociar("s-solo-mary", [1262]);
+    asociar("s-solo-cristal", [1263]);
+    return base;
+  }
+
+  it("crea UNA cita y UN evento de 2 h (la suma), con el detalle de los dos servicios y el precio total", async () => {
+    const { mundo, deps, entrada, inicio } = armarVarios();
+    const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies"] }));
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(mundo.citas().length, 1, "una sola cita, no una por servicio");
+    const cita = mundo.citas()[0]!;
+    assert.equal(cita.servicio_id, "s-manos", "el servicio de la cita es el PRIMERO (compatibilidad con todo lo que ya la lee)");
+    assert.equal(new Date(cita.fin as string).getTime() - inicio.getTime(), 120 * 60_000, "60 + 60 minutos continuos");
+    assert.equal(cita.precio_total, 75000);
+    assert.equal(mundo.google.eventos.size, 1, "un solo evento en Google Calendar");
+    const evento = [...mundo.google.eventos.values()][0]!;
+    assert.equal(evento.calendarId, "cal-cristal");
+    assert.equal(evento.endUnix - evento.startUnix, 7200);
+    assert.match(evento.title, /Manos Semi \+ Pies Semi/);
+    const detalle = (mundo.tablas.dulabs_cita_servicios ?? []).map((f) => ({ servicio_id: f.servicio_id, orden: f.orden }));
+    assert.deepEqual(detalle, [
+      { servicio_id: "s-manos", orden: 1 },
+      { servicio_id: "s-pies", orden: 2 },
+    ]);
+  });
+
+  it("la respuesta resume la cita completa: «A + B» y la duración total; la confirmación por WhatsApp nombra los dos", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies"] }));
+    assert.ok(r.ok);
+    assert.equal(r.data.servicio, "Manos Semi + Pies Semi");
+    assert.equal(r.data.duracionMin, 120);
+    assert.equal(r.data.profesional, "Cristal");
+    assert.equal(mundo.confirmaciones.length, 1);
+    assert.match(mundo.enviados.at(-1)!.mensaje, /Servicio: Manos Semi \+ Pies Semi/);
+  });
+
+  it("tres servicios: se suman las tres duraciones; sin precio en uno, NO se inventa un total", async () => {
+    const { mundo, deps, entrada, inicio } = armarVarios();
+    const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies", "s-sin-precio"] }));
+    assert.ok(r.ok, JSON.stringify(r));
+    const cita = mundo.citas()[0]!;
+    assert.equal(new Date(cita.fin as string).getTime() - inicio.getTime(), 180 * 60_000);
+    assert.equal(cita.precio_total, null, "un servicio sin precio fijo: se deja sin total en vez de sumar un 0 falso");
+    assert.equal((mundo.tablas.dulabs_cita_servicios ?? []).length, 3);
+  });
+
+  it("el bloque es continuo: una cita que cae a mitad de las 2 h bloquea la reserva COMPLETA (nada queda creado)", async () => {
+    const { mundo, deps, entrada, dia } = armarVarios();
+    mundo.sembrarCita({ especialistaId: 1263, inicio: new Date(`${dia}T11:00:00-05:00`) }); // Cristal 11:00-13:00 (un Dipping ya reservado)
+    const antes = { citas: mundo.citas().length, eventos: mundo.google.eventos.size };
+    const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies"] })); // 10:00-12:00 se cruza con las 11:00
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.status, 409);
+    assert.ok(r.error.includes("acaba de ser reservado"), "la pantalla reconoce esta frase para ofrecer «elegir otro horario»");
+    assert.equal(mundo.citas().length, antes.citas);
+    assert.equal(mundo.google.eventos.size, antes.eventos);
+    assert.equal(mundo.confirmaciones.length, 0);
+  });
+
+  it("una profesional que NO hace todos los servicios se rechaza con el texto de la combinación y sin dejar nada", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    // Maquillaje Suave solo lo hace Mary: con Cristal la combinación es imposible.
+    const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-solo-mary"], especialistaId: 1263 }));
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.status, 409);
+    assert.match(r.error, /combinación de servicios/);
+    sinNada(mundo);
+  });
+
+  it("con Mary (que sí hace los dos) la misma combinación se reserva", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-solo-mary"], especialistaId: 1262 }));
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal([...mundo.google.eventos.values()][0]!.calendarId, "cal-mary");
+  });
+
+  it("dos servicios que ninguna profesional hace juntos (uno solo de Mary y otro solo de Cristal) -> rechazo con cualquiera de las dos, sin dejar nada", async () => {
+    for (const especialistaId of [1262, 1263]) {
+      const { mundo, deps, entrada } = armarVarios();
+      const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-solo-mary", serviciosIdsAdicionales: ["s-solo-cristal"], especialistaId }));
+      assert.equal(r.ok, false);
+      sinNada(mundo);
+    }
+  });
+
+  it("un servicio inexistente entre los elegidos -> «alguno de los servicios ya no está disponible», sin dejar nada", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    const r = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-no-existe"] }));
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.status, 409);
+    assert.match(r.error, /Alguno de los servicios/);
+    sinNada(mundo);
+  });
+
+  it("más de 3 servicios, o un servicio repetido -> 400 y nada se toca (la API se puede llamar directamente)", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    const demasiados = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies", "s-sin-precio", "s-solo-mary"] }));
+    assert.equal(demasiados.ok, false);
+    if (!demasiados.ok) assert.equal(demasiados.status, 400);
+    const repetido = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-manos"] }));
+    assert.equal(repetido.ok, false);
+    if (!repetido.ok) assert.equal(repetido.status, 400);
+    sinNada(mundo);
+  });
+
+  it("doble clic (misma clave) -> UNA sola cita, UN evento y UNA confirmación", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    const a = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies"] }));
+    const b = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies"] }));
+    assert.ok(a.ok && b.ok);
+    assert.equal(mundo.citas().length, 1);
+    assert.equal(mundo.google.eventos.size, 1);
+    assert.equal(mundo.confirmaciones.length, 1);
+  });
+
+  it("reusar una clave con OTRA combinación de servicios es un conflicto (la huella incluye todos los servicios)", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    assert.ok((await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos", serviciosIdsAdicionales: ["s-pies"] }))).ok);
+    const otra = await reservarPorPortalAmore(deps, entrada({ servicioId: "s-manos" }));
+    assert.equal(otra.ok, false);
+    if (!otra.ok) assert.match(otra.error, /ya se procesó con datos diferentes/);
+    assert.equal(mundo.citas().length, 1);
+  });
+
+  it("un solo servicio sigue igual que siempre (sin detalle de servicios, huella y respuesta de siempre)", async () => {
+    const { mundo, deps, entrada } = armarVarios();
+    const r = await reservarPorPortalAmore(deps, entrada());
+    assert.ok(r.ok);
+    assert.equal(r.data.servicio, "Dipping");
+    assert.equal(r.data.duracionMin, 120);
+    assert.equal((mundo.tablas.dulabs_cita_servicios ?? []).length, 0, "con un solo servicio no hay detalle: nada cambió respecto de antes");
   });
 });

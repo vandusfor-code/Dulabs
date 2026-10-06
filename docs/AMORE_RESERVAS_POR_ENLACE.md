@@ -191,3 +191,32 @@ Pruebas: \`lib/mi-cita/panel.test.ts\` (27) y 21 mutaciones del módulo y sus ru
 
 Sin cambios aplicados. Pendientes del dueño: fusionar el PR, migración 20261209, diagnóstico/reparación de citas legacy y la prueba controlada. El bot de AMORE no se
 reactivó para tráfico general.
+
+## 16. Varios servicios en una sola cita (manos + pies) y versión móvil del portal
+
+**Qué pidió el negocio:** que la clienta pueda reservar varios servicios en una misma cita (por ejemplo uñas de manos y de pies) y que el portal sea cómodo en el
+celular, con «Continuar» siempre a la mano (sin bajar hasta el final de una lista larga).
+
+**Varios servicios (hasta 3).** El motor ya lo soportaba para el chat (`crearCitaConNylas` + `lib/agenda-v2/multi-servicio.ts`); el portal ahora lo usa:
+- **Una sola profesional** hace todos los servicios (intersección real de `dulabs_servicio_especialista`), en un **bloque continuo** con la duración **sumada**;
+  un hueco ocupado a mitad del bloque descarta ese inicio. Se crea **una** cita y **un** evento de Google Calendar (título «A + B (clienta)»), con el detalle
+  por servicio en `dulabs_cita_servicios`. El precio total solo se guarda si TODOS los servicios tienen precio fijo (nunca se inventa un total).
+- Rutas (`app/api/reservar/[tenant]/…`): `especialistas` y `disponibilidad` aceptan `servicioIds=a,b` (además del `servicioId` de siempre); la reserva (POST)
+  acepta `servicioIds: [...]`. Solo para AMORE: cualquier otro negocio sigue con un servicio por cita y recibe 400 si intenta combinar. El catálogo (GET)
+  trae `maxServiciosPorCita` (3 en AMORE, 1 en el resto). Si ninguna profesional hace todos los servicios juntos, la respuesta trae
+  `motivo: "combinacion_sin_profesional"` y la pantalla lo explica.
+- Con un solo servicio todo es idéntico a antes (misma función, misma huella de idempotencia, misma respuesta).
+- Lógica nueva: `listarHorariosDisponiblesPorServiciosConNylas` (`lib/disponibilidad-servicio-nylas.ts`), `reservarPorPortalAmore` con
+  `serviciosIdsAdicionales`, `lib/reserva-portal-servicios.ts` (normaliza y valida la lista: sin repetidos, de 1 a 3) y `lib/reservar-amore-servicios.ts`
+  (lógica pura de la selección).
+
+**Versión móvil.** Un marco común (`components/reservar-amore/MarcoPasoAmore.tsx`): encabezado compacto y pegado arriba con «paso X de 5» y barra de avance
+(antes el encabezado y los 5 círculos ocupaban ~150 px de una pantalla de 640), **barra de acción pegada abajo** con el botón «Continuar» en TODOS los pasos
+(en servicios incluye la selección con ✕ para quitar, la duración y el precio totales), categorías pegadas arriba con contador de elegidos, alto real de pantalla
+(`dvh`) y márgenes seguros de iPhone (`layout.tsx` activa `viewport-fit=cover`). Campos de 16 px (iOS hace zoom con menos), teclado numérico para el WhatsApp,
+WhatsApp validado en el paso de datos (no hasta el último), horas agrupadas en mañana/tarde, errores de red distinguidos de «no hay horarios», y la reserva ocupada
+deja «Elegir otro horario» como acción principal.
+
+**Pruebas:** `lib/disponibilidad-servicio-nylas.test.ts` (+11), `lib/mi-cita/reserva-portal.test.ts` (+12), `app/api/reservar/portal-amore-rutas.test.ts` (+11),
+`lib/reserva-portal-servicios.test.ts`, `lib/reservar-amore-servicios.test.ts`, `components/reservar-amore/formato.test.ts` y
+`components/reservar-amore/portal-amore.dom.test.tsx` (16, la página completa con la red simulada). Sin migraciones ni SQL.

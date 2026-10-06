@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { crearCitaConNylas } from "@/lib/reserva-servicio-nylas";
 import { ejecutarConIdempotencia, huellaSolicitud } from "@/lib/idempotencia-reserva";
 import { guardarNylasEventIdDeCita } from "@/lib/agenda-v2/citas-nylas";
+import { MAX_SERVICIOS_POR_CITA } from "@/lib/agenda-v2/servicios";
 import { recordarNombreCliente } from "@/lib/clientes-conocidos";
 import { AMORE_TENANT_ID, phoneNumberIdWhatsappQr } from "@/lib/nylas/nylas-grant";
 import { enviarConfirmacionReservaWhatsApp } from "@/lib/reserva-notificaciones-whatsapp";
@@ -23,7 +24,10 @@ import { obtenerOCrearEnlace, type EnlacesStore } from "@/lib/mi-cita/enlaces";
 import type { NylasMiCita } from "@/lib/mi-cita/gestion";
 
 export interface EntradaReservaPortalAmore {
+  /** Servicio principal de la cita (el primero que eligió la clienta). */
   servicioId: string;
+  /** 0 a 2 servicios MÁS en la MISMA cita (ej. uñas de manos + de pies): una sola profesional que haga todos, un bloque continuo con la duración sumada. */
+  serviciosIdsAdicionales?: string[];
   especialistaId: number;
   inicio: Date;
   nombreCliente: string;
@@ -72,6 +76,11 @@ const MENSAJES: Record<string, { status: number; error: string }> = {
   solicitud_en_progreso: { status: 409, error: "Tu solicitud se está procesando, espera un momento." },
   solicitud_en_conflicto: { status: 409, error: "Esta solicitud ya se procesó con datos diferentes. Actualiza la página e intenta de nuevo." },
 };
+/** Con varios servicios en la cita, estos dos rechazos hablan de la combinación (los demás textos sirven igual). */
+const MENSAJES_VARIOS_SERVICIOS: Record<string, { status: number; error: string }> = {
+  servicio_no_encontrado: { status: 409, error: "Alguno de los servicios seleccionados ya no está disponible." },
+  especialista_no_habilitado: { status: 409, error: "Este profesional ya no está disponible para esta combinación de servicios." },
+};
 const MENSAJE_GENERICO = { status: 409, error: "Hubo un problema al reservar. Por favor intenta nuevamente." };
 const SIN_CALENDARIO = { status: 503, error: "Las reservas en línea no están disponibles en este momento. Por favor intenta de nuevo más tarde." };
 
@@ -90,6 +99,12 @@ export async function reservarPorPortalAmore(deps: DepsReservaPortalAmore, e: En
   if (!deps.nylas) return { ok: false, ...SIN_CALENDARIO };
   const telefono = telefonoParaReserva(e.telefonoCliente);
   if (!telefono) return { ok: false, status: 400, error: "Escribe un número de WhatsApp válido, con el indicativo si no es de Colombia." };
+  // Los servicios de la cita: de 1 a MAX_SERVICIOS_POR_CITA, sin repetir. La pantalla no deja otra cosa, pero la API se puede llamar directamente.
+  const serviciosIds = [e.servicioId, ...(e.serviciosIdsAdicionales ?? [])];
+  if (serviciosIds.length > MAX_SERVICIOS_POR_CITA || new Set(serviciosIds).size !== serviciosIds.length) {
+    return { ok: false, status: 400, error: `Elige entre 1 y ${MAX_SERVICIOS_POR_CITA} servicios distintos.` };
+  }
+  const variosServicios = serviciosIds.length > 1;
   const nylas = deps.nylas;
   const ahora = (deps.ahora ?? (() => new Date()))();
   // Nunca una cita en el pasado (la pantalla solo ofrece horarios futuros, pero la API se puede llamar directamente).
@@ -100,7 +115,8 @@ export async function reservarPorPortalAmore(deps: DepsReservaPortalAmore, e: En
   // Idempotencia de TODO el flujo (incluidos los avisos): un doble clic o un reintento con la misma clave devuelve lo mismo SIN repetir WhatsApp.
   // Solo se guarda lo serializable y sin secretos; el enlace (que contiene el token) se vuelve a obtener —es el mismo— y nunca queda en esa caché.
   type Guardado = { ok: true; citaId: number; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number } | { ok: false; motivo: string };
-  const huella = huellaSolicitud([idTenant, e.servicioId, e.especialistaId, e.inicio.toISOString(), telefono, e.nombreCliente]);
+  // Con un solo servicio la huella es la de siempre (join de uno = ese mismo id): una clave ya usada no cambia de significado.
+  const huella = huellaSolicitud([idTenant, serviciosIds.join(","), e.especialistaId, e.inicio.toISOString(), telefono, e.nombreCliente]);
   const r = await ejecutarConIdempotencia<Guardado>(deps.supabase, {
     idTenant,
     idempotencyKey: `portal:${e.idempotencyKey}`,
@@ -108,7 +124,16 @@ export async function reservarPorPortalAmore(deps: DepsReservaPortalAmore, e: En
     operacion: async (): Promise<Guardado> => {
       const creada = await crearCitaConNylas(
         deps.supabase,
-        { idTenant, servicioId: e.servicioId, especialistaId: e.especialistaId, inicio: e.inicio, nombreCliente: e.nombreCliente, telefonoCliente: telefono, idempotencyKey: e.idempotencyKey },
+        {
+          idTenant,
+          servicioId: e.servicioId,
+          serviciosIdsAdicionales: variosServicios ? serviciosIds.slice(1) : undefined,
+          especialistaId: e.especialistaId,
+          inicio: e.inicio,
+          nombreCliente: e.nombreCliente,
+          telefonoCliente: telefono,
+          idempotencyKey: e.idempotencyKey,
+        },
         { nylasReadClient: nylas.read, nylasWriteClient: nylas.write, grantId: nylas.grantId },
       );
       if (!creada.ok) {
@@ -138,7 +163,7 @@ export async function reservarPorPortalAmore(deps: DepsReservaPortalAmore, e: En
   if (r.estado === "conflicto") return { ok: false, ...MENSAJES.solicitud_en_conflicto };
   if (r.estado === "en_progreso") return { ok: false, ...MENSAJES.solicitud_en_progreso };
   const g = r.resultado;
-  if (!g.ok) return { ok: false, ...(MENSAJES[g.motivo] ?? MENSAJE_GENERICO) };
+  if (!g.ok) return { ok: false, ...((variosServicios ? MENSAJES_VARIOS_SERVICIOS[g.motivo] : undefined) ?? MENSAJES[g.motivo] ?? MENSAJE_GENERICO) };
 
   const enlace = await obtenerOCrearEnlace(deps.store, { idTenant, citaId: g.citaId, citaFinISO: g.fin }, { ahora: () => ahora });
   return { ok: true, data: { codigo: codigoDeReferencia(g.citaId), servicio: g.servicio, profesional: g.profesional, inicio: g.inicio, fin: g.fin, duracionMin: g.duracionMin, enlaceGestion: enlace?.url ?? null } };

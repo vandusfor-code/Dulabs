@@ -1,107 +1,59 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Check, ChevronRight, ChevronLeft, ShieldCheck, CalendarPlus, Clock } from "lucide-react";
-import { playfairDisplay } from "@/lib/fonts-portal-amore";
-import { formatearPrecioCop } from "@/lib/especialistas-flow-adaptador";
-import { PortalHeaderAmore } from "./PortalHeaderAmore";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CalendarPlus, ChevronLeft, ChevronRight, Clock } from "lucide-react";
+import type { ServicioDelPortal } from "@/lib/reservar-amore-servicios";
+import { FranjaServiciosAmore } from "./FranjaServiciosAmore";
+import { ContinuarAmore, MarcoPasoAmore } from "./MarcoPasoAmore";
+import { fechaDesdeISO, formatearFechaCorta, formatearFechaLarga, formatearHora12h, formatearMesAnio, sumarDias } from "./formato";
 import { AMORE, serifAmore } from "./tema";
 
-// AMORE (Fase 3 del portal, autorizado) — SOLO esta pantalla ("Selecciona
-// tu horario"). `horarios` son EXACTAMENTE los slots reales que devolvió
-// listarHorariosDisponiblesPorServicio vía /api/reservar/[tenant]/disponibilidad
-// -- ya respeta jornada de la profesional, duración del servicio, bloqueos
-// y citas existentes. Esta pantalla NO calcula disponibilidad ni crea la
-// cita, solo muestra lo que el backend ya resolvió.
-
-type Servicio = { id: string; nombre: string; duracion_min: number; precio: number | null };
+// AMORE (portal) — paso 3, «Elige tu horario». `horarios` son EXACTAMENTE los slots reales que devolvió /api/reservar/[tenant]/disponibilidad: con varios
+// servicios, bloques CONTINUOS de la duración sumada, de la profesional elegida (jornada, bloqueos, citas y Google Calendar ya descontados). Esta pantalla NO
+// calcula disponibilidad ni crea la cita, solo muestra lo que el backend ya resolvió. Al elegir la fecha, la lista de horas se desplaza sola a la vista.
 
 const DIAS_LABEL = ["DOM", "LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB"];
 
-function fechaDesdeISO(fechaISO: string): Date {
-  const [y, m, d] = fechaISO.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d, 12));
-}
-function isoDesdeFecha(f: Date): string {
-  return f.toISOString().slice(0, 10);
-}
-function sumarDias(fechaISO: string, n: number): string {
-  const f = fechaDesdeISO(fechaISO);
-  f.setUTCDate(f.getUTCDate() + n);
-  return isoDesdeFecha(f);
-}
-function formatearMesAnio(fechaISO: string): string {
-  const texto = new Intl.DateTimeFormat("es-CO", { month: "long", year: "numeric", timeZone: "America/Bogota" }).format(fechaDesdeISO(fechaISO));
-  return texto.charAt(0).toUpperCase() + texto.slice(1);
-}
-function formatearFechaLarga(fechaISO: string): string {
-  const texto = new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "long", weekday: "long", timeZone: "America/Bogota" }).format(fechaDesdeISO(fechaISO));
-  return texto.charAt(0).toUpperCase() + texto.slice(1);
-}
-function formatearHora12h(hhmm: string): string {
-  const [hStr, mStr] = hhmm.split(":");
-  const h = Number(hStr);
-  const periodo = h >= 12 ? "p. m." : "a. m.";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${mStr} ${periodo}`;
-}
-function formatearDuracion(min: number): string {
-  if (min < 60) return `${min} min`;
-  const horas = Math.floor(min / 60);
-  const minutos = min % 60;
-  return minutos === 0 ? `${horas} h` : `${horas} h ${minutos} min`;
-}
-
-function PasoIndicador({ estado, numero, label }: { estado: "completado" | "activo" | "pendiente"; numero: number; label: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1.5">
-      <div
-        className="flex size-8 items-center justify-center rounded-full text-[13px] font-semibold"
-        style={
-          estado !== "pendiente"
-            ? { backgroundColor: AMORE.burdeos, color: "#fff" }
-            : { backgroundColor: "#fff", color: AMORE.textoSecundario, border: `1px solid ${AMORE.borde}` }
-        }
-      >
-        {estado === "completado" ? <Check className="size-3.5" strokeWidth={2.5} /> : numero}
-      </div>
-      <span className="text-center text-[10px] font-medium leading-tight" style={{ color: estado !== "pendiente" ? AMORE.texto : AMORE.textoSecundario }}>
-        {label}
-      </span>
-    </div>
-  );
-}
+const esManana = (hhmm: string) => Number(hhmm.slice(0, 2)) < 12;
 
 export function PasoSeleccionHorarioAmore({
   negocio,
-  servicio,
+  servicios,
   especialistaNombre,
   fecha,
+  hora,
   fechaMinima,
   fechaMaxima,
   horarios,
   cargandoHorarios,
+  errorHorarios,
   onSeleccionarFecha,
+  onReintentar,
   onContinuar,
   onVolver,
 }: {
   negocio: string;
-  servicio: Servicio;
+  servicios: Pick<ServicioDelPortal, "nombre" | "duracion_min" | "precio">[];
   especialistaNombre: string | null;
   fecha: string | null;
+  /** Hora ya elegida antes (al volver desde un paso posterior). */
+  hora: string | null;
   fechaMinima: string;
   fechaMaxima: string;
   horarios: string[];
   cargandoHorarios: boolean;
+  /** No se pudo consultar (sin conexión, o Google Calendar no confirmó): se distingue de «no hay horarios». */
+  errorHorarios: boolean;
   onSeleccionarFecha: (fecha: string) => void;
+  onReintentar: () => void;
   onContinuar: (hora: string) => void;
   onVolver: () => void;
 }) {
   const [inicioSemana, setInicioSemana] = useState(fecha ?? fechaMinima);
-  const [horaSeleccionada, setHoraSeleccionada] = useState<string | null>(null);
+  const [horaSeleccionada, setHoraSeleccionada] = useState<string | null>(hora);
 
   const diasVisibles = useMemo(() => Array.from({ length: 7 }, (_, i) => sumarDias(inicioSemana, i)), [inicioSemana]);
-  const puedeRetroceder = sumarDias(inicioSemana, -7) >= fechaMinima || diasVisibles.some((d) => d > fechaMinima && d <= fechaMaxima);
+  const puedeRetroceder = sumarDias(inicioSemana, -1) >= fechaMinima;
   const puedeAvanzar = sumarDias(inicioSemana, 7) <= fechaMaxima;
 
   function elegirDia(dia: string) {
@@ -110,88 +62,71 @@ export function PasoSeleccionHorarioAmore({
     onSeleccionarFecha(dia);
   }
 
+  // Con la fecha elegida (y las horas ya cargadas) la lista de horas se acerca sola a la vista, sin que haya que buscarla bajando.
+  const horasRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (fecha && !cargandoHorarios) horasRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [fecha, cargandoHorarios]);
+
+  const grupos = useMemo(
+    () => [
+      { nombre: "Mañana", horas: horarios.filter(esManana) },
+      { nombre: "Tarde", horas: horarios.filter((h) => !esManana(h)) },
+    ].filter((g) => g.horas.length > 0),
+    [horarios],
+  );
+
+  const accion = (
+    <div className="flex items-center gap-3">
+      <div className="min-w-0 flex-1" aria-live="polite">
+        {fecha && horaSeleccionada ? (
+          <>
+            <p className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
+              {formatearFechaCorta(fecha)}
+            </p>
+            <p className="text-[12px]" style={{ color: AMORE.textoSecundario }}>
+              {formatearHora12h(horaSeleccionada)}
+            </p>
+          </>
+        ) : (
+          <p className="text-[12.5px] leading-snug" style={{ color: AMORE.textoSecundario }}>
+            Elige una fecha y una hora
+          </p>
+        )}
+      </div>
+      <ContinuarAmore disabled={!fecha || !horaSeleccionada} onClick={() => horaSeleccionada && onContinuar(horaSeleccionada)} />
+    </div>
+  );
+
   return (
-    <div className={`relative min-h-screen w-full ${playfairDisplay.variable}`} style={{ backgroundColor: AMORE.fondo }}>
-      <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col px-6 pb-9 pt-8">
-        <PortalHeaderAmore negocio={negocio} onVolver={onVolver} />
+    <MarcoPasoAmore negocio={negocio} onVolver={onVolver} paso={3} titulo="Elige tu horario" accion={accion}>
+      <FranjaServiciosAmore servicios={servicios} especialistaNombre={especialistaNombre} />
 
-        <div className="mt-6 flex w-full items-start justify-between">
-          {[
-            { n: 1, label: "Servicio", estado: "completado" as const },
-            { n: 2, label: "Profesional", estado: "completado" as const },
-            { n: 3, label: "Horario", estado: "activo" as const },
-            { n: 4, label: "Datos", estado: "pendiente" as const },
-            { n: 5, label: "Listo", estado: "pendiente" as const },
-          ].map((paso, i, arr) => (
-            <div key={paso.n} className="contents">
-              <PasoIndicador estado={paso.estado} numero={paso.n} label={paso.label} />
-              {i < arr.length - 1 && <div className="mt-3.5 h-px flex-1" style={{ backgroundColor: paso.estado === "completado" ? AMORE.burdeos : AMORE.borde }} />}
-            </div>
-          ))}
-        </div>
-
-        <h1 className="mt-7 text-center text-[27px] font-semibold" style={{ ...serifAmore, color: AMORE.texto }}>
-          Selecciona tu horario
-        </h1>
-        <p className="mt-1 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
-          Elige la fecha y hora que mejor te convenga.
-        </p>
-
-        <div className="mt-6 rounded-[28px] p-5" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
+      <section className="mt-3 rounded-3xl p-4" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CalendarPlus className="size-5" style={{ color: AMORE.burdeos }} strokeWidth={1.6} />
-            <span className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
-              Selecciona una fecha
+            <span className="text-[15px] font-medium" style={{ ...serifAmore, color: AMORE.texto }}>
+              {formatearMesAnio(inicioSemana)}
             </span>
           </div>
-          <p className="mt-2.5 text-[15px] font-medium" style={{ ...serifAmore, color: AMORE.texto }}>
-            {formatearMesAnio(inicioSemana)}
-          </p>
-
-          <div className="mt-3 flex items-center gap-1">
+          <div className="-mr-2 flex items-center">
             <button
               type="button"
               onClick={() => puedeRetroceder && setInicioSemana(sumarDias(inicioSemana, -7))}
               disabled={!puedeRetroceder}
               aria-label="Semana anterior"
-              className="flex size-7 shrink-0 items-center justify-center disabled:opacity-25"
+              className="flex size-10 items-center justify-center rounded-full disabled:opacity-25"
               style={{ color: AMORE.burdeos }}
             >
               <ChevronLeft className="size-5" />
             </button>
-            <div className="grid flex-1 grid-cols-7 gap-1">
-              {diasVisibles.map((dia) => {
-                const fueraDeRango = dia < fechaMinima || dia > fechaMaxima;
-                const seleccionado = dia === fecha;
-                const d = fechaDesdeISO(dia);
-                return (
-                  <button
-                    key={dia}
-                    type="button"
-                    disabled={fueraDeRango}
-                    onClick={() => elegirDia(dia)}
-                    className="flex flex-col items-center gap-1 rounded-xl py-2 disabled:opacity-30"
-                    style={{ backgroundColor: seleccionado ? AMORE.burdeosSuave : "transparent" }}
-                  >
-                    <span className="text-[10px] font-semibold uppercase" style={{ color: seleccionado ? AMORE.burdeos : AMORE.textoSecundario }}>
-                      {DIAS_LABEL[d.getUTCDay()]}
-                    </span>
-                    <span
-                      className="flex size-7 items-center justify-center rounded-full text-[13px] font-semibold"
-                      style={seleccionado ? { backgroundColor: AMORE.burdeos, color: "#fff" } : { color: AMORE.texto }}
-                    >
-                      {d.getUTCDate()}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
             <button
               type="button"
               onClick={() => puedeAvanzar && setInicioSemana(sumarDias(inicioSemana, 7))}
               disabled={!puedeAvanzar}
               aria-label="Semana siguiente"
-              className="flex size-7 shrink-0 items-center justify-center disabled:opacity-25"
+              className="flex size-10 items-center justify-center rounded-full disabled:opacity-25"
               style={{ color: AMORE.burdeos }}
             >
               <ChevronRight className="size-5" />
@@ -199,102 +134,109 @@ export function PasoSeleccionHorarioAmore({
           </div>
         </div>
 
-        <div className="mt-4 rounded-[28px] p-5" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
-          <div className="flex items-center gap-2">
-            <Clock className="size-5" style={{ color: AMORE.burdeos }} strokeWidth={1.6} />
-            <div>
-              <p className="text-[13.5px] font-semibold" style={{ color: AMORE.texto }}>
-                Horarios disponibles
-              </p>
-              {fecha && (
-                <p className="text-[11.5px]" style={{ color: AMORE.textoSecundario }}>
-                  {formatearFechaLarga(fecha)}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {!fecha ? (
-            <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
-              Elige una fecha para ver los horarios reales.
-            </p>
-          ) : cargandoHorarios ? (
-            <p className="mt-4 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
-              Consultando horarios reales...
-            </p>
-          ) : horarios.length === 0 ? (
-            <div className="mt-4 flex flex-col items-center gap-2 text-center">
-              <p className="text-[13px]" style={{ color: AMORE.textoSecundario }}>
-                No encontramos horarios disponibles para esta fecha.
-              </p>
-              <p className="text-[12px] font-medium" style={{ color: AMORE.burdeos }}>
-                Elige otra fecha en el calendario de arriba.
-              </p>
-            </div>
-          ) : (
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              {horarios.map((h) => {
-                const seleccionado = h === horaSeleccionada;
-                return (
-                  <button
-                    key={h}
-                    type="button"
-                    onClick={() => setHoraSeleccionada(h)}
-                    className="flex flex-col items-center gap-1 rounded-xl py-2.5"
-                    style={{ backgroundColor: seleccionado ? AMORE.burdeosSuave : "#fff", border: `1.5px solid ${seleccionado ? AMORE.burdeos : AMORE.borde}` }}
-                  >
-                    <span className="text-[13px] font-medium" style={{ color: AMORE.texto }}>
-                      {formatearHora12h(h)}
-                    </span>
-                    <span className="size-1.5 rounded-full" style={{ backgroundColor: seleccionado ? AMORE.burdeos : AMORE.verde }} />
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-4 flex items-center gap-3 rounded-2xl p-3.5" style={{ backgroundColor: AMORE.doradoSuave }}>
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: "#fff" }}>
-            <CalendarPlus className="size-5" style={{ color: AMORE.burdeos }} strokeWidth={1.5} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[14px] font-semibold" style={{ color: AMORE.texto }}>
-              {servicio.nombre}
-            </p>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px]" style={{ color: AMORE.textoSecundario }}>
-              <span className="flex items-center gap-1">
-                <Clock className="size-3.5" strokeWidth={1.6} />
-                {formatearDuracion(servicio.duracion_min)}
-              </span>
-              {servicio.precio != null && (
-                <span className="font-semibold" style={{ color: AMORE.burdeos }}>
-                  {formatearPrecioCop(servicio.precio)}
+        <div className="mt-2 grid grid-cols-7 gap-1">
+          {diasVisibles.map((dia) => {
+            const fueraDeRango = dia < fechaMinima || dia > fechaMaxima;
+            const seleccionado = dia === fecha;
+            const d = fechaDesdeISO(dia);
+            return (
+              <button
+                key={dia}
+                type="button"
+                disabled={fueraDeRango}
+                aria-pressed={seleccionado}
+                aria-label={formatearFechaLarga(dia)}
+                onClick={() => elegirDia(dia)}
+                className="flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-xl py-1.5 disabled:opacity-30"
+                style={{ backgroundColor: seleccionado ? AMORE.burdeosSuave : "transparent" }}
+              >
+                <span className="text-[10px] font-semibold uppercase" style={{ color: seleccionado ? AMORE.burdeos : AMORE.textoSecundario }}>
+                  {DIAS_LABEL[d.getUTCDay()]}
                 </span>
-              )}
-              {especialistaNombre && <span>{especialistaNombre}</span>}
-            </div>
+                <span
+                  className="flex size-8 items-center justify-center rounded-full text-[14px] font-semibold"
+                  style={seleccionado ? { backgroundColor: AMORE.burdeos, color: "#fff" } : { color: AMORE.texto }}
+                >
+                  {d.getUTCDate()}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section ref={horasRef} className="mt-3 scroll-mb-28 scroll-mt-20 rounded-3xl p-4" style={{ backgroundColor: "#fff", border: `1px solid ${AMORE.borde}` }}>
+        <div className="flex items-center gap-2">
+          <Clock className="size-5 shrink-0" style={{ color: AMORE.burdeos }} strokeWidth={1.6} />
+          <div>
+            <p className="text-[14px] font-semibold" style={{ color: AMORE.texto }}>
+              Horas disponibles
+            </p>
+            {fecha && (
+              <p className="text-[12px]" style={{ color: AMORE.textoSecundario }}>
+                {formatearFechaLarga(fecha)}
+              </p>
+            )}
           </div>
         </div>
 
-        <button
-          type="button"
-          disabled={!fecha || !horaSeleccionada}
-          onClick={() => horaSeleccionada && onContinuar(horaSeleccionada)}
-          className="mt-5 flex w-full items-center justify-center gap-2 py-4 text-[15.5px] font-semibold text-white disabled:opacity-40"
-          style={{ backgroundColor: AMORE.burdeos, borderRadius: 999 }}
-        >
-          Continuar
-          <ChevronRight className="size-5" strokeWidth={2} />
-        </button>
-
-        <div className="mt-4 flex items-center justify-center gap-1.5">
-          <ShieldCheck className="size-3.5" style={{ color: AMORE.dorado }} strokeWidth={1.5} />
-          <span className="text-[11px]" style={{ color: AMORE.textoSecundario }}>
-            Tus datos están protegidos
-          </span>
-        </div>
-      </div>
-    </div>
+        {!fecha ? (
+          <p className="mt-3 text-center text-[13px]" style={{ color: AMORE.textoSecundario }}>
+            Elige una fecha para ver las horas disponibles.
+          </p>
+        ) : cargandoHorarios ? (
+          <p className="mt-3 text-center text-[13px]" style={{ color: AMORE.textoSecundario }} role="status">
+            Consultando horarios reales...
+          </p>
+        ) : errorHorarios ? (
+          <div className="mt-3 flex flex-col items-center gap-2.5 text-center">
+            <p className="text-[13px]" style={{ color: AMORE.textoSecundario }}>
+              No pudimos confirmar los horarios en este momento.
+            </p>
+            <button type="button" onClick={onReintentar} className="h-10 rounded-full px-5 text-[13.5px] font-semibold text-white" style={{ backgroundColor: AMORE.burdeos }}>
+              Reintentar
+            </button>
+          </div>
+        ) : horarios.length === 0 ? (
+          <div className="mt-3 flex flex-col items-center gap-1.5 text-center">
+            <p className="text-[13px]" style={{ color: AMORE.textoSecundario }}>
+              No encontramos horarios disponibles para esta fecha.
+            </p>
+            <p className="text-[12px] font-medium" style={{ color: AMORE.burdeos }}>
+              Elige otra fecha en el calendario de arriba.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-col gap-3">
+            {grupos.map((grupo) => (
+              <div key={grupo.nombre}>
+                {grupos.length > 1 && (
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide" style={{ color: AMORE.textoSecundario }}>
+                    {grupo.nombre}
+                  </p>
+                )}
+                <div className="grid grid-cols-3 gap-2">
+                  {grupo.horas.map((h) => {
+                    const seleccionado = h === horaSeleccionada;
+                    return (
+                      <button
+                        key={h}
+                        type="button"
+                        aria-pressed={seleccionado}
+                        onClick={() => setHoraSeleccionada(h)}
+                        className="h-11 rounded-xl text-[13.5px] font-medium"
+                        style={seleccionado ? { backgroundColor: AMORE.burdeos, color: "#fff", border: `1.5px solid ${AMORE.burdeos}` } : { backgroundColor: "#fff", color: AMORE.texto, border: `1.5px solid ${AMORE.borde}` }}
+                      >
+                        {formatearHora12h(h)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </MarcoPasoAmore>
   );
 }

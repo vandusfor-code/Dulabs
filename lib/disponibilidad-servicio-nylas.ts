@@ -33,6 +33,8 @@ import {
 import { citasOcupadasDelDia } from "@/lib/disponibilidad-servicio";
 import { horaColombiaDesdeIso } from "@/lib/timezone-colombia";
 import { resolverEspecialistasElegiblesParaServicio } from "@/lib/asignacion-categoria";
+import { resolverEspecialistasParaMultiServicio } from "@/lib/agenda-v2/multi-servicio";
+import { MAX_SERVICIOS_POR_CITA } from "@/lib/agenda-v2/servicios";
 import { consultarEventosOcupadosNylas } from "@/lib/nylas/nylas-eventos-ocupados";
 import { resolverCalendarIdNylasDeEspecialista } from "@/lib/nylas/nylas-calendario-especialista";
 import type { NylasEventsClient } from "@/lib/nylas/nylas-types";
@@ -211,4 +213,86 @@ export async function listarHorariosDisponiblesPorServicioConNylas(
   }
 
   return { ok: true, servicio: { id: servicio.id as string, nombre: servicio.nombre as string, duracionMin }, especialistas };
+}
+
+// ---------------------------------------------------------------------------
+// PORTAL AMORE (autorizado) -- varios servicios en UNA sola reserva (ej. uñas de
+// manos + de pies). Es lo mismo que ya hace el chat (lib/agenda-v2): UNA sola
+// profesional que realice TODOS los servicios (intersección real, nunca una
+// regla nueva), en un bloque continuo con la duración SUMADA. Cada profesional
+// de la intersección se calcula de forma independiente con
+// calcularHorariosDeEspecialista (mismo motor: jornada + bloqueos + citas de
+// DuLabs + eventos de Google Calendar), por eso un hueco a mitad del bloque
+// combinado nunca se ofrece. Con un solo servicio delega TAL CUAL en
+// listarHorariosDisponiblesPorServicioConNylas (comportamiento idéntico,
+// incluido el modo "prioridad"); con varios, siempre modo "todos".
+// ---------------------------------------------------------------------------
+
+export type ServicioDeCombinacion = { id: string; nombre: string; duracionMin: number };
+
+export type ResultadoHorariosMultiServicioConNylas =
+  | {
+      ok: true;
+      /** Resumen de la cita completa: id = el primer servicio, nombre = «A + B», duracionMin = la suma de todos. */
+      servicio: ServicioDeCombinacion;
+      /** Cada servicio de la combinación, en el orden pedido. */
+      servicios: ServicioDeCombinacion[];
+      especialistas: EspecialistaConHorariosNylas[];
+    }
+  | { ok: false; motivo: "servicio_no_encontrado" | "demasiados_servicios" | "combinacion_sin_profesional" | "sin_especialistas_habilitados"; detalle: string };
+
+export async function listarHorariosDisponiblesPorServiciosConNylas(
+  supabase: SupabaseClient,
+  params: { idTenant: string; servicioIds: string[]; fecha: string; especialistaId?: number },
+  deps: DepsDisponibilidadNylas,
+): Promise<ResultadoHorariosMultiServicioConNylas> {
+  const ids = [...new Set(params.servicioIds)];
+  if (ids.length === 0) {
+    return { ok: false, motivo: "servicio_no_encontrado", detalle: "No se indicó ningún servicio." };
+  }
+  if (ids.length > MAX_SERVICIOS_POR_CITA) {
+    return { ok: false, motivo: "demasiados_servicios", detalle: "Máximo " + MAX_SERVICIOS_POR_CITA + " servicios por cita." };
+  }
+
+  if (ids.length === 1) {
+    const unico = await listarHorariosDisponiblesPorServicioConNylas(
+      supabase,
+      { idTenant: params.idTenant, servicioId: ids[0]!, fecha: params.fecha, especialistaId: params.especialistaId },
+      deps,
+    );
+    return unico.ok ? { ok: true, servicio: unico.servicio, servicios: [unico.servicio], especialistas: unico.especialistas } : unico;
+  }
+
+  const { data } = await supabase
+    .from("dulabs_servicios")
+    .select("id, nombre, duracion_min")
+    .eq("id_tenant", params.idTenant)
+    .in("id", ids)
+    .eq("activo", true);
+  const encontrados = (data ?? []) as { id: string; nombre: string; duracion_min: number | null }[];
+  // Preserva el orden pedido -- el .in() de Postgres no lo garantiza.
+  const ordenados = ids.map((id) => encontrados.find((s) => s.id === id));
+  if (ordenados.some((s) => !s || !s.duracion_min || s.duracion_min <= 0)) {
+    return { ok: false, motivo: "servicio_no_encontrado", detalle: "Uno o más servicios ya no existen o no están activos." };
+  }
+  const servicios: ServicioDeCombinacion[] = ordenados.map((s) => ({ id: s!.id, nombre: s!.nombre, duracionMin: s!.duracion_min as number }));
+
+  const { especialistas: comunes } = await resolverEspecialistasParaMultiServicio(supabase, params.idTenant, ids);
+  if (comunes.length === 0) {
+    return { ok: false, motivo: "combinacion_sin_profesional", detalle: "Ninguna profesional realiza todos esos servicios en una sola cita." };
+  }
+  let especialistasActivos = comunes.map((e) => ({ id: e.especialistaId, nombre: e.nombre }));
+  if (params.especialistaId !== undefined) {
+    especialistasActivos = especialistasActivos.filter((e) => e.id === params.especialistaId);
+  }
+  if (especialistasActivos.length === 0) {
+    return { ok: false, motivo: "sin_especialistas_habilitados", detalle: "Esa profesional no realiza todos los servicios elegidos." };
+  }
+
+  const duracionMin = servicios.reduce((total, s) => total + s.duracionMin, 0);
+  const especialistas = await Promise.all(
+    especialistasActivos.map((especialista) => calcularHorariosDeEspecialista(supabase, { idTenant: params.idTenant, especialista, fecha: params.fecha, duracionMin }, deps)),
+  );
+
+  return { ok: true, servicio: { id: servicios[0]!.id, nombre: servicios.map((s) => s.nombre).join(" + "), duracionMin }, servicios, especialistas };
 }

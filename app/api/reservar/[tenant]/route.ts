@@ -8,6 +8,8 @@ import { enviarConfirmacionReservaWhatsApp } from "@/lib/reserva-notificaciones-
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import { reservarPorPortalAmore } from "@/lib/mi-cita/reserva-portal";
 import { depsProduccionMiCita } from "@/lib/mi-cita/gestion";
+import { MAX_SERVICIOS_POR_CITA } from "@/lib/agenda-v2/servicios";
+import { servicioIdsDeCuerpo } from "@/lib/reserva-portal-servicios";
 
 export const runtime = "nodejs";
 
@@ -68,11 +70,16 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     // CTA "¿Dudas? Escríbenos por WhatsApp" del portal. Nunca inventado.
     telefonoNegocio: clienteConfig?.telefono_negocio ?? null,
     servicios: servicios ?? [],
+    // Cuántos servicios caben en UNA cita: solo AMORE puede combinarlos (manos + pies); cualquier otro negocio sigue con uno.
+    maxServiciosPorCita: tenant === AMORE_TENANT_ID ? MAX_SERVICIOS_POR_CITA : 1,
   });
 }
 
 type BodyReserva = {
   servicioId?: string;
+  // AMORE (portal, autorizado) — varios servicios en UNA sola cita (hasta MAX_SERVICIOS_POR_CITA, ej. manos + pies). Sin esto, o con uno solo,
+  // todo funciona exactamente como antes.
+  servicioIds?: string[];
   especialistaId?: number;
   fecha?: string;
   hora?: string;
@@ -132,7 +139,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: "Solicitud inválida" }, { status: 400 });
   }
 
-  const servicioId = body.servicioId?.trim();
+  // Los servicios de la cita: `servicioIds` (varios, solo AMORE) o el `servicioId` de siempre.
+  const pedidos = servicioIdsDeCuerpo(body);
+  if (!pedidos.ok && pedidos.motivo !== "faltan") return Response.json({ error: pedidos.error }, { status: 400 });
+  const servicioIds = pedidos.ok ? pedidos.ids : [];
+  const servicioId = servicioIds[0];
   const especialistaId = Number(body.especialistaId);
   const fecha = body.fecha?.trim();
   const hora = body.hora?.trim();
@@ -150,6 +161,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: "Falta identificador de solicitud" }, { status: 400 });
   }
 
+  // Combinar servicios en una sola cita solo existe para AMORE (su motor real lo soporta); cualquier otro negocio sigue con un servicio por cita.
+  if (servicioIds.length > 1 && tenant !== AMORE_TENANT_ID) {
+    return Response.json({ error: "Este negocio no permite combinar servicios en una sola cita" }, { status: 400 });
+  }
+
   const inicio = new Date(`${fecha}T${hora}:00-05:00`);
   if (Number.isNaN(inicio.getTime())) {
     return Response.json({ error: "Fecha u hora inválida" }, { status: 400 });
@@ -160,6 +176,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (tenant === AMORE_TENANT_ID) {
     const r = await reservarPorPortalAmore(depsProduccionMiCita(supabase), {
       servicioId,
+      serviciosIdsAdicionales: servicioIds.slice(1),
       especialistaId,
       inicio,
       nombreCliente,

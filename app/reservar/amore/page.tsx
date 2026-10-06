@@ -6,21 +6,28 @@ import { PortalLandingAmore } from "@/components/reservar-amore/PortalLandingAmo
 import { PasoSeleccionServicioAmore } from "@/components/reservar-amore/PasoSeleccionServicioAmore";
 import { PasoSeleccionProfesionalAmore } from "@/components/reservar-amore/PasoSeleccionProfesionalAmore";
 import { PasoSeleccionHorarioAmore } from "@/components/reservar-amore/PasoSeleccionHorarioAmore";
-import { PasoDatosClienteAmore, type DatosClienteAmore } from "@/components/reservar-amore/PasoDatosClienteAmore";
+import { PasoDatosClienteAmore, telefonoWhatsappValido, type DatosClienteAmore } from "@/components/reservar-amore/PasoDatosClienteAmore";
 import { PasoConfirmacionAmore } from "@/components/reservar-amore/PasoConfirmacionAmore";
 import { PasoExitoAmore } from "@/components/reservar-amore/PasoExitoAmore";
 import { AMORE } from "@/components/reservar-amore/tema";
+import { MAX_SERVICIOS_POR_DEFECTO, mismosServicios, parametroServicioIds, serviciosDeIds, type ServicioDelPortal } from "@/lib/reservar-amore-servicios";
 
 // Portal público de reservas de AMORE (Fase 3, autorizado) — consumidor
 // puro del MISMO núcleo de reservas ya existente y genérico
 // (lib/disponibilidad-servicio.ts vía las rutas de
-// app/api/reservar/[tenant]/*, sin ningún cambio de esas rutas para llegar
-// hasta acá) -- idéntico contrato de datos que app/reservar/[tenant]/page.tsx
-// (el portal de Daniela), pero con AMORE_TENANT_ID fijo en vez de un
-// parámetro de ruta dinámico, y con una identidad visual propia (ver
-// components/reservar-amore/). Ninguna disponibilidad ni precio ni
-// duración se calcula aquí: todo lo que se ve es lo que el backend
-// devolvió; al confirmar, el backend vuelve a validar todo desde cero.
+// app/api/reservar/[tenant]/*) -- idéntico contrato de datos que
+// app/reservar/[tenant]/page.tsx (el portal de Daniela), pero con
+// AMORE_TENANT_ID fijo en vez de un parámetro de ruta dinámico, y con una
+// identidad visual propia (ver components/reservar-amore/). Ninguna
+// disponibilidad ni precio ni duración se calcula aquí: todo lo que se ve
+// es lo que el backend devolvió; al confirmar, el backend vuelve a validar
+// todo desde cero.
+//
+// VARIOS SERVICIOS en una sola cita (ej. uñas de manos + de pies): la
+// clienta marca los que quiera (hasta `maxServiciosPorCita`, que manda el
+// servidor); el backend busca a las profesionales que hacen TODOS, ofrece
+// bloques continuos con la duración sumada y crea UNA sola cita. La pantalla
+// solo manda la lista de ids (`servicioIds`).
 //
 // Ruta estática ("amore") a propósito, en vez de usar
 // app/reservar/[tenant]/page.tsx con el UUID en la URL: Next.js prioriza un
@@ -31,22 +38,12 @@ const AMORE_TENANT_ID = "ed6ae77f-8a0c-483e-a5d9-8ede68eca50f";
 
 const HORIZONTE_DIAS = 30;
 
-type Servicio = {
-  id: string;
-  nombre: string;
-  categoria: string | null;
-  descripcion: string | null;
-  duracion_min: number;
-  precio: number | null;
-  imagen_url: string | null;
-};
-
 type EspecialistaOpcion = { id: number; nombre: string };
 
 type Paso = "inicio" | "servicio" | "profesional" | "horario" | "datos" | "confirmar" | "exito";
 
 type Seleccion = {
-  servicioId: string | null;
+  servicioIds: string[];
   especialistaId: number | null;
   especialistaNombre: string | null;
   fecha: string | null;
@@ -55,7 +52,7 @@ type Seleccion = {
 
 type ResultadoExito = { codigo: string; servicio: string; profesional: string; inicio: string; fin: string; duracionMin: number; enlaceGestion?: string | null };
 
-const SELECCION_VACIA: Seleccion = { servicioId: null, especialistaId: null, especialistaNombre: null, fecha: null, hora: null };
+const SELECCION_VACIA: Seleccion = { servicioIds: [], especialistaId: null, especialistaNombre: null, fecha: null, hora: null };
 const DATOS_VACIOS: DatosClienteAmore = { nombre: "", telefono: "", cumpleDia: "", cumpleMes: "" };
 
 function hoyISO(): string {
@@ -75,7 +72,8 @@ export default function PortalReservasAmorePage() {
   const [disponible, setDisponible] = useState(true);
   const [negocio, setNegocio] = useState("AMORE");
   const [telefonoNegocio, setTelefonoNegocio] = useState<string | null>(null);
-  const [servicios, setServicios] = useState<Servicio[]>([]);
+  const [servicios, setServicios] = useState<ServicioDelPortal[]>([]);
+  const [maxServicios, setMaxServicios] = useState(MAX_SERVICIOS_POR_DEFECTO);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
   const [paso, setPaso] = useState<Paso>("inicio");
@@ -84,15 +82,23 @@ export default function PortalReservasAmorePage() {
 
   const [especialistas, setEspecialistas] = useState<EspecialistaOpcion[]>([]);
   const [cargandoEspecialistas, setCargandoEspecialistas] = useState(false);
+  const [errorEspecialistas, setErrorEspecialistas] = useState(false);
+  const [sinProfesionalComun, setSinProfesionalComun] = useState(false);
 
   const [horarios, setHorarios] = useState<string[]>([]);
   const [cargandoHorarios, setCargandoHorarios] = useState(false);
+  const [errorHorarios, setErrorHorarios] = useState(false);
 
   const [enviando, setEnviando] = useState(false);
   const [errorReserva, setErrorReserva] = useState<string | null>(null);
   const [exito, setExito] = useState<ResultadoExito | null>(null);
 
   const idempotencyRef = useRef<{ firma: string; clave: string } | null>(null);
+  // Cada consulta lleva un número: si la clienta cambia de servicio o de fecha mientras una respuesta vieja viaja, esa respuesta se descarta.
+  const solicitudEspecialistasRef = useRef(0);
+  const solicitudHorariosRef = useRef(0);
+  // Servicios para los que ya se cargó la lista de profesionales: si vuelve y no cambió nada, se conserva todo lo ya elegido.
+  const serviciosDeEspecialistasRef = useRef<string[]>([]);
 
   useEffect(() => {
     let cancelado = false;
@@ -109,6 +115,7 @@ export default function PortalReservasAmorePage() {
         setNegocio(body.negocio || "AMORE");
         setTelefonoNegocio(body.telefonoNegocio ?? null);
         setServicios(body.servicios ?? []);
+        if (Number.isInteger(body.maxServiciosPorCita) && body.maxServiciosPorCita >= 1) setMaxServicios(body.maxServiciosPorCita);
       } catch {
         if (!cancelado) setErrorCarga("No pudimos cargar esta página. Verifica tu conexión e intenta de nuevo.");
       } finally {
@@ -120,50 +127,94 @@ export default function PortalReservasAmorePage() {
     };
   }, []);
 
-  const servicioElegido = useMemo(() => servicios.find((s) => s.id === seleccion.servicioId) ?? null, [servicios, seleccion.servicioId]);
+  // Cada pantalla nueva arranca desde arriba (si no, quedaría a medio desplazar de la anterior). `instant` evita el desplazamiento suave global del sitio.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
+  }, [paso]);
 
-  const elegirServicio = useCallback(async (servicio: Servicio) => {
-    setSeleccion({ ...SELECCION_VACIA, servicioId: servicio.id });
+  const serviciosElegidos = useMemo(() => serviciosDeIds(seleccion.servicioIds, servicios), [seleccion.servicioIds, servicios]);
+
+  const cambiarSeleccionServicios = useCallback((ids: string[]) => {
+    setSeleccion((s) => ({ ...s, servicioIds: ids }));
+  }, []);
+
+  const cargarEspecialistas = useCallback(async (ids: string[]) => {
+    const solicitud = ++solicitudEspecialistasRef.current;
     setEspecialistas([]);
-    setHorarios([]);
+    setSinProfesionalComun(false);
+    setErrorEspecialistas(false);
     setCargandoEspecialistas(true);
-    setPaso("profesional");
     try {
-      const res = await fetch(`/api/reservar/${AMORE_TENANT_ID}/especialistas?servicioId=${encodeURIComponent(servicio.id)}`);
+      const qs = new URLSearchParams({ servicioIds: parametroServicioIds(ids) });
+      const res = await fetch(`/api/reservar/${AMORE_TENANT_ID}/especialistas?${qs.toString()}`);
       const body = await res.json();
+      if (solicitud !== solicitudEspecialistasRef.current) return;
+      if (!res.ok) {
+        setErrorEspecialistas(true);
+        return;
+      }
       setEspecialistas(body.especialistas ?? []);
+      setSinProfesionalComun(body.motivo === "combinacion_sin_profesional");
+    } catch {
+      if (solicitud === solicitudEspecialistasRef.current) setErrorEspecialistas(true);
     } finally {
-      setCargandoEspecialistas(false);
+      if (solicitud === solicitudEspecialistasRef.current) setCargandoEspecialistas(false);
     }
   }, []);
 
+  // «Continuar» del paso de servicios: busca a las profesionales que hacen TODOS los servicios elegidos.
+  const continuarDeServicios = useCallback(() => {
+    const ids = serviciosElegidos.map((s) => s.id);
+    if (ids.length === 0) return;
+    setPaso("profesional");
+    // Si vuelve sin haber cambiado nada, se conserva la lista y todo lo que ya había elegido (a menos que la consulta anterior hubiera fallado).
+    if (mismosServicios(ids, serviciosDeEspecialistasRef.current) && !errorEspecialistas) return;
+    serviciosDeEspecialistasRef.current = ids;
+    setSeleccion({ ...SELECCION_VACIA, servicioIds: ids });
+    setHorarios([]);
+    setErrorHorarios(false);
+    void cargarEspecialistas(ids);
+  }, [serviciosElegidos, errorEspecialistas, cargarEspecialistas]);
+
   const elegirEspecialista = useCallback((op: EspecialistaOpcion) => {
     setSeleccion((s) => ({ ...s, especialistaId: op.id, especialistaNombre: op.nombre, fecha: null, hora: null }));
+    setHorarios([]);
+    setErrorHorarios(false);
     setPaso("horario");
   }, []);
 
   const cargarHorarios = useCallback(
     async (fecha: string) => {
-      if (!seleccion.servicioId || !seleccion.especialistaId) return;
+      if (seleccion.servicioIds.length === 0 || !seleccion.especialistaId) return;
+      const solicitud = ++solicitudHorariosRef.current;
       setCargandoHorarios(true);
+      setErrorHorarios(false);
       setHorarios([]);
       try {
-        const qs = new URLSearchParams({ servicioId: seleccion.servicioId, fecha, especialistaId: String(seleccion.especialistaId) });
+        const qs = new URLSearchParams({ servicioIds: parametroServicioIds(seleccion.servicioIds), fecha, especialistaId: String(seleccion.especialistaId) });
         const res = await fetch(`/api/reservar/${AMORE_TENANT_ID}/disponibilidad?${qs.toString()}`);
         const body = await res.json();
+        if (solicitud !== solicitudHorariosRef.current) return;
         const entrada = (body.especialistas ?? [])[0];
+        // Google Calendar no confirmó: nunca se muestra como «sin horarios», porque no es verdad.
+        if (!res.ok || entrada?.estado === "no_confirmado") {
+          setErrorHorarios(true);
+          return;
+        }
         setHorarios(entrada?.horarios ?? []);
+      } catch {
+        if (solicitud === solicitudHorariosRef.current) setErrorHorarios(true);
       } finally {
-        setCargandoHorarios(false);
+        if (solicitud === solicitudHorariosRef.current) setCargandoHorarios(false);
       }
     },
-    [seleccion.servicioId, seleccion.especialistaId]
+    [seleccion.servicioIds, seleccion.especialistaId]
   );
 
   const elegirFecha = useCallback(
     (fecha: string) => {
       setSeleccion((s) => ({ ...s, fecha, hora: null }));
-      cargarHorarios(fecha);
+      void cargarHorarios(fecha);
     },
     [cargarHorarios]
   );
@@ -174,12 +225,12 @@ export default function PortalReservasAmorePage() {
   }, []);
 
   const irAConfirmar = useCallback(() => {
-    if (!datos.nombre.trim() || !datos.telefono.trim()) return;
+    if (datos.nombre.trim().length < 2 || !telefonoWhatsappValido(datos.telefono)) return;
     setPaso("confirmar");
   }, [datos]);
 
   function obtenerIdempotencyKey(): string {
-    const firma = JSON.stringify([seleccion.servicioId, seleccion.especialistaId, seleccion.fecha, seleccion.hora, datos]);
+    const firma = JSON.stringify([seleccion.servicioIds, seleccion.especialistaId, seleccion.fecha, seleccion.hora, datos]);
     if (idempotencyRef.current?.firma !== firma) {
       idempotencyRef.current = { firma, clave: crearIdempotencyKey() };
     }
@@ -187,7 +238,7 @@ export default function PortalReservasAmorePage() {
   }
 
   const confirmarReserva = useCallback(async () => {
-    if (!seleccion.servicioId || !seleccion.especialistaId || !seleccion.fecha || !seleccion.hora) return;
+    if (seleccion.servicioIds.length === 0 || !seleccion.especialistaId || !seleccion.fecha || !seleccion.hora) return;
     setEnviando(true);
     setErrorReserva(null);
     try {
@@ -195,7 +246,7 @@ export default function PortalReservasAmorePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          servicioId: seleccion.servicioId,
+          servicioIds: seleccion.servicioIds,
           especialistaId: seleccion.especialistaId,
           fecha: seleccion.fecha,
           hora: seleccion.hora,
@@ -225,19 +276,19 @@ export default function PortalReservasAmorePage() {
     setSeleccion((s) => ({ ...s, hora: null }));
     setErrorReserva(null);
     setPaso("horario");
-    if (seleccion.fecha) cargarHorarios(seleccion.fecha);
+    if (seleccion.fecha) void cargarHorarios(seleccion.fecha);
   }, [seleccion.fecha, cargarHorarios]);
 
   if (cargando) {
     return (
-      <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: AMORE.fondo }}>
+      <div className="flex min-h-dvh items-center justify-center" style={{ backgroundColor: AMORE.fondo }}>
         <Loader2 className="size-6 animate-spin" style={{ color: AMORE.textoSecundario }} />
       </div>
     );
   }
   if (errorCarga) {
     return (
-      <div className="flex min-h-screen items-center justify-center px-6 text-center" style={{ backgroundColor: AMORE.fondo }}>
+      <div className="flex min-h-dvh items-center justify-center px-6 text-center" style={{ backgroundColor: AMORE.fondo }}>
         <p className="text-sm" style={{ color: AMORE.textoSecundario }}>
           {errorCarga}
         </p>
@@ -246,7 +297,7 @@ export default function PortalReservasAmorePage() {
   }
   if (!disponible) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center" style={{ backgroundColor: AMORE.fondo }}>
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center" style={{ backgroundColor: AMORE.fondo }}>
         <div className="flex size-14 items-center justify-center rounded-2xl" style={{ backgroundColor: AMORE.doradoSuave, color: AMORE.dorado }}>
           <CalendarClock className="size-7" />
         </div>
@@ -257,49 +308,72 @@ export default function PortalReservasAmorePage() {
     );
   }
 
+  const pantallaServicios = (
+    <PasoSeleccionServicioAmore
+      negocio={negocio}
+      servicios={servicios}
+      seleccionIds={seleccion.servicioIds}
+      maxServicios={maxServicios}
+      onCambiarSeleccion={cambiarSeleccionServicios}
+      onContinuar={continuarDeServicios}
+      onVolver={() => setPaso("inicio")}
+    />
+  );
+
   switch (paso) {
     case "inicio":
       return <PortalLandingAmore negocio={negocio} telefonoNegocio={telefonoNegocio} onComenzar={() => setPaso("servicio")} />;
     case "servicio":
-      return <PasoSeleccionServicioAmore negocio={negocio} servicios={servicios} onElegir={elegirServicio} onVolver={() => setPaso("inicio")} />;
+      return pantallaServicios;
     case "profesional":
-      return (
+      return serviciosElegidos.length > 0 ? (
         <PasoSeleccionProfesionalAmore
           negocio={negocio}
-          servicioNombre={servicioElegido?.nombre ?? "servicio"}
+          servicios={serviciosElegidos}
           especialistas={especialistas}
           cargando={cargandoEspecialistas}
+          errorCarga={errorEspecialistas}
+          sinProfesionalComun={sinProfesionalComun}
           especialistaSeleccionadoId={seleccion.especialistaId}
           onElegir={elegirEspecialista}
+          onReintentar={() => void cargarEspecialistas(serviciosDeEspecialistasRef.current)}
+          onCambiarServicios={() => setPaso("servicio")}
           onVolver={() => setPaso("servicio")}
         />
+      ) : (
+        pantallaServicios
       );
     case "horario":
-      return servicioElegido ? (
+      return serviciosElegidos.length > 0 ? (
         <PasoSeleccionHorarioAmore
           negocio={negocio}
-          servicio={servicioElegido}
+          servicios={serviciosElegidos}
           especialistaNombre={seleccion.especialistaNombre}
           fecha={seleccion.fecha}
+          hora={seleccion.hora}
           fechaMinima={hoyISO()}
           fechaMaxima={fechaMaxima()}
           horarios={horarios}
           cargandoHorarios={cargandoHorarios}
+          errorHorarios={errorHorarios}
           onSeleccionarFecha={elegirFecha}
+          onReintentar={() => seleccion.fecha && void cargarHorarios(seleccion.fecha)}
           onContinuar={elegirHora}
           onVolver={() => setPaso("profesional")}
         />
-      ) : null;
+      ) : (
+        pantallaServicios
+      );
     case "datos":
       return <PasoDatosClienteAmore negocio={negocio} datos={datos} onCambiar={setDatos} onContinuar={irAConfirmar} onVolver={() => setPaso("horario")} />;
     case "confirmar":
-      return servicioElegido ? (
+      return serviciosElegidos.length > 0 && seleccion.fecha && seleccion.hora ? (
         <PasoConfirmacionAmore
           negocio={negocio}
-          servicio={servicioElegido}
+          servicios={serviciosElegidos}
           especialistaNombre={seleccion.especialistaNombre ?? ""}
-          fecha={seleccion.fecha!}
-          hora={seleccion.hora!}
+          fecha={seleccion.fecha}
+          hora={seleccion.hora}
           datos={datos}
           enviando={enviando}
           error={errorReserva}
@@ -308,9 +382,11 @@ export default function PortalReservasAmorePage() {
           onElegirOtroHorario={volverAHorarioTrasOcupado}
           onVolver={() => setPaso("datos")}
         />
-      ) : null;
+      ) : (
+        pantallaServicios
+      );
     case "exito":
-      return exito ? <PasoExitoAmore resultado={exito} negocio={negocio} /> : null;
+      return exito ? <PasoExitoAmore resultado={exito} negocio={negocio} servicios={serviciosElegidos} /> : null;
     default:
       return null;
   }
