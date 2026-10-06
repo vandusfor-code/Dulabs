@@ -582,13 +582,24 @@ describe("Resiliencia ante el proveedor -- causa raíz de los «problema técnic
     assert.equal(llamadas.length, 4);
   });
 
-  it("clave inválida o sin permiso (401/403, o «API key not valid») -> NO se reintenta: ningún reintento lo arregla y cada uno hace esperar a la clienta", async () => {
-    for (const fallo of [error(401), error(403), new Error("gemini_http_400: API key not valid. Please pass a valid API key.")]) {
-      const { cliente, llamadas } = clienteConGuion([fallo, "ok"]);
+  it("un 401/403 de UN modelo (p. ej. la clave no tiene permiso para el modelo de respaldo) NO corta el plan: el siguiente intento sigue y puede atender a la clienta", async () => {
+    for (const fallo of [error(403), error(401), new Error("gemini_http_404: models/gemini-3.1-flash-lite is not found")]) {
+      const { cliente, llamadas } = clienteConGuion([503, fallo, "ok"]);
       const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente));
-      assert.equal(r.errorTecnico, true, fallo.message);
-      assert.equal(llamadas.length, 1, fallo.message);
+      assert.equal(r.errorTecnico, undefined, fallo.message);
+      assert.equal(llamadas.length, 3, fallo.message);
+      assert.equal(r.replyText, "El dipping cuesta $60.000 💗");
     }
+  });
+
+  it("clave realmente inválida (todos los intentos fallan con 401/400 «API key not valid») -> mensaje genérico de error técnico tras el plan completo, rápido y sin colgarse", async () => {
+    const invalida = new Error("gemini_http_400: API key not valid. Please pass a valid API key.");
+    const { cliente, llamadas } = clienteConGuion([invalida, invalida, invalida, invalida, invalida]);
+    const t0 = Date.now();
+    const r = await clasificarMensajeConGemini({ mensaje: "hola" }, dependencias(cliente));
+    assert.equal(r.errorTecnico, true);
+    assert.equal(llamadas.length, PLAN_DE_INTENTOS.length);
+    assert.ok(Date.now() - t0 < 2_000, "con la espera inyectada no se demora");
   });
 
   it("espera corta entre intentos solo cuando el anterior FALLÓ (300 / 500 / 1000 ms) y ninguna en el camino feliz", async () => {

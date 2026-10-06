@@ -18,7 +18,6 @@ import {
   GEMINI_DEFAULT_MODEL,
 } from "@/lib/flow/gemini/gemini-client";
 import { classifyGeminiError } from "@/lib/flow/gemini/gemini-error-classifier";
-import { EFFECT_RESULT_CLASSIFICATIONS } from "@/lib/flow/executor-types";
 import type { GeminiGenerateContentClient } from "@/lib/flow/gemini/gemini-types";
 
 export const MENSAJE_BIENVENIDA_1 = "¡Hola! 💗 Bienvenido/a a AMORE.\n\nEstoy aquí para ayudarte a encontrar el servicio ideal o reservar tu cita.";
@@ -759,7 +758,6 @@ export async function clasificarMensajeConGemini(
   const contents = [...(params.historial ?? []), { role: "user" as const, text: params.mensaje }];
 
   let ganador: ResultadoClasificacionGemini | null = null;
-  let detener = false;
   let despertar: () => void = () => {};
   const hayNovedad = new Promise<void>((resolve) => {
     despertar = resolve;
@@ -788,10 +786,10 @@ export async function clasificarMensajeConGemini(
       );
     } catch (err) {
       if (cancelacion.signal.aborted) return; // lo cancelamos nosotros porque otro intento ya ganó: no es un fallo
-      const { classification, error } = classifyGeminiError(err);
+      const { error } = classifyGeminiError(err);
       console.error(`[amore-entrada] ${etiqueta} falló (${error}):`, err instanceof Error ? err.message.slice(0, 200) : "error desconocido");
-      // Clave inválida o sin permiso: ningún reintento lo arregla, y cada uno hace esperar a la clienta para nada.
-      if (classification === EFFECT_RESULT_CLASSIFICATIONS.AUTH_ERROR) detener = true;
+      // Un 401/403/404 puede ser de UN solo modelo (permiso o disponibilidad por modelo): NUNCA corta el plan, el siguiente intento puede atender a la clienta.
+      // Con una clave realmente inválida el plan completo falla en pocos segundos (medido: ~6 s con Google real): no se cuelga.
       return;
     }
     const parseado = parsearSalidaGemini(resultado.text);
@@ -802,7 +800,7 @@ export async function clasificarMensajeConGemini(
     console.error(`[amore-entrada] ${etiqueta}: salida fuera del schema esperado (finishReason=${resultado.finishReason ?? "?"}, ${(resultado.text ?? "").length} caracteres)`);
   };
 
-  const terminoAlgo = () => ganador !== null || detener;
+  const terminoAlgo = () => ganador !== null;
   for (let i = 0; i < PLAN_DE_INTENTOS.length && !terminoAlgo(); i++) {
     const cancelacion = new AbortController();
     abortadores.push(cancelacion);
