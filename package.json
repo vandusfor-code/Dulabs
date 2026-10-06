@@ -7,7 +7,8 @@
     "build": "tsx scripts/validate-release-config.mts && next build",
     "start": "next start",
     "lint": "eslint",
-    "test:flow": "node scripts/run-test-flow.mjs"
+    "test:flow": "node scripts/run-test-flow.mjs",
+    "test:amore-gemini": "tsx --test --test-concurrency=1 lib/amore-conversacion-gemini-real.e2e.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

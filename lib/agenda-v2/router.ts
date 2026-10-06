@@ -87,7 +87,7 @@ import { nombreConocido, clienteConocidoCompleto } from "@/lib/clientes-conocido
 // llama a ESTA MISMA función de nuevo (nunca una segunda forma de arrancar
 // Agenda V2).
 import { buscarEntradaAmore, crearEntradaAmore, actualizarEntradaAmore } from "@/lib/amore-entrada-sesiones";
-import { MENSAJE_REGISTRO_NOMBRE, clasificarMensajeConGemini } from "@/lib/amore-entrada-gemini";
+import { MENSAJE_REGISTRO_NOMBRE, clasificarMensajeConGemini, respuestaDeConsultaEnReserva } from "@/lib/amore-entrada-gemini";
 import { construirContextoNegocioAmore } from "@/lib/amore-contexto-negocio";
 import { obtenerHistorialRecienteChat } from "@/lib/chats/historial-reciente";
 // FASE 8 (autorizado) -- gestión de citas existentes. Reutiliza TAL CUAL:
@@ -248,7 +248,7 @@ async function responderConsultaAmoreEnReserva(p: { supabase: SupabaseClient; id
       obtenerHistorialRecienteChat(p.supabase, { idTenant: p.idTenant, telefono: p.telefono, wamidActual: p.wamid }),
     ]);
     const r = await clasificarMensajeConGemini({ mensaje: p.mensaje, historial, contextoNegocio });
-    return r.intent === "CONSULTA" && !r.errorTecnico && r.replyText.trim() ? r.replyText.trim() : null;
+    return respuestaDeConsultaEnReserva(r);
   } catch (err) {
     console.error("[agenda-v2] no se pudo responder la consulta durante la reserva:", err instanceof Error ? err.message : "error desconocido");
     return null;

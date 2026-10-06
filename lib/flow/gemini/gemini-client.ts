@@ -47,7 +47,7 @@ export function createGeminiGenerateContentClient(apiKey: string): GeminiGenerat
       }
 
       const data = (await res.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string }> } }>;
         usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
         modelVersion?: string;
       };
@@ -59,6 +59,7 @@ export function createGeminiGenerateContentClient(apiKey: string): GeminiGenerat
           candidatesTokenCount: data.usageMetadata?.candidatesTokenCount,
         },
         model: data.modelVersion,
+        finishReason: data.candidates?.[0]?.finishReason,
       } satisfies GeminiGenerateContentResult;
     },
   };

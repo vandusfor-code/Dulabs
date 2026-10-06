@@ -53,6 +53,8 @@ export interface GeminiGenerateContentResult {
   text: string | null;
   usage?: { promptTokenCount?: number; candidatesTokenCount?: number };
   model?: string;
+  /** Motivo con el que Gemini terminó de escribir ("STOP" = completo; "MAX_TOKENS" = se cortó por el tope de tokens). Solo informativo: nadie debe depender de él para la lógica de negocio. */
+  finishReason?: string;
 }
 
 /** Boundary inyectable — tests mockan esto, nunca la red real. */
