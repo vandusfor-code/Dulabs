@@ -31,7 +31,7 @@ Detalle en `docs/DELACOUR_CMS_FASE_0_AUDITORIA.md`. En resumen: **nada era admin
 - **Guarda de anclaje comercial** (`lib/agente/comercial-anclaje.ts`): un porcentaje, descuento, oferta, combo, campaña, vigencia, «no hay…», fuga mayorista o plazo de política solo sale si lo respalda lo que devolvieron las herramientas en ese turno. Si el modelo insiste, mensaje fijo + asesora.
 - **Integración en el runtime**: turno normal y preguntas durante el checkout (lectura pura), cableado real de producción, y exclusión explícita de ASLC y de Delacour-hoy (no cambian hasta que tú habilites las herramientas).
 - **Migración de los 24 textos** al CMS: 7 scripts SQL generados por código (borradores → herramientas → retiro del prompt, tema por tema, cada uno con su reversa) más una consulta de estado de solo lectura.
-- **Evaluación**: pruebas con modelo guionizado (12 casos obligatorios, 18 preguntas adversariales), un arnés de evaluación con Gemini real (`scripts/eval/gemini-comercial.ts`) y 107 mutantes nuevos.
+- **Evaluación**: pruebas con modelo guionizado (12 casos obligatorios, 18 preguntas adversariales), un arnés de evaluación con Gemini real (`scripts/eval/gemini-comercial.ts`) y 113 mutantes nuevos.
 
 ## 3. Arquitectura
 
@@ -121,7 +121,7 @@ Sesión + rol + módulo en cada ruta (fail-closed), esquemas estrictos, límite 
 | `tsc` | 0 errores (heap 4 GB) |
 | ESLint | 0 problemas en 25 archivos |
 | `next build` | OK (heap 4 GB); las rutas de la tienda siguen dinámicas (ƒ) |
-| Mutación | ⟦MUT⟧ |
+| Mutación | **113/113 mutantes del PR 5 detectados** (M336–M448; el script suma 448 patrones y todos aplican exactamente una vez). La primera corrida detectó 93/107: los 14 sobrevivientes se reforzaron con pruebas (uno era equivalente y se reapuntó) y los ajustes de la guarda sumaron 6 mutantes más; la corrida final contra el código final detecta los 113 |
 
 ### Evaluación con Gemini real (parcial)
 
@@ -129,7 +129,17 @@ Se corrieron **71 casos** con `gemini-3.6-flash` (clave de pruebas `GEMINI_EVAL_
 
 ## 13. Mutaciones
 
-⟦TABLA_MUTACION⟧
+El script `scripts/mutacion/cms.py` quita o invierte UNA protección a la vez; alguna prueba DEBE fallar. Si no falla, la protección se podía eliminar sin que nadie se enterara.
+
+| PR | Mutantes | Resultado |
+|---|---|---|
+| PR 1 | 87 | 87/87 (la primera corrida dejó 7 sin detectar; se reforzaron las pruebas) |
+| PR 2 | 72 nuevos (159 en total) | 159/159 (4 sobrevivientes reforzados) |
+| PR 3 | 74 (233 patrones) | 74/74 |
+| PR 4 | 107 (102 nuevos y 5 de PR 3 reapuntados; 335 patrones) | 107/107 (6 sobrevivientes reforzados) |
+| **PR 5** | **113 (M336–M448; 448 patrones)** | **113/113** |
+
+Los 113 del PR 5, por área: consultas y herramientas de ARIA 23 · guarda de anclaje 38 · runtime, prompt, lista de ASLC y nombres de herramientas 16 · cableado real de producción 3 · scripts SQL 04 a 06 y sus reversas, ejecutados en Postgres embebido, 33. Primera corrida: 93/107 detectados; los 14 sobrevivientes mostraron pruebas que faltaban (campañas con ofertas ajenas, el mensaje específico de «no disponible», combos para el cliente mayorista, categoría ambigua, condicionales con porcentaje, «sigue vigente», el mínimo mayorista informado a un detal, la resolución de variables dentro del runtime y tres cuestiones de las reversas del script 06) y se agregaron; uno (la reversa del 04 sobre algo ya archivado) era equivalente y se reapuntó a quitar solo la revisión. Los ajustes de la guarda que salieron de la evaluación real agregaron M443–M448.
 
 ## 14. Riesgos y límites (con honestidad)
 
