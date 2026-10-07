@@ -16,7 +16,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //   que usan plantillas de la plataforma y no son de ningún negocio en particular. No tiene menú.
 // "avisos_etapa_pedidos" (Fase 3B.9F): SOLO el aviso al cliente cuando su pedido ya aceptado pasa a "en preparación", "enviado" o "entregado", con el texto que configuró el
 //   propio negocio (checkout_opciones.cierre.textos). Igual que el anterior, no enciende las plantillas de la plataforma ("notificaciones_pedidos") y no tiene menú.
-export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria", "pedidos_por_aceptar", "avisos_decision_pedidos", "avisos_etapa_pedidos"] as const;
+// "cms_comercial" (Bloque 29): Dashboard → Administración de tienda (página principal, ofertas, combos, campañas y contenido comercial con borrador, publicación y versiones).
+//   Sin esta fila el menú, la API y la lectura de lo publicado no existen para el negocio: la tienda, los pedidos y ARIA se comportan exactamente como antes.
+export const MODULOS = ["catalogo", "publibordados_clientes", "pedidos", "marca_referencia", "notificaciones_pedidos", "clientes_joyeria", "pedidos_por_aceptar", "avisos_decision_pedidos", "avisos_etapa_pedidos", "cms_comercial"] as const;
 export type ModuloId = (typeof MODULOS)[number];
 
 export function esModuloId(valor: unknown): valor is ModuloId {
