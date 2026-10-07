@@ -44,7 +44,10 @@ Un negocio sin el módulo `cms_comercial` no tiene nada de esto: ni API, ni men�
 | `precios.ts` · `precios-supabase.ts` | **El precio efectivo** (PR 4): implementa el puerto de precios del catálogo con lo PUBLICADO (`crearEvaluadorPrecios`, `crearPuertoPreciosCms`) y su cableado real (`repositorioConPrecios`) |
 | `imagen-publica.ts` | Ruta pública de imágenes `/catalogo/{tienda}/vitrina/{id}.webp`: solo imágenes LISTAS, usadas por contenido PUBLICADO y de la carpeta del propio negocio; todo lo demás, el mismo 404 |
 | `siembra-vitrina.ts` | Genera la página principal equivalente a la tienda de hoy y el SQL que la siembra (y su reversa) en `supabase/provisioning/<tienda>/` |
-| `testing/` | Fixtures, Postgres embebido (PGlite), el puente que lleva las llamadas `rpc/dulabs_cms_*` de las rutas al SQL real, un almacén de imágenes en memoria y `fetch-rutas.ts` (lleva el cliente del navegador a las rutas reales) |
+| `consulta.ts` | **Lo que ARIA puede saber** (PR 5), PURO: arma la respuesta de cada herramienta comercial (`ofertasVigentes`, `ofertaDeProducto`, `combosVigentes`, `campanasVigentes`, `contenidoComercial`) con `evaluacion.ts`, el reloj y el canal del turno, y sus esquemas de salida estrictos |
+| `variables-negocio.ts` | Los valores de las variables de los textos a partir de la configuración de ARIA (`negocio`): un solo cálculo para el Dashboard y para el runtime |
+| `migracion-textos.ts` | Genera los scripts SQL 04 a 07 de `supabase/provisioning/<tienda>/` (migrar los textos del prompt de ARIA al CMS, habilitar las herramientas, retirar del prompt, estado) y su tabla de correspondencia |
+| `testing/` | Fixtures, Postgres embebido (PGlite), el puente que lleva las llamadas `rpc/dulabs_cms_*` de las rutas al SQL real, un almacén de imágenes en memoria, `fetch-rutas.ts` (lleva el cliente del navegador a las rutas reales) y un Delacour sintético (tienda, módulo y la tabla real de la configuración de ARIA) |
 
 ## Datos (migración `20261210000000_dulabs_cms_comercial.sql`)
 
@@ -124,6 +127,27 @@ El inicio de la tienda (`/catalogo/{tienda}`) usa lo PUBLICADO en la página pri
 - **Una lectura por página**: la vitrina, los datos de los combos y los precios del inicio comparten una sola lectura de lo publicado (`lectura-publicada.ts`); las rutas de selección y pedido, el motor de pedidos y ARIA no memoizan: siempre leen lo vigente en ese momento. Cada visita a la tienda de un negocio SIN el módulo suma una consulta pequeña que responde «sin CMS» (si esto pesara, el siguiente paso sería recordar «sin CMS» unos segundos por negocio).
 - **Límite conocido**: el filtro de precio máximo de la búsqueda de ARIA (consulta SQL sobre el precio de lista) puede no incluir un producto con descuento cuyo precio de lista supere el máximo; nunca incluye de más.
 
+## ARIA lee del CMS (PR 5)
+
+ARIA (Gemini) conoce lo comercial **solo** por cuatro herramientas de lectura del backend, nunca por el prompt: lo que escribe la administradora es DATO estructurado, jamás instrucción.
+
+| Herramienta | Qué devuelve |
+|---|---|
+| `consultar_ofertas` | Las ofertas vigentes del canal; con una `referencia` ya vista, la ÚNICA oferta que le aplica con su precio de lista y el que paga hoy; con una `categoria`, las que cubren esa categoría completa |
+| `consultar_combos` | Los combos vigentes: componentes, cantidades, precio, ahorro, disponibilidad (con el inventario real; nunca el stock exacto) y vigencia. No se compran desde el carrito: los cierra una asesora |
+| `consultar_campanas` | Las campañas vigentes y las ofertas y combos que incluyen |
+| `consultar_contenido_comercial` | Los textos publicados de un tema de lista cerrada (horarios, ubicación, pagos, envíos, garantías, cambios, devoluciones, mayoristas, materiales, promociones, preguntas frecuentes) con las variables ya resueltas (`{{minimo_mayorista}}` → `$750.000`) |
+
+**Contrato.** Entradas estrictas: el modelo no puede pasar negocio, canal, fecha ni precio (salen del turno). Salidas estrictas: `empty: true` es la ÚNICA base para decir «por ahora no hay»; si no hay lector, el módulo está apagado, la lectura falla o la instantánea es de otro negocio, la herramienta responde `UNAVAILABLE` (nunca un vacío falso) y `FORBIDDEN` si el número no es del negocio. Solo lo publicado, vigente y aplicable al canal del cliente (un texto «mayorista» o una oferta mayorista jamás llegan a un cliente detal). Siempre se lee en el momento: nada se memoiza entre turnos.
+
+**La guarda de anclaje comercial** (`lib/agente/comercial-anclaje.ts`) vigila lo que el modelo escribe y solo lo deja salir si lo que devolvieron las herramientas **en ese turno** lo respalda (el porcentaje que escribe el cliente, o un texto del prompt, no respaldan nada: así no hay dos verdades). Códigos: `percent_unbacked`, `discount_unbacked`, `offer_unbacked`, `combo_unbacked`, `campaign_unbacked`, `absence_unbacked` («no hay…» sin una lectura vacía), `validity_unbacked` (fechas, rangos «hasta…», urgencias), `wholesale_leak` y `policy_figure_unbacked` (plazos de garantía, cambios, etc.). Las preguntas, las negaciones y los condicionales no cuentan como afirmaciones. Si el modelo afirma algo sin respaldo, se le pide corregir UNA vez; si insiste, el cliente recibe un mensaje fijo y la conversación pasa a una asesora (nunca se envía lo que dijo). La traza solo guarda los códigos, sin ningún texto. **Límite honesto**: una paráfrasis cualitativa de una política («aceptamos todo tipo de cambios») o una respuesta elíptica sin palabras clave no se puede verificar por palabras.
+
+**Dónde corre.** En el turno normal y también en las preguntas durante el checkout (lectura pura: el checkout no cambia). Solo en los números que tengan alguna de las cuatro herramientas en su lista: sin ellas (Delacour hoy, ASLC, AMORE) el prompt, la guarda y la traza son EXACTAMENTE los de siempre (`HERRAMIENTAS_ASLC` las excluye a propósito).
+
+**El prompt no lleva ningún dato comercial**: con las herramientas, solo se agrega una sección corta con CÓMO consultarlas (antes del estado de la conversación, que sigue siendo lo último).
+
+**Migración de los textos del prompt** (decisión del dueño: el CMS publicado es la única fuente de verdad, pero NO se retira nada de golpe). Los 22 textos comerciales de ARIA pasan al CMS como borradores (script 04), la administradora los revisa y publica, se habilitan las herramientas (05), se verifica con conversaciones reales y recién entonces se retiran del prompt tema por tema (06). Cada paso se niega a correr fuera de orden, tiene su reversa y lo prueba Postgres embebido con datos sintéticos (ver `supabase/provisioning/delacour/README.md`).
+
 ## Pruebas
 
 `npm run test:flow` (los archivos están en `scripts/test-flow-manifest.txt`). El SQL se ejecuta de verdad en Postgres embebido (`@electric-sql/pglite`): migración desde cero, sobre un estado previo, varias veces y con su reversa; el repositorio, el servicio y las rutas corren sobre ese SQL.
@@ -138,4 +162,4 @@ Mutación: `python3 scripts/mutacion/cms.py` (quita o invierte una protección a
 4. El PR 2 (Dashboard) no agrega migraciones: la entrada **Tienda** aparece sola donde el módulo esté habilitado.
 5. PR 3 (la tienda lee del CMS): sin cambios de esquema. Con el módulo habilitado y NADA publicado, la tienda sigue idéntica. Se corre `supabase/provisioning/delacour/03_sembrar_vitrina_actual.sql` (después del 02): publica la portada y el banner de hoy como contenido del CMS (la tienda se ve igual) y la administradora los encuentra listos para editar. Reversa: `03_sembrar_vitrina_actual.reversa.sql`.
 6. PR 4 (precio efectivo): sin cambios de esquema ni SQL nuevo. Con el módulo habilitado la tienda empieza a leer las ofertas y los combos que la administradora publique; mientras no publique nada, todo sigue idéntico (precio de lista). Para apagarlo basta deshabilitar el módulo del negocio: vuelve el precio de lista.
-7. El siguiente PR conecta ARIA (herramientas de consulta con contratos estrictos).
+7. PR 5 (ARIA): el código es **inerte** hasta que el número de ARIA tenga las herramientas comerciales en su lista (`dulabs_agente_runtime_config.herramientas`). El orden, con el SQL ya hecho en `supabase/provisioning/delacour/` (cada script se niega si el anterior no está): desplegar el PR 5 → `07` (estado) → `04` (borradores) → la administradora revisa y publica en Tienda → Contenido → `05` (habilita las herramientas y la guarda) → verificar con conversaciones reales → `06` (retira del prompt, de a pocos temas). Reversas: `06_…reversa` → `05_…reversa` → `04_…reversa`. Para apagar ARIA-CMS de inmediato basta la reversa del `05`: ARIA vuelve a ser exactamente la de antes.

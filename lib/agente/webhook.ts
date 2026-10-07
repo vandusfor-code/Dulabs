@@ -25,6 +25,7 @@ import { MetaGraphApiError, enviarMedia, enviarTexto } from "@/lib/whatsapp";
 import { enviarBotones, enviarLista, incrementarUsoMensajes, registrarMensaje, resolverTokenMetaAgente } from "@/lib/whatsapp-outbound";
 import { contactRef } from "@/lib/catalogo/pedidos/log";
 import { productionAgentToolDeps, productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
+import { crearLectorSupabase } from "@/lib/cms-comercial/lector";
 import { leerConfigAceptacion } from "@/lib/agente/aceptacion-humana";
 import { atenderRespuestaTrasAviso, createSupabaseHumanEvidence, esConfirmacionTrasAviso, type ResultadoRespuestaAviso } from "@/lib/agente/respuesta-aviso";
 import { createGeminiProvider } from "@/lib/ia-proveedores/gemini";
@@ -519,6 +520,9 @@ export function productionAgentBoundaryDeps(supabase: SupabaseClient, cliente: C
         rememberCustomerName: (k, nombre) => recordarNombreCliente(supabase, { idTenant: k.tenantId, phoneNumberId: k.phoneNumberId, telefonoCliente: k.waId, nombre }),
         // Fase 3B.4: el documento de identidad se cifra al recibirlo (AES-256-GCM, TOKEN_ENCRYPTION_KEY).
         documentCipher: { encrypt: cifrarSecreto },
+        // Bloque 29 · PR 5: lo PUBLICADO en el CMS del negocio, siempre leído en el momento (sin memoizar): lo usan solo las herramientas comerciales, y solo en
+        // los números que las tengan en su lista. Sin el módulo (o sin la migración) el lector devuelve null y esas herramientas responden «no disponible».
+        comercial: { cargar: (tenantId) => crearLectorSupabase(supabase).cargar(tenantId) },
       };
       return {
         tools,

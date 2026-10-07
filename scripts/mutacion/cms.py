@@ -14,7 +14,10 @@ las rutas de productos y contexto, el cliente del navegador, los ayudantes puros
 (guardar antes de revisar, publicar exactamente la revisión validada, cambios sin guardar, diálogos accesibles).
 PR 3 (la tienda lee del CMS): el paso de lo publicado a la vitrina (imágenes listas, destinos que existen y están activos, portada nunca a medias, secciones, campaña vigente),
 la carga con respaldo (la tienda nunca se cae por el CMS), la ruta pública de imágenes (solo lo listo, publicado y del propio negocio), el inicio con lo que elige el CMS,
-el dibujo de las secciones, la siembra de la vitrina actual (SQL real en Postgres embebido) y los avisos y el enlace del editor."""
+el dibujo de las secciones, la siembra de la vitrina actual (SQL real en Postgres embebido) y los avisos y el enlace del editor.
+PR 5 (ARIA y el CMS): lo que ARIA puede saber de lo publicado (consultas puras), las cuatro herramientas comerciales (contrato estricto, negocio y canal del turno, «no disponible» nunca un vacío
+falso), la guarda de anclaje comercial (porcentajes, descuentos, ofertas, combos, campañas, vigencias, ausencias, fuga mayorista y cifras de políticas), su integración en el runtime (turno
+normal y pregunta del checkout), el cableado real de producción y los scripts de migración de los textos del prompt (04 a 06, SQL real en Postgres embebido)."""
 import atexit
 import os
 import subprocess
@@ -87,6 +90,18 @@ T_E2E_PRECIOS = [C + "precios.pglite.test.ts"]
 
 PRECIOS_SUPA, PUB_SUPA, PUBLIC_LOADER, PRODUCCION = C + "precios-supabase.ts", C + "publico-supabase.ts", "lib/catalogo/public-loader.ts", "lib/catalogo/pedidos/produccion.ts"
 T_REAL = [C + "tienda-real.pglite.test.ts"]
+
+# PR 5 (ARIA y el CMS: herramientas comerciales, guarda de anclaje, cableado de producción y migración de los textos del prompt)
+CONSULTA, HERR, ANCL_C, ANCL, RUNTIME, CONTEXTO, APROV, NOMBRES, WEBHOOK = C + "consulta.ts", "lib/agente/herramientas.ts", "lib/agente/comercial-anclaje.ts", "lib/agente/anclaje.ts", "lib/agente/runtime.ts", "lib/agente/contexto.ts", "lib/agente/aprovisionamiento.ts", "lib/agente/nombres-herramientas.ts", "lib/agente/webhook.ts"
+PROV = "supabase/provisioning/delacour/"
+SQL04, SQL04R, SQL05, SQL05R, SQL06, SQL06R = (PROV + n for n in ("04_migrar_textos_a_borradores.sql", "04_migrar_textos_a_borradores.reversa.sql", "05_habilitar_herramientas_comerciales.sql", "05_habilitar_herramientas_comerciales.reversa.sql", "06_retirar_textos_del_prompt.sql", "06_retirar_textos_del_prompt.reversa.sql"))
+T_CONSULTA = [C + "consulta.test.ts", "lib/agente/agente-comercial-aria.test.ts"]
+T_ARIA = ["lib/agente/agente-comercial-aria.test.ts"]
+T_GUARDA = ["lib/agente/comercial-anclaje.test.ts", "lib/agente/agente-comercial-aria.test.ts"]
+T_RUNTIME_ARIA = ["lib/agente/agente-comercial-aria.test.ts", "lib/agente/agente-comercial-checkout.test.ts"]
+T_CHECKOUT_ARIA = ["lib/agente/agente-comercial-checkout.test.ts"]
+T_PROD_ARIA = ["lib/agente/agente-comercial-produccion.pglite.test.ts"]
+T_MIGRACION = [C + "migracion-textos.pglite.test.ts"]
 
 LECTURA = C + "lectura-publicada.ts"
 T_LECTURA = [C + "lectura-publicada.test.ts"]
@@ -465,6 +480,114 @@ M = [
     ("M333", 'la lectura de lo publicado se guarda para siempre (nunca ve lo que se publica después)', LECTURA, 'export const leerPublicado = cache(', 'export const leerPublicado = ((fn) => { const guardadas = new Map<string, unknown>(); return ((s: SupabaseClient, t: string) => { if (!guardadas.has(t)) guardadas.set(t, fn(s, t)); return guardadas.get(t); }) as typeof fn; })(', T_LECTURA),
     ("M334", 'la lectura de lo publicado entrega la del primer negocio a todos los demás', LECTURA, 'export const leerPublicado = cache(', 'export const leerPublicado = ((fn) => { let primera: unknown; return ((s: SupabaseClient, t: string) => (primera ??= fn(s, t))) as typeof fn; })(', T_LECTURA),
     ("M335", 'la lectura de lo publicado lee un negocio distinto al pedido', LECTURA, 'crearLectorSupabase(supabase).cargar(tenantId));', 'crearLectorSupabase(supabase).cargar("otro-negocio"));', T_LECTURA),
+    # --- PR 5 · ARIA y el CMS: consultas, herramientas, guarda de anclaje, runtime, cableado de producción y migración de los textos ------------------------------
+    ("M336", 'las ofertas vigentes nunca se declaran vacías', CONSULTA, 'empty: offers.length === 0,', 'empty: false,', T_CONSULTA),
+    ("M337", 'la oferta de un producto muestra el precio de lista como el que paga hoy', CONSULTA, 'list_price: precio.oferta.precioLista, price: precio.oferta.precioFinal }],', 'list_price: precio.oferta.precioLista, price: precio.oferta.precioLista }],', T_CONSULTA),
+    ("M338", 'el producto consultado muestra el precio de lista como el que paga hoy', CONSULTA, 'price: precio.precioFinal, list_price: precio.precioLista };', 'price: precio.precioLista, list_price: precio.precioLista };', T_CONSULTA),
+    ("M339", 'los combos no disponibles salen primero', CONSULTA, 'const ordenados = [...combos.filter((x) => x.available), ...combos.filter((x) => !x.available)];', 'const ordenados = [...combos.filter((x) => !x.available), ...combos.filter((x) => x.available)];', T_CONSULTA),
+    ("M340", 'un combo no disponible no dice por qué', CONSULTA, 'unavailable_reason: v.motivoNoDisponible ? MOTIVO[v.motivoNoDisponible] : null,', 'unavailable_reason: null,', T_CONSULTA),
+    ("M341", 'un texto con una variable sin valor no avisa que quedó incompleto', CONSULTA, 'const incomplete = descartados.length > 0;', 'const incomplete = false;', T_CONSULTA),
+    ("M342", 'los combos de un cliente mayorista se arman con el precio detal', CONSULTA, 'precioLista: canal === "wholesale" ? p.prices.wholesale : p.prices.retail };', 'precioLista: p.prices.retail };', T_CONSULTA),
+    ("M343", 'una campaña lista las ofertas de todas las campañas', CONSULTA, 'offers: ofertas.filter((o) => o.contenido.campana === k.clave).map(', 'offers: ofertas.map(', T_CONSULTA),
+    ("M344", 'la consulta por categoría deja de incluir las ofertas de toda la tienda', CONSULTA, 'activas = activas.filter((o) => o.contenido.alcance.todos || o.contenido.alcance.categorias.includes(id));', 'activas = activas.filter((o) => o.contenido.alcance.categorias.includes(id));', T_CONSULTA),
+    ("M345", 'el canal se informa al revés', CONSULTA, 'const CANAL_TEXTO = (canal: Canal) => (canal === "retail" ? ("retail" as const) : ("wholesale" as const));', 'const CANAL_TEXTO = (canal: Canal) => (canal === "retail" ? ("wholesale" as const) : ("retail" as const));', T_CONSULTA),
+    ("M346", 'los combos dicen que se compran desde el carrito', CONSULTA, 'const COMO_COMPRAR = "Los combos no se compran desde el carrito: los cierra una asesora. Si el cliente lo quiere, ofrécele pasar con una asesora.";', 'const COMO_COMPRAR = "Los combos se compran desde el carrito.";', T_CONSULTA),
+    ("M347", 'una categoría que no existe se declara encontrada', CONSULTA, 'category: { name: filtro.categoria.nombre, found: false }', 'category: { name: filtro.categoria.nombre, found: true }', T_CONSULTA),
+    ("M348", 'un tema de contenido nunca se declara vacío', CONSULTA, 'empty: items.length === 0,', 'empty: false,', T_CONSULTA),
+    ("M349", 'ARIA lee el CMS de una conversación que no es de este negocio', HERR, '  // Defensa en profundidad (igual que las herramientas de catálogo): el número debe ser de este negocio.\n  if (!(await deps.ownsPhoneNumber(ctx.tenantId, ctx.phoneNumberId))) return { ok: false, out: fail("FORBIDDEN", "Esta conversación no pertenece a este negocio.") };\n  let snap: InstantaneaCms | null;', '  let snap: InstantaneaCms | null;', T_ARIA),
+    ("M350", 'se acepta la instantánea del CMS de otro negocio', HERR, 'if (snap === null || snap.tenantId !== ctx.tenantId) return noDisponible();', 'if (snap === null) return noDisponible();', T_ARIA),
+    ("M351", 'una falla de lectura del CMS explota en vez de decir «no disponible»', HERR, '    return noDisponible();\n  }\n  if (snap === null || snap.tenantId !== ctx.tenantId) return noDisponible();', '    throw err;\n  }\n  if (snap === null || snap.tenantId !== ctx.tenantId) return noDisponible();', T_ARIA),
+    ("M352", 'consultar_ofertas deja de ser estricta (el modelo puede pasar negocio o canal)', HERR, '        categoria: z.string().trim().min(1).max(60).optional(),\n      })\n      .strict(),', '        categoria: z.string().trim().min(1).max(60).optional(),\n      }),', T_ARIA),
+    ("M353", 'el tema del contenido ya no es de una lista cerrada', HERR, 'input: z.object({ tema: z.enum(TEMAS_CONTENIDO) }).strict(),', 'input: z.object({ tema: z.string() }).strict(),', T_ARIA),
+    ("M354", 'el código del combo acepta cualquier texto', HERR, '.regex(/^[a-z0-9][a-z0-9-]{0,79}$/, { message: "Código de combo inválido." })', '.regex(/.*/)', T_ARIA),
+    ("M355", 'consultar_ofertas acepta una referencia que nunca salió en la conversación', HERR, '        const blocked = checkProvenance(ctx, input.referencia, false);\n        if (blocked) return blocked;\n', '', T_ARIA),
+    ("M356", 'los combos se arman siempre con el precio detal', HERR, 'productoParaCombo(p, ctx.channel)', 'productoParaCombo(p)', T_ARIA),
+    ("M357", 'la oferta de un producto se evalúa sobre el precio ya rebajado', HERR, 'const lista = r.product.listPrices?.[ctx.channel] ?? r.product.prices[ctx.channel];', 'const lista = r.product.prices[ctx.channel];', T_ARIA),
+    ("M358", 'una categoría ambigua elige la primera que se parezca', HERR, 'const elegida = exacta ?? (parecidas.length === 1 ? parecidas[0] : null);', 'const elegida = exacta ?? parecidas[0] ?? null;', T_ARIA),
+    ("M359", 'un porcentaje que ninguna herramienta devolvió sale al cliente', ANCL_C, 'if (!r.porcentajes.has(n)) out.add(', 'if (false) out.add(', T_GUARDA),
+    ("M360", 'un porcentaje escrito en palabras sale sin respaldo', ANCL_C, 'if (n >= 0 && !r.porcentajes.has(n)) out.add(', 'if (false) out.add(', T_GUARDA),
+    ("M361", 'un condicional con porcentaje se trata como afirmación', ANCL_C, '    if (!hipotetica) {\n      for (const m of t.matchAll(PORCENTAJE)) {', '    if (true) {\n      for (const m of t.matchAll(PORCENTAJE)) {', T_GUARDA),
+    ("M362", 'un «2x1» inventado sale al cliente', ANCL_C, 'if (!hipotetica && !negada) for (const m of t.matchAll(MULTI))', 'if (false) for (const m of t.matchAll(MULTI))', T_GUARDA),
+    ("M363", '«no hay promociones» sale sin una lectura vacía que lo respalde', ANCL_C, 'if (!r.vacias[grupo]) out.add(', 'if (false) out.add(', T_GUARDA),
+    ("M364", '«no tengo información de promociones» se trata como afirmar que no existen', ANCL_C, 'if (aus && !SIN_DATO.test(aus[1]) && !hipotetica) {', 'if (aus && !hipotetica) {', T_GUARDA),
+    ("M365", '«tenemos descuentos» sale sin ninguna oferta respaldada', ANCL_C, 'if (promo && !r.hayPromo) out.add("discount_unbacked");', 'if (false) out.add("discount_unbacked");', T_GUARDA),
+    ("M366", '«tenemos combos» sale sin ningún combo respaldado', ANCL_C, 'if (combo && !r.hayCombos) out.add("combo_unbacked");', 'if (false) out.add("combo_unbacked");', T_GUARDA),
+    ("M367", '«estamos en la campaña» sale sin ninguna campaña respaldada', ANCL_C, 'if (campana && !r.hayCampanas) out.add("campaign_unbacked");', 'if (false) out.add("campaign_unbacked");', T_GUARDA),
+    ("M368", 'una negación («ese producto no tiene descuento») se bloquea como afirmación', ANCL_C, '    if (!negada && !hipotetica) {\n      if (promo && !r.hayPromo)', '    if (!hipotetica) {\n      if (promo && !r.hayPromo)', T_GUARDA),
+    ("M369", 'el nombre de una oferta inventada sale al cliente', ANCL_C, 'if (!respaldaNombre(nombre, r.nombres)) {', 'if (false) {', T_GUARDA),
+    ("M370", 'una palabra común tras «oferta» se toma por un nombre propio', ANCL_C, 'if (NO_ES_NOMBRE.has(fold(nombre))) continue;', '', T_GUARDA),
+    ("M371", 'una temporada inventada («Black Friday») sale junto a una promoción', ANCL_C, '      if (contextoPromo) {\n        for (const temporada of TEMPORADAS) {', '      if (false) {\n        for (const temporada of TEMPORADAS) {', T_GUARDA),
+    ("M372", '«sigue vigente» sale sin ninguna promoción respaldada', ANCL_C, 'if (!negada && !hipotetica && CONTINUA_VIGENTE.test(t)', 'if (false && CONTINUA_VIGENTE.test(t)', T_GUARDA),
+    ("M373", 'una fecha de vigencia inventada sale al cliente', ANCL_C, 'for (const m of t.matchAll(FECHA)) if (!r.fechas.has(', 'for (const m of t.matchAll(FECHA)) if (false && !r.fechas.has(', T_GUARDA),
+    ("M374", 'un «hasta el 20» inventado sale al cliente', ANCL_C, 'for (const m of t.matchAll(HASTA_DIA)) if (!r.diasDeFecha.has(', 'for (const m of t.matchAll(HASTA_DIA)) if (false && !r.diasDeFecha.has(', T_GUARDA),
+    ("M375", 'una urgencia inventada («solo por hoy») sale al cliente', ANCL_C, 'for (const m of t.matchAll(URGENCIA)) if (!r.texto.includes(m[1]))', 'for (const m of t.matchAll(URGENCIA)) if (false && !r.texto.includes(m[1]))', T_GUARDA),
+    ("M376", '«vale hasta el 20 de noviembre» sale sin la palabra promoción', ANCL_C, '(VIGENCIA_CUE.test(t) || HASTA_FECHA.test(t) || RANGO_FECHAS.test(t))', '(VIGENCIA_CUE.test(t) || RANGO_FECHAS.test(t))', T_GUARDA),
+    ("M377", 'un rango de fechas inventado sale sin la palabra promoción', ANCL_C, '(VIGENCIA_CUE.test(t) || HASTA_FECHA.test(t) || RANGO_FECHAS.test(t))', '(VIGENCIA_CUE.test(t) || HASTA_FECHA.test(t))', T_GUARDA),
+    ("M378", 'la fecha de entrega de un pedido se trata como una vigencia', ANCL_C, '(VIGENCIA_CUE.test(t) || HASTA_FECHA.test(t) || RANGO_FECHAS.test(t)) && !CUE_ENVIO.test(t);', '(VIGENCIA_CUE.test(t) || HASTA_FECHA.test(t) || RANGO_FECHAS.test(t));', T_GUARDA),
+    ("M379", 'el precio mayorista se le cuenta también al cliente mayorista como fuga', ANCL_C, 'if (ev.channel === "retail" && MAYORISTA.test(t)', 'if (MAYORISTA.test(t)', T_GUARDA),
+    ("M380", 'la compra inicial mayorista se bloquea como fuga', ANCL_C, '!negada && !hipotetica && !MINIMO.test(t)) {', '!negada && !hipotetica) {', T_GUARDA),
+    ("M381", 'el tiempo de envío se vigila dos veces (la guarda de envíos y la comercial)', ANCL_C, 'if (!negada && !hipotetica && CUE_POLITICA.test(t) && !(opts.shippingGuardActive && CUE_ENVIO.test(t))) {', 'if (!negada && !hipotetica && CUE_POLITICA.test(t)) {', T_GUARDA),
+    ("M382", 'un plazo de garantía inventado sale al cliente', ANCL_C, 'if (!respaldo) out.add(', 'if (false) out.add(', T_GUARDA),
+    ("M383", 'una lectura con resultados se toma por vacía', ANCL_C, 'const noVacio = (fs: HechoComercial[]) => fs.some((f) => f.data.empty === false);', 'const noVacio = (fs: HechoComercial[]) => fs.some((f) => f.data.empty === true);', T_GUARDA),
+    ("M384", 'una lectura vacía no respalda «no hay»', ANCL_C, 'const vacia = (fs: HechoComercial[]) => fs.some((f) => f.data.empty === true);', 'const vacia = (fs: HechoComercial[]) => fs.some((f) => f.data.empty === false);', T_GUARDA),
+    ("M385", 'solo las ofertas (y no las campañas ni los combos) respaldan hablar de promociones', ANCL_C, 'hayPromo: hayOfertas || hayCombos || hayCampanas,', 'hayPromo: hayOfertas,', T_GUARDA),
+    ("M386", 'la oferta de la vista de un producto no respalda «tiene descuento»', ANCL_C, 'const hayOfertas = noVacio(ofertas) || ev.productOffers.length > 0;', 'const hayOfertas = noVacio(ofertas);', T_GUARDA),
+    ("M387", 'las preguntas del modelo se vigilan como afirmaciones', ANCL_C, '.filter((o) => o.trim() !== "" && !o.includes("¿") && !o.trim().endsWith("?"));', '.filter((o) => o.trim() !== "");', T_GUARDA),
+    ("M388", 'lo que devuelve una herramienta no respalda sus propias cifras, fechas y plazos', ANCL, '    ev.comercial?.texts.push(value);\n', '', T_GUARDA),
+    ("M389", 'la guarda comercial nunca se ejecuta', ANCL, 'if (ev.comercial?.active) for (const v of checkCommercialClaims(', 'if (false) for (const v of checkCommercialClaims(', T_GUARDA),
+    ("M390", 'una oferta de la vista de un producto no se recuerda como respaldo', ANCL, 'ev.comercial.productOffers.push((oferta as { name: string }).name);', 'void 0;', T_GUARDA),
+    ("M391", 'la guarda comercial no se activa aunque el número tenga las herramientas', RUNTIME, 'const commercialGuard = deps.config.tools.some(esHerramientaComercial);', 'const commercialGuard = false;', T_RUNTIME_ARIA),
+    ("M392", 'las herramientas comerciales trabajan con el reloj en cero', RUNTIME, 'valores: variablesDeNegocio(deps.config.business).variables, nowMs: now() };', 'valores: variablesDeNegocio(deps.config.business).variables, nowMs: 0 };', T_RUNTIME_ARIA),
+    ("M393", 'las variables de los textos ({{minimo_mayorista}}) no se resuelven', RUNTIME, 'valores: variablesDeNegocio(deps.config.business).variables, nowMs: now() };', 'valores: {}, nowMs: now() };', T_RUNTIME_ARIA),
+    ("M394", 'el modelo que insiste con algo comercial sin respaldo no pasa a una asesora', RUNTIME, '} else if (failure === "unverified" && trace.grounding.violations.includes("commercial") && !ctx.handedOff) {', '} else if (false) {', T_RUNTIME_ARIA),
+    ("M395", 'el mensaje fijo de la salida comercial es otro', RUNTIME, 'reply = FALLBACK_MESSAGES.commercial;', 'reply = FALLBACK_MESSAGES.handoff;', T_RUNTIME_ARIA),
+    ("M396", 'las preguntas del checkout no pueden consultar lo comercial', RUNTIME, '  "consultar_ofertas",\n  "consultar_combos",\n  "consultar_campanas",\n  "consultar_contenido_comercial",\n];', '];', T_CHECKOUT_ARIA),
+    ("M397", 'lo que devuelven las herramientas comerciales no respalda al turno normal', RUNTIME, '          if (outcome.ok) registrarHechoComercial(evidence.comercial, tc.name, outcome.data);', '', T_RUNTIME_ARIA),
+    ("M398", 'lo que devuelven las herramientas comerciales no respalda a la pregunta del checkout', RUNTIME, '            if (outcome.ok) registrarHechoComercial(ev.comercial, tc.name, outcome.data);', '', T_CHECKOUT_ARIA),
+    ("M399", 'la traza del turno no guarda los tipos de afirmación comercial sin respaldo', RUNTIME, '      registrarCodigosComerciales(trace, check.violations);\n      const montos =', '      const montos =', T_RUNTIME_ARIA),
+    ("M400", 'la pregunta del checkout no recibe el contexto comercial', RUNTIME, '      comercial: commercialToolContext,\n    };\n    const ev = emptyEvidence();', '    };\n    const ev = emptyEvidence();', T_CHECKOUT_ARIA),
+    ("M401", 'el turno normal no recibe el contexto comercial', RUNTIME, '    shipping: { rules: enviosRules, nowMs: now() },\n    comercial: commercialToolContext,\n  };\n\n  let writes = 0;', '    shipping: { rules: enviosRules, nowMs: now() },\n  };\n\n  let writes = 0;', T_RUNTIME_ARIA),
+    ("M402", 'el turno normal no crea la evidencia comercial', RUNTIME, 'if (commercialGuard) evidence.comercial = emptyComercialEvidence(channel);', '', T_RUNTIME_ARIA),
+    ("M403", 'la pregunta del checkout no crea la evidencia comercial', RUNTIME, 'if (commercialGuard) ev.comercial = emptyComercialEvidence(channel);', '', T_CHECKOUT_ARIA),
+    ("M404", 'las reglas comerciales van en el prompt de TODOS los negocios', CONTEXTO, '...(config.tools.some(esHerramientaComercial) ?', '...(true ?', T_ARIA),
+    ("M405", 'ASLC recibe las herramientas comerciales', APROV, 'AGENT_TOOL_NAMES.filter((t) => t !== "confirm_order" && !esHerramientaComercial(t))', 'AGENT_TOOL_NAMES.filter((t) => t !== "confirm_order")', T_ARIA),
+    ("M406", 'una herramienta comercial deja de contarse como comercial', NOMBRES, '"consultar_campanas", "consultar_contenido_comercial"] as const satisfies', '"consultar_contenido_comercial"] as const satisfies', T_ARIA),
+    ("M407", 'la frontera de producción no le entrega el lector del CMS a ARIA', WEBHOOK, '        comercial: { cargar: (tenantId) => crearLectorSupabase(supabase).cargar(tenantId) },\n', '', T_PROD_ARIA),
+    ("M408", 'la frontera de producción lee el CMS de otro negocio', WEBHOOK, 'crearLectorSupabase(supabase).cargar(tenantId) },', 'crearLectorSupabase(supabase).cargar("otro-negocio") },', T_PROD_ARIA),
+    ("M409", 'la frontera de producción memoiza la lectura del CMS entre turnos', WEBHOOK, 'comercial: { cargar: (tenantId) => crearLectorSupabase(supabase).cargar(tenantId) },', 'comercial: { cargar: ((c: { p?: Promise<never> }) => (tenantId: string) => (c.p ??= crearLectorSupabase(supabase).cargar(tenantId) as Promise<never>))({}) },', T_PROD_ARIA),
+    ("M410", 'el script 04 migra aunque no haya UNA sola tienda con ese slug', SQL04, 'if v_tienda <> 1 then', 'if false then', T_MIGRACION),
+    ("M411", 'el script 04 migra con el módulo del CMS apagado', SQL04, "if not exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = 'cms_comercial' and habilitado) then", 'if false then', T_MIGRACION),
+    ("M412", 'el script 04 sigue con dos configuraciones de ARIA (o ninguna)', SQL04, 'if v_filas <> 1 then', 'if false then', T_MIGRACION),
+    ("M413", 'el script 04 falla al repetirse (no salta lo que ya existe)', SQL04, "elsif v_r->>'resultado' = 'clave_existente' then", "elsif v_r->>'resultado' = 'otro_resultado' then", T_MIGRACION),
+    ("M414", 'el script 04 reemplaza el monto aunque venga dentro de otro número (1750000)', SQL04, '(?:\\$\\s?)?(?<![\\d.,])(?:', '(?:\\$\\s?)?(?:', T_MIGRACION),
+    ("M415", 'el script 04 reemplaza el monto aunque siga con más dígitos o decimales', SQL04, "')(?!\\d|[.,]\\d)';", "')';", T_MIGRACION),
+    ("M416", 'el script 04 ignora la audiencia de la tabla (todo para todos)', SQL04, "'audiencia', v_m.audiencia,", "'audiencia', 'todos',", T_MIGRACION),
+    ("M417", 'el script 04 deja espacios de más en el título', SQL04, "regexp_replace(btrim(v_item->>'tema'), '\\s+', ' ', 'g')", "btrim(v_item->>'tema')", T_MIGRACION),
+    ("M418", 'el script 04 no convierte el mínimo mayorista en variable', SQL04, 'if v_patron is not null then', 'if false then', T_MIGRACION),
+    ("M419", 'el script 04 migra temas vacíos', SQL04, "if v_texto is null or btrim(v_texto) = '' then", 'if false then', T_MIGRACION),
+    ("M420", 'la reversa del 04 archiva lo que la administradora ya editó', SQL04R, "if v_e.estado = 'borrador' and v_e.rev = 1 and v_e.created_by is null then", "if v_e.estado = 'borrador' then", T_MIGRACION),
+    ("M421", 'la reversa del 04 archiva lo que la administradora ya editó (solo mira quién lo creó, no si cambió)', SQL04R, "if v_e.estado = 'borrador' and v_e.rev = 1 and v_e.created_by is null then", "if v_e.estado = 'borrador' and v_e.created_by is null then", T_MIGRACION),
+    ("M422", 'el script 05 habilita las herramientas sin ningún texto publicado', SQL05, 'if v_publicados = 0 then', 'if false then', T_MIGRACION),
+    ("M423", 'el script 05 habilita las herramientas con temas críticos sin publicar', SQL05, "if v_sin_publicar is not null and coalesce(current_setting('dulabs.permitir_temas_sin_publicar', true), '') <> 'si' then", 'if false then', T_MIGRACION),
+    ("M424", 'el script 05 ignora la confirmación explícita de la administradora', SQL05, "coalesce(current_setting('dulabs.permitir_temas_sin_publicar', true), '') <> 'si'", 'true', T_MIGRACION),
+    ("M425", 'el script 05 cuenta como pendiente un tema crítico archivado', SQL05, "e.archivada_at is null and e.estado <> 'publicada'", "e.estado <> 'publicada'", T_MIGRACION),
+    ("M426", 'el script 05 deja pasar más de 30 herramientas', SQL05, 'if cardinality(v_cfg.herramientas) + cardinality(v_nuevas) > 30 then', 'if false then', T_MIGRACION),
+    ("M427", 'el script 05 duplica las herramientas que ya estaban', SQL05, '   where not (h = any (v_cfg.herramientas));', '   where true;', T_MIGRACION),
+    ("M428", 'el script 05 falla al repetirse (no detecta que ya están habilitadas)', SQL05, 'if v_nuevas is null then', 'if false then', T_MIGRACION),
+    ("M429", 'la reversa del 05 apaga las herramientas aunque un tema crítico ya solo viva en el CMS', SQL05R, "if v_retirados is not null and coalesce(current_setting('dulabs.confirmar_reversa_herramientas', true), '') <> 'si' then", 'if false then', T_MIGRACION),
+    ("M430", 'el script 06 retira del prompt sin las herramientas habilitadas', SQL06, 'if not (v_cfg.herramientas @> array', 'if false and (v_cfg.herramientas @> array', T_MIGRACION),
+    ("M431", 'el script 06 corre sin que le indiquen los temas', SQL06, "if v_lista = '' then", 'if false then', T_MIGRACION),
+    ("M432", 'el script 06 acepta una clave que no es de la tabla', SQL06, 'if v_legado is null then', 'if false then', T_MIGRACION),
+    ("M433", 'el script 06 retira un tema que no está publicado', SQL06, "if v_ent.id is null or v_ent.estado <> 'publicada' or v_ent.archivada_at is not null then", 'if false then', T_MIGRACION),
+    ("M434", 'el script 06 quita del prompt todos los temas MENOS el indicado', SQL06, "'g'))) is distinct from lower(", "'g'))) = lower(", T_MIGRACION),
+    ("M435", 'el script 06 deja el conocimiento vacío', SQL06, "set negocio = jsonb_set(negocio, '{conocimiento}', v_conocimiento, true)", "set negocio = jsonb_set(negocio, '{conocimiento}', '[]'::jsonb, true)", T_MIGRACION),
+    ("M436", 'la reversa del 06 restaura textos de más de 800 caracteres', SQL06R, 'if char_length(v_texto) > 800 then', 'if false then', T_MIGRACION),
+    ("M437", 'la reversa del 06 pasa de 40 temas', SQL06R, 'if jsonb_array_length(v_conocimiento) >= 40 then', 'if false then', T_MIGRACION),
+    ("M438", 'la reversa del 06 restaura un texto con el mínimo sin configurar', SQL06R, 'if v_minimo is null then raise exception', 'if false then raise exception', T_MIGRACION),
+    ("M439", 'la reversa del 06 restaura un tema que no está publicado', SQL06R, "if v_ent.id is null or v_ent.estado <> 'publicada' or v_ent.archivada_at is not null then", 'if false then', T_MIGRACION),
+    ("M440", 'la reversa del 06 restaura un texto con una variable desconocida', SQL06R, "if v_texto ~ '\\{\\{' then", 'if false then', T_MIGRACION),
+    ("M441", 'la reversa del 06 restaura la dirección de la tienda sin estar configurada', SQL06R, "if coalesce(btrim(v_cfg.negocio->'pedido'->>'direccion_tienda'), '') = '' then raise exception", 'if false then raise exception', T_MIGRACION),
+    ("M442", 'la reversa del 06 restaura el nombre del negocio sin estar configurado', SQL06R, "if coalesce(btrim(v_cfg.negocio->>'nombre_negocio'), '') = '' then raise exception", 'if false then raise exception', T_MIGRACION),
 ]
 
 

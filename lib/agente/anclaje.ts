@@ -19,6 +19,7 @@
  */
 import type { DeliveryType, PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 import { checkShippingClaims, type ShippingEvidence } from "@/lib/agente/envios-anclaje";
+import { checkCommercialClaims, type ComercialEvidence } from "@/lib/agente/comercial-anclaje";
 
 const REF = /\b([A-Z]{1,6}-\d{6,}|DL-ORD-[0-9A-HJKMNP-TV-Z]{6})\b/g;
 const PESOS = /(?:\$|COP\s?)\s?(\d{1,3}(?:[.,]\d{3})+|\d+)(?![\d.,]*\s*mil)/gi;
@@ -60,6 +61,11 @@ export interface Evidence {
    * costo, transportadora, garantías) debe estar respaldado por lo que consultar_envio devolvió en este turno.
    */
   shipping?: ShippingEvidence;
+  /**
+   * Bloque 29 · PR 5: solo existe en un negocio con herramientas comerciales (CMS). Todo lo que el texto diga de ofertas, descuentos, porcentajes, combos, campañas,
+   * vigencias y cifras de políticas debe estar respaldado por lo que esas herramientas devolvieron en este turno (ver comercial-anclaje.ts).
+   */
+  comercial?: ComercialEvidence;
 }
 
 /**
@@ -127,6 +133,8 @@ export function addEvidence(value: unknown, ev: Evidence, depth = 0): void {
   }
   if (typeof value === "string") {
     harvestText(value, ev);
+    // Bloque 29 · PR 5: todo texto que devolvió una herramienta respalda sus propias cifras, plazos, fechas y nombres.
+    ev.comercial?.texts.push(value);
     return;
   }
   if (Array.isArray(value)) {
@@ -136,6 +144,9 @@ export function addEvidence(value: unknown, ev: Evidence, depth = 0): void {
   if (typeof value === "object") {
     const status = (value as { status?: unknown }).status;
     if (status === "confirmed" || status === "completed") ev.confirmed = true;
+    // Una vista de producto con `offer` (oferta vigente que fijó su precio): respalda «este producto tiene descuento» y su nombre.
+    const oferta = (value as { offer?: unknown }).offer;
+    if (ev.comercial && typeof oferta === "object" && oferta !== null && typeof (oferta as { name?: unknown }).name === "string") ev.comercial.productOffers.push((oferta as { name: string }).name);
     for (const v of Object.values(value as Record<string, unknown>)) addEvidence(v, ev, depth + 1);
   }
 }
@@ -175,7 +186,7 @@ export function addCustomerEvidence(text: string, ev: Evidence): void {
 /** "Listo, te lo agregué / te separé…": afirmar un cambio en la selección. */
 const CARRITO_CLAIM = /(?:^|[\s¡!.,])(?:listo|agregu[eé]|a[nñ]ad[ií]|separ[eé]|te separ[eé]|actualic[eé]|te dej[eé]|qued[oó] (?:agregad|en tu|list)|ya (?:est[aá]|qued[oó]) en tu)/i;
 
-export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation" | "order_status" | "cart" | "shipping"; value: string };
+export type GroundingViolation = { kind: "reference" | "amount" | "quantity" | "link" | "confirmation" | "order_status" | "cart" | "shipping" | "commercial"; value: string };
 
 export function checkGrounding(text: string, ev: Evidence): { ok: boolean; violations: GroundingViolation[] } {
   const violations: GroundingViolation[] = [];
@@ -219,5 +230,7 @@ export function checkGrounding(text: string, ev: Evidence): { ok: boolean; viola
   if (ev.cartBlocked && !ev.cartWritten && CARRITO_CLAIM.test(withoutUrls)) add({ kind: "cart", value: "selección sin cambios" });
   // Fase 3B.6: lo que se diga de envíos (tiempos, cobertura, costo, transportadora) solo si el motor de envíos lo respalda.
   if (ev.shipping?.active) for (const v of checkShippingClaims(withoutUrls, ev.shipping.facts)) add({ kind: "shipping", value: v });
+  // Bloque 29 · PR 5: ofertas, descuentos, porcentajes, combos, campañas, vigencias y cifras de políticas solo si las herramientas comerciales lo respaldan.
+  if (ev.comercial?.active) for (const v of checkCommercialClaims(withoutUrls, ev.comercial, { shippingGuardActive: !!ev.shipping?.active, customerNumbers: ev.customerNumbers })) add({ kind: "commercial", value: v });
   return { ok: violations.length === 0, violations };
 }

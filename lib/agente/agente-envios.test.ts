@@ -27,7 +27,7 @@ import { memoryOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
 import { createSimulatedProvider, type SimulatedStep } from "@/lib/ia-proveedores/simulado";
 import { parseAgentConfig, type AgentConfigRow, type AgentRuntimeConfig } from "@/lib/agente/config";
 import { createMemoryConversationStateStore, type ConversationStateStore } from "@/lib/agente/estado";
-import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
+import { AGENT_TOOL_NAMES, esHerramientaComercial, type AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { executeAgentTool, type AgentToolsDeps, type AgentTurnToolContext } from "@/lib/agente/herramientas";
 import { FALLBACK_MESSAGES, runAgentTurn } from "@/lib/agente/runtime";
 import { createMemoryCustomerChannelStore } from "@/lib/agente/clasificacion";
@@ -482,7 +482,8 @@ beforeEach(() => {
   }
 });
 
-const TOOLS_DELACOUR: AgentToolName[] = AGENT_TOOL_NAMES.filter((t) => t !== "consultar_envio");
+// Delacour HOY: sin el motor de envíos y sin las herramientas comerciales del CMS (Bloque 29: se le habilitan al activar, no antes).
+const TOOLS_DELACOUR: AgentToolName[] = AGENT_TOOL_NAMES.filter((t) => t !== "consultar_envio" && !esHerramientaComercial(t));
 function fila(tenant: CatalogActor, pn: string, opciones: unknown, herramientas: readonly AgentToolName[] = AGENT_TOOL_NAMES, extra: Partial<AgentConfigRow> = {}): AgentConfigRow {
   return {
     id_tenant: tenant.tenantId,

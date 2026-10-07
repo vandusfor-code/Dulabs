@@ -29,9 +29,25 @@ export const AGENT_TOOL_NAMES = [
   "similar_products",
   // Fase 3B.6: cobertura, transportadora y tiempo de entrega de un envío (motor determinista del backend; solo con reglas de envío configuradas)
   "consultar_envio",
+  // Bloque 29 · PR 5 — información comercial PUBLICADA en el CMS del negocio (ofertas, combos, campañas y contenido como políticas o preguntas frecuentes), solo lo
+  // publicado + vigente + aplicable al canal de la conversación. Solo con el módulo del CMS y la herramienta en la lista del número (ver herramientas.ts).
+  "consultar_ofertas",
+  "consultar_combos",
+  "consultar_campanas",
+  "consultar_contenido_comercial",
 ] as const;
 
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
+
+/**
+ * Las herramientas de información comercial (CMS). Un negocio que tiene alguna en la lista de su número queda bajo la guarda de anclaje comercial
+ * (lib/agente/comercial-anclaje.ts): lo que el modelo afirme sobre ofertas, descuentos, combos, campañas, vigencias y políticas debe estar respaldado por
+ * lo que estas herramientas devolvieron en el mismo turno.
+ */
+export const HERRAMIENTAS_COMERCIALES = ["consultar_ofertas", "consultar_combos", "consultar_campanas", "consultar_contenido_comercial"] as const satisfies readonly AgentToolName[];
+export type HerramientaComercial = (typeof HERRAMIENTAS_COMERCIALES)[number];
+
+export const esHerramientaComercial = (value: unknown): value is HerramientaComercial => typeof value === "string" && (HERRAMIENTAS_COMERCIALES as readonly string[]).includes(value);
 
 export function isAgentToolName(value: unknown): value is AgentToolName {
   return typeof value === "string" && (AGENT_TOOL_NAMES as readonly string[]).includes(value);
