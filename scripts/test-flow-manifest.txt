@@ -559,3 +559,19 @@ components/reservar-amore/portal-amore.dom.test.tsx
 # Portal y «Mi cita» en el celular: botón «atrás» regresa al paso anterior y «Mi cita» con las acciones pegadas abajo.
 components/reservar-amore/historial-pasos.dom.test.tsx
 components/mi-cita/mi-cita-amore.dom.test.tsx
+# CMS comercial (Bloque 29, PR 1 «Fundación»): fechas de Bogotá, esquemas, texto seguro, variables, evaluación determinista (precio efectivo, combos, campañas), validación,
+# checksum, lector verificado, autorización, la migración REAL en Postgres embebido (PGlite) con su reversa, el servicio sobre SQL real y las rutas de /api/dashboard/tienda.
+lib/cms-comercial/tiempo.test.ts
+lib/cms-comercial/texto-seguro.test.ts
+lib/cms-comercial/esquemas.test.ts
+lib/cms-comercial/variables.test.ts
+lib/cms-comercial/evaluacion.test.ts
+lib/cms-comercial/validacion.test.ts
+lib/cms-comercial/checksum.test.ts
+lib/cms-comercial/lector.test.ts
+lib/cms-comercial/auth.test.ts
+lib/cms-comercial/http.test.ts
+lib/cms-comercial/sql.pglite.test.ts
+lib/cms-comercial/servicio.pglite.test.ts
+lib/cms-comercial/aprovisionamiento.pglite.test.ts
+app/api/dashboard/tienda/rutas.test.ts
