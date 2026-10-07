@@ -20,6 +20,15 @@ export const PROFESIONALES = [
 ];
 export const SERVICIO_DIPPING = { id: "s-dipping", nombre: "Dipping", duracion_min: 120, precio: 60000 };
 
+/**
+ * El «ahora» FIJO para las pruebas que dependen del día o de la hora («ya pasó», «dentro de N días», días hábiles): lunes 2026-10-05, 10:30 en Bogotá. Con el reloj del sistema esas pruebas
+ * fallaban según el día de la semana y la hora en que se corrieran. Es una función y no un `Date` compartido para que ninguna prueba pueda mover el instante de otra.
+ * CUIDADO: solo es seguro si TODO el código de producción que la prueba ejercita usa el reloj INYECTADO (`deps.ahora`). Hay código que lee el reloj REAL por su cuenta
+ * (`urlEnlaceDeCita` en lib/mi-cita/chat.ts y `consultarCitasActivasEspecialista`): con un mundo fijo en el pasado, sus enlaces «vencen» y la consulta del chat descarta la cita, así que las
+ * pruebas que pasan por ahí (panel.test.ts, reserva-portal.test.ts) deben seguir con el reloj real: un reloj fijo las rompería cuando el reloj real alcance esas fechas.
+ */
+export const ahoraFijo = (): Date => new Date("2026-10-05T10:30:00-05:00");
+
 const sumarDiasISO = (iso: string, dias: number) => {
   const d = new Date(`${iso}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + dias);
@@ -91,6 +100,7 @@ const SOLAPE = (existentes: Fila[], c: Fila) =>
   );
 
 export interface OpcionesMundo {
+  /** El reloj del mundo. Sin esto es el reloj REAL del sistema: coherente con el código de producción que lee `new Date()` por su cuenta, pero no determinista (ver `ahoraFijo`). */
   ahora?: Date;
   /** La profesional requiere aprobación manual (la cita nace «pendiente»). */
   requiereAprobacion?: boolean;
