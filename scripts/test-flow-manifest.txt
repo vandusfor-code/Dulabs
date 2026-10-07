@@ -575,3 +575,13 @@ lib/cms-comercial/sql.pglite.test.ts
 lib/cms-comercial/servicio.pglite.test.ts
 lib/cms-comercial/aprovisionamiento.pglite.test.ts
 app/api/dashboard/tienda/rutas.test.ts
+# Bloque 29 · PR 2 (administración de tienda en el Dashboard): imágenes, selectores, vista previa, cliente del navegador y pantalla completa (jsdom contra la API y el SQL reales).
+lib/cms-comercial/imagen-servidor.test.ts
+lib/cms-comercial/almacen.test.ts
+lib/cms-comercial/imagenes.pglite.test.ts
+lib/cms-comercial/previa.test.ts
+lib/cms-comercial-client.test.ts
+app/api/dashboard/tienda/rutas-editor.test.ts
+components/dashboard/tienda/borrador-formato.test.ts
+components/dashboard/tienda/tienda.dom.test.tsx
+components/dashboard/shell/nav-tienda.test.ts

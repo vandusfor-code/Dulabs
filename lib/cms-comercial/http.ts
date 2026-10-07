@@ -10,15 +10,21 @@ import { apiError } from "@/lib/agent-compiler/api/http";
 import { firstIssueMessage } from "@/lib/catalogo/domain";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
 import { crearPuertoCatalogoSupabase, crearPuertoVariablesSupabase } from "@/lib/cms-comercial/adaptadores-supabase";
+import { crearAlmacenSupabase } from "@/lib/cms-comercial/almacen";
 import { requireCms, type CmsAccessMode } from "@/lib/cms-comercial/auth";
 import type { ActorCms } from "@/lib/cms-comercial/contrato";
 import { isCmsError } from "@/lib/cms-comercial/errores";
+import { crearServicioImagenes, type ServicioImagenes } from "@/lib/cms-comercial/imagenes";
+import type { PuertoCatalogo, PuertoVariables } from "@/lib/cms-comercial/puertos";
 import type { CmsRepositorio } from "@/lib/cms-comercial/repositorio";
 import { crearRepositorioSupabaseCms } from "@/lib/cms-comercial/repositorio-supabase";
 import { crearServicioCms, type CmsServicio } from "@/lib/cms-comercial/servicio";
 
 export interface CmsHandlerContext {
   servicio: CmsServicio;
+  imagenes: ServicioImagenes;
+  catalogo: PuertoCatalogo;
+  variables: PuertoVariables;
   repo: CmsRepositorio;
   actor: ActorCms;
   supabase: SupabaseClient;
@@ -37,9 +43,12 @@ export async function withCms(request: NextRequest, mode: CmsAccessMode, handler
   if (limite) return limite;
 
   const repo = crearRepositorioSupabaseCms(supabase);
-  const servicio = crearServicioCms({ repo, catalogo: crearPuertoCatalogoSupabase(supabase), variables: crearPuertoVariablesSupabase(supabase) });
+  const catalogo = crearPuertoCatalogoSupabase(supabase);
+  const variables = crearPuertoVariablesSupabase(supabase);
+  const servicio = crearServicioCms({ repo, catalogo, variables });
+  const imagenes = crearServicioImagenes({ repo, almacen: crearAlmacenSupabase(supabase) });
   try {
-    return await handler({ servicio, repo, actor, supabase });
+    return await handler({ servicio, imagenes, catalogo, variables, repo, actor, supabase });
   } catch (err) {
     return cmsErrorResponse(err);
   }

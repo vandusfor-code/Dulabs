@@ -10,7 +10,7 @@ import type { ActorCms, TipoEntidad } from "@/lib/cms-comercial/contrato";
 import { isCmsError } from "@/lib/cms-comercial/errores";
 import { combosActivos, contenidosPara, ofertasActivas, precioEfectivo, vistaCombo } from "@/lib/cms-comercial/evaluacion";
 import { crearLector } from "@/lib/cms-comercial/lector";
-import type { PuertoCatalogo, PuertoVariables } from "@/lib/cms-comercial/puertos";
+import type { ProductoVista, PuertoCatalogo, PuertoVariables } from "@/lib/cms-comercial/puertos";
 import { crearRepositorioSupabaseCms } from "@/lib/cms-comercial/repositorio-supabase";
 import { LIMITE_POR_TIPO, crearServicioCms } from "@/lib/cms-comercial/servicio";
 import { crearBaseCms, type BaseCms } from "@/lib/cms-comercial/testing/pglite";
@@ -29,13 +29,20 @@ const CATALOGO = new Map<string, ProductoValidacion>([
 ]);
 let alConsultarCatalogo: (() => Promise<void>) | null = null;
 
+const vista = (p: ProductoValidacion): ProductoVista => ({ ...p, categoriaNombre: "Aretes", miniatura: null });
 const catalogo: PuertoCatalogo = {
   async productosPorReferencia(_t, refs) {
     if (alConsultarCatalogo) await alConsultarCatalogo();
-    return refs.flatMap((r) => (CATALOGO.has(r) ? [CATALOGO.get(r) as ProductoValidacion] : []));
+    return refs.flatMap((r) => (CATALOGO.has(r) ? [vista(CATALOGO.get(r) as ProductoValidacion)] : []));
+  },
+  async buscarProductos(_t, consulta, limite) {
+    return [...CATALOGO.values()].filter((p) => !consulta || p.referencia.toLowerCase().includes(consulta.toLowerCase()) || p.nombre.toLowerCase().includes(consulta.toLowerCase())).slice(0, limite).map(vista);
   },
   async categoriasPorId(_t, ids) {
     return ids.filter((i) => i === CAT_ARETES).map((id) => ({ id, nombre: "Aretes" }));
+  },
+  async listarCategorias() {
+    return [{ id: CAT_ARETES, nombre: "Aretes" }];
   },
 };
 const variablesPuerto: PuertoVariables = { async valores() { return { variables: { minimo_mayorista: "$750.000", nombre_negocio: "Delacour" }, minimoMayorista: 750000 }; } };
@@ -601,6 +608,18 @@ describe("LÍMITES y estados derivados", () => {
     assert.equal(porNombre.get("Solo borrador")?.estado, "borrador");
     assert.equal(porNombre.get("Solo borrador")?.tieneCambios, true);
     assert.equal((await servicio.listar(a, { estado: "publicada" })).length, 1);
+  });
+
+  it("el contenido comercial informa su tema en la lista (y solo él): así se ordena y se filtra sin abrir cada texto", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    await publicada(a, "contenido", contenido({ tema: "envios", titulo: "¿Hacen envíos?", texto: "Sí, a todo el país." }));
+    await servicio.crear(a, { tipo: "contenido", borrador: contenido({ tema: "horarios", titulo: "¿Cuál es el horario?", texto: "De lunes a sábado." }) });
+    await servicio.crear(a, { tipo: "oferta", borrador: oferta({ nombre: "Una oferta" }) });
+    const temas = new Map((await servicio.listar(a)).map((e) => [e.nombre, e.tema]));
+    assert.equal(temas.get("¿Hacen envíos?"), "envios");
+    assert.equal(temas.get("¿Cuál es el horario?"), "horarios", "un borrador también");
+    assert.equal(temas.get("Una oferta"), null, "una oferta no tiene tema");
   });
 
   it("hay un tope por tipo de elemento", () => {

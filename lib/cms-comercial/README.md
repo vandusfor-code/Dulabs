@@ -34,7 +34,11 @@ Un negocio sin el módulo `cms_comercial` no tiene nada de esto: ni API, ni men�
 | `repositorio.ts` · `repositorio-supabase.ts` | Contrato y adaptador: TODO pasa por funciones SQL `dulabs_cms_*` |
 | `adaptadores-supabase.ts` | Puertos de solo lectura al catálogo (productos y categorías) y a las variables del negocio |
 | `auth.ts` · `http.ts` · `http-esquemas.ts` | Sesión + rol + módulo (fail-closed), límite de peticiones, envelope de errores |
-| `testing/` | Fixtures, Postgres embebido (PGlite) y el puente que lleva las llamadas `rpc/dulabs_cms_*` de las rutas al SQL real |
+| `imagen-servidor.ts` · `almacen.ts` · `imagenes.ts` | **Imágenes** (PR 2): la foto sube directo a Storage con URL firmada; el servidor la verifica (firma real, ≤ 6 MB, ≤ 40 megapíxeles, no animada) y la re-codifica a WebP ≤ 2400 px sin metadatos, siempre bajo `{negocio}/cms/{id}/` |
+| `previa.ts` | **Vista previa** (PR 2): usa las MISMAS funciones de `evaluacion.ts` (precio con oferta, ahorro, precio normal y disponibilidad del combo, variables): lo que se ve es lo que el backend calcularía |
+| `json-canonico.ts` | JSON canónico apto para el navegador (checksum del servidor y detección de cambios del editor) |
+| `../cms-comercial-client.ts` | Cliente del navegador de `/api/dashboard/tienda/*`: resultados tipados que nunca lanzan; la subida de imágenes en etapas (preparar → URL firmada → Storage → confirmar) |
+| `testing/` | Fixtures, Postgres embebido (PGlite), el puente que lleva las llamadas `rpc/dulabs_cms_*` de las rutas al SQL real, un almacén de imágenes en memoria y `fetch-rutas.ts` (lleva el cliente del navegador a las rutas reales) |
 
 ## Datos (migración `20261210000000_dulabs_cms_comercial.sql`)
 
@@ -72,10 +76,23 @@ crear ──► borrador ──guardar──► (rev+1)
 
 Lectura (admin, agente, lectura) y escritura (solo admin). El negocio sale de la sesión.
 `GET/POST entidades` · `GET entidades/{id}` · `PUT entidades/{id}/borrador` · `POST entidades/{id}/{validar|publicar|restaurar|pausar|reanudar|despublicar|archivar|desarchivar}` · `GET entidades/{id}/versiones` · `GET auditoria`.
+Para el editor (PR 2): `GET imagenes` (galería) · `POST imagenes/upload-url` (URL firmada; solo admin) · `POST imagenes/{id}/confirmar` (verifica y re-codifica; idempotente; solo admin) · `GET productos` (`?q=` o `?referencias=`; sin ids internos) · `GET contexto` (categorías, variables con su valor, zona horaria).
+
+## Dashboard · «Tienda» (`/dashboard/tienda`, PR 2)
+
+Entrada del menú **Tienda**, visible solo en los negocios con el módulo `cms_comercial` (todos los roles consultan; la API exige administrador para modificar). Pestañas: Página principal · Ofertas · Combos · Campañas · Contenido · Historial.
+Cada elemento se edita con el ciclo **borrador → revisar → vista previa → publicar → versiones → restaurar**:
+
+- Se guarda un borrador sin afectar la tienda; **Revisar** valida en el servidor (mismos mensajes claros de siempre, marcados junto a cada campo); **Publicar** guarda lo pendiente, revisa y publica EXACTAMENTE la revisión validada (si otra persona cambió algo, hay conflicto y no se publica nada).
+- Antes de publicar se muestra qué cambia («Porcentaje de descuento: 20% → 25%»); el historial y las versiones usan el mismo resumen. Restaurar crea una versión nueva y no se permite con cambios sin guardar.
+- Cambios sin guardar: el navegador avisa al cerrar y la pantalla pregunta al volver o al tocar un enlace del menú.
+- Todo el contenido editable es **dato**: no hay campos para «instrucciones»; el servidor rechaza textos con órdenes al asistente, HTML y claves, y el editor lo dice en cada campo de texto.
+- Un administrador edita; agente y lectura ven todo sin poder tocar nada (y aunque una pantalla manipulada lo intentara, la API responde 403).
 
 ## Pruebas
 
 `npm run test:flow` (los archivos están en `scripts/test-flow-manifest.txt`). El SQL se ejecuta de verdad en Postgres embebido (`@electric-sql/pglite`): migración desde cero, sobre un estado previo, varias veces y con su reversa; el repositorio, el servicio y las rutas corren sobre ese SQL.
+Las pruebas de **pantalla** (`components/dashboard/tienda/tienda.dom.test.tsx`, jsdom + Testing Library) recorren la interfaz completa contra la API REAL y el SQL REAL: pantalla → cliente → rutas (sesión, rol, módulo) → servicio → base. Importan `@electric-sql/pglite` ANTES que jsdom (PGlite decide de dónde carga su WASM al cargarse el módulo).
 Mutación: `python3 scripts/mutacion/cms.py` (quita o invierte una protección a la vez; alguna prueba debe fallar).
 
 ## Activación en producción (nada se ejecuta solo)
@@ -83,4 +100,4 @@ Mutación: `python3 scripts/mutacion/cms.py` (quita o invierte una protección a
 1. Se fusiona y despliega el código: **inerte** (módulo apagado; sin la migración, el CMS «no existe» y todo sigue igual).
 2. El dueño corre `supabase/migrations/20261210000000_dulabs_cms_comercial.sql` (idempotente). Reversa: `supabase/rollbacks/20261210000000_dulabs_cms_comercial.down.sql` (se niega a correr si hay contenido).
 3. Se habilita el módulo `cms_comercial` del negocio (fila en `dulabs_tenant_modulos`).
-4. Los siguientes PRs conectan el Dashboard, la tienda, el precio efectivo y ARIA.
+4. El PR 2 (Dashboard) no agrega migraciones: la entrada **Tienda** aparece sola donde el módulo esté habilitado. Los siguientes PRs conectan la tienda, el precio efectivo y ARIA.

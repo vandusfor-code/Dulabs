@@ -4,6 +4,8 @@
  */
 import { z } from "zod";
 import { ESTADOS_ENTIDAD, TIPOS_ENTIDAD } from "@/lib/cms-comercial/contrato";
+import { MAX_BYTES_SUBIDA } from "@/lib/cms-comercial/imagen-servidor";
+import { TIPOS_SUBIDA } from "@/lib/cms-comercial/imagenes";
 
 const contenido = z.record(z.string(), z.unknown(), { message: "El contenido debe ser un objeto." });
 const rev = z.number({ message: "Falta la revisión del elemento." }).int().min(1, { message: "La revisión no es válida." });
@@ -30,3 +32,15 @@ export const consultaAuditoria = z.object({
 export const ACCIONES_DE_ESTADO = ["pausar", "reanudar", "despublicar", "archivar", "desarchivar"] as const;
 export type AccionDeEstado = (typeof ACCIONES_DE_ESTADO)[number];
 export const esAccionDeEstado = (v: string): v is AccionDeEstado => (ACCIONES_DE_ESTADO as readonly string[]).includes(v);
+
+export const cuerpoSubidaImagen = z.strictObject({
+  mimeType: z.enum(TIPOS_SUBIDA, { message: "Usa una imagen JPG, PNG o WebP." }),
+  bytes: z.number({ message: "Falta el tamaño de la imagen." }).int().min(1, { message: "La imagen está vacía." }).max(MAX_BYTES_SUBIDA, { message: "La imagen supera el tamaño máximo permitido (6 MB)." }),
+  nombreOriginal: z.string({ message: "El nombre del archivo debe ser un texto." }).max(200, { message: "El nombre del archivo es demasiado largo." }).nullish(),
+});
+
+export const consultaProductos = z.object({
+  q: z.string().max(80, { message: "La búsqueda es demasiado larga." }).optional(),
+  /** Referencias separadas por coma (para mostrar los productos ya elegidos). */
+  referencias: z.string().max(2000, { message: "Son demasiadas referencias." }).optional(),
+});
