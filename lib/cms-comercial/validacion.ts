@@ -292,7 +292,7 @@ function revisarDependencias(tipo: TipoEntidad, borrador: unknown, ctx: Contexto
   }
 }
 
-function revisarHome(h: { portada: { visible: boolean; imagen?: unknown }; secciones: Array<{ tipo: string; visible: boolean }>; categorias_destacadas: string[]; productos_destacados: string[] }, adv: Reportar) {
+function revisarHome(h: { portada: { visible: boolean; imagen?: unknown }; banner?: { visible: boolean }; secciones: Array<{ tipo: string; visible: boolean }>; categorias_destacadas: string[]; productos_destacados: string[] }, adv: Reportar) {
   if (h.portada.visible && !h.portada.imagen) {
     // Una portada visible sin foto se vería a medias: la tienda no la muestra (nunca un hero a medias).
     adv("portada_sin_imagen", "portada.imagen", "La portada está visible pero no tiene imagen: la tienda no la mostrará hasta que elijas una.");
@@ -301,6 +301,11 @@ function revisarHome(h: { portada: { visible: boolean; imagen?: unknown }; secci
   if (visible("destacados") && h.productos_destacados.length === 0) adv("seccion_vacia", "secciones", "La sección de productos destacados está visible pero no elegiste productos: se mostrarán los más recientes.");
   if (visible("categorias") && h.categorias_destacadas.length === 0) adv("seccion_vacia", "secciones", "La sección de categorías está visible pero no elegiste categorías: se mostrarán todas.");
   if (visible("portada") && !h.portada.visible) adv("seccion_oculta", "secciones", "La sección «portada» está activa pero la portada está oculta.");
+  // La tienda respeta la lista de secciones: lo que está «visible» pero cuya sección está apagada no se muestra.
+  if (h.portada.visible && h.portada.imagen && !visible("portada")) adv("seccion_apagada", "secciones", "La portada está visible pero la sección «portada» está desactivada: la tienda no la mostrará.");
+  if (h.banner?.visible && !visible("banner")) adv("seccion_apagada", "secciones", "El banner está visible pero la sección «banner» está desactivada: la tienda no lo mostrará.");
+  if (visible("banner") && !h.banner) adv("seccion_vacia", "secciones", "La sección del banner está visible pero no configuraste un banner: no se mostrará nada.");
+  if (!h.secciones.some((s) => s.visible)) adv("sin_secciones", "secciones", "No hay ninguna sección visible: tu tienda solo mostrará el nombre del negocio.");
 }
 
 function revisarOferta(o: { modalidad: "detal" | "mayorista" | "ambas"; beneficio: Beneficio; alcance: { todos: boolean; referencias: string[]; categorias: string[] }; condiciones?: string }, ctx: ContextoValidacion, err: Reportar, adv: Reportar) {

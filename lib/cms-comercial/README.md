@@ -38,6 +38,10 @@ Un negocio sin el módulo `cms_comercial` no tiene nada de esto: ni API, ni men�
 | `previa.ts` | **Vista previa** (PR 2): usa las MISMAS funciones de `evaluacion.ts` (precio con oferta, ahorro, precio normal y disponibilidad del combo, variables): lo que se ve es lo que el backend calcularía |
 | `json-canonico.ts` | JSON canónico apto para el navegador (checksum del servidor y detección de cambios del editor) |
 | `../cms-comercial-client.ts` | Cliente del navegador de `/api/dashboard/tienda/*`: resultados tipados que nunca lanzan; la subida de imágenes en etapas (preparar → URL firmada → Storage → confirmar) |
+| `vitrina.ts` | **La tienda lee del CMS** (PR 3), PURO: `vitrinaDesdeCms` convierte lo publicado en la vitrina de la tienda; `hrefDeDestino` decide a dónde lleva un botón (solo si el destino existe y está activo hoy); `imagenDeVitrina` y `assetsReferenciados` (qué imágenes puede servir la ruta pública) |
+| `vitrina-publica.ts` · `publico-supabase.ts` | Carga de la vitrina CON RESPALDO (inyectable) y su cableado real (perezoso): ante cualquier problema la tienda usa la vitrina de siempre, sin error para el cliente |
+| `imagen-publica.ts` | Ruta pública de imágenes `/catalogo/{tienda}/vitrina/{id}.webp`: solo imágenes LISTAS, usadas por contenido PUBLICADO y de la carpeta del propio negocio; todo lo demás, el mismo 404 |
+| `siembra-vitrina.ts` | Genera la página principal equivalente a la tienda de hoy y el SQL que la siembra (y su reversa) en `supabase/provisioning/<tienda>/` |
 | `testing/` | Fixtures, Postgres embebido (PGlite), el puente que lleva las llamadas `rpc/dulabs_cms_*` de las rutas al SQL real, un almacén de imágenes en memoria y `fetch-rutas.ts` (lleva el cliente del navegador a las rutas reales) |
 
 ## Datos (migración `20261210000000_dulabs_cms_comercial.sql`)
@@ -89,6 +93,18 @@ Cada elemento se edita con el ciclo **borrador → revisar → vista previa → 
 - Todo el contenido editable es **dato**: no hay campos para «instrucciones»; el servidor rechaza textos con órdenes al asistente, HTML y claves, y el editor lo dice en cada campo de texto.
 - Un administrador edita; agente y lectura ven todo sin poder tocar nada (y aunque una pantalla manipulada lo intentara, la API responde 403).
 
+## La tienda pública lee del CMS (PR 3)
+
+El inicio de la tienda (`/catalogo/{tienda}`) usa lo PUBLICADO en la página principal del CMS. El catálogo sigue siendo la fuente de productos, precios y fotos: el CMS solo **elige** qué mostrar y en qué orden. Este PR **no cambia ningún precio** (el precio efectivo llega con el PR 4).
+
+- **Respaldo total**: sin el módulo, sin migración, sin página principal publicada, con la tienda de tecnología (tiene su propio contenido), ante un error de la base o una lectura de más de 2,5 s, la tienda usa su vitrina de siempre. El HTML del inicio con la configuración de hoy queda guardado en `components/catalogo-publico/tienda/__dorados__/` y una prueba exige que sea idéntico byte a byte.
+- **Nunca a medias**: la portada solo sale con imagen LISTA y título; un botón o banner solo existe si su destino existe y está activo hoy (categoría borrada, oferta vencida, campaña de otra modalidad, número de WhatsApp inválido: no se muestra).
+- **Imágenes**: salen por `/catalogo/{tienda}/vitrina/{id}.webp` (nunca la dirección de Storage), con las medidas reales del archivo y solo si están usadas por contenido publicado.
+- **Secciones**: las visibles que la tienda sabe dibujar (portada, categorías, destacados, banner y campaña; ofertas y combos llegan con el PR 4), en el orden elegido. Si no hay lista, el orden de siempre.
+- **Destacados, categorías y productos de la campaña** se resuelven contra el catálogo real (activos y del negocio); si ninguno sirve, el criterio automático de siempre.
+- **Campaña**: una sola, la vigente de mayor prioridad que tenga portada o productos (modalidad detal, `[desde, hasta)` en hora de Bogotá).
+- **Siembra**: `supabase/provisioning/delacour/03_sembrar_vitrina_actual.sql` (generado por `siembra-vitrina.ts`) publica la portada y el banner de hoy como versión 1; la tienda leída del CMS es idéntica a la de hoy (prueba `inicio-siembra.pglite.test.tsx`).
+
 ## Pruebas
 
 `npm run test:flow` (los archivos están en `scripts/test-flow-manifest.txt`). El SQL se ejecuta de verdad en Postgres embebido (`@electric-sql/pglite`): migración desde cero, sobre un estado previo, varias veces y con su reversa; el repositorio, el servicio y las rutas corren sobre ese SQL.
@@ -100,4 +116,6 @@ Mutación: `python3 scripts/mutacion/cms.py` (quita o invierte una protección a
 1. Se fusiona y despliega el código: **inerte** (módulo apagado; sin la migración, el CMS «no existe» y todo sigue igual).
 2. El dueño corre `supabase/migrations/20261210000000_dulabs_cms_comercial.sql` (idempotente). Reversa: `supabase/rollbacks/20261210000000_dulabs_cms_comercial.down.sql` (se niega a correr si hay contenido).
 3. Se habilita el módulo `cms_comercial` del negocio (fila en `dulabs_tenant_modulos`).
-4. El PR 2 (Dashboard) no agrega migraciones: la entrada **Tienda** aparece sola donde el módulo esté habilitado. Los siguientes PRs conectan la tienda, el precio efectivo y ARIA.
+4. El PR 2 (Dashboard) no agrega migraciones: la entrada **Tienda** aparece sola donde el módulo esté habilitado.
+5. PR 3 (la tienda lee del CMS): sin cambios de esquema. Con el módulo habilitado y NADA publicado, la tienda sigue idéntica. Se corre `supabase/provisioning/delacour/03_sembrar_vitrina_actual.sql` (después del 02): publica la portada y el banner de hoy como contenido del CMS (la tienda se ve igual) y la administradora los encuentra listos para editar. Reversa: `03_sembrar_vitrina_actual.reversa.sql`.
+6. Los siguientes PRs conectan el precio efectivo (PR 4) y ARIA (PR 5).
