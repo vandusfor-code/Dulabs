@@ -198,14 +198,24 @@ export function allowedTransitions(): Array<{ from: OrderStatus; to: OrderStatus
   return ORDER_STATUSES.flatMap((from) => Object.entries(TRANSITIONS[from]).map(([to, actors]) => ({ from, to: to as OrderStatus, actors: actors ?? [] })));
 }
 
+/** La oferta que fijó el precio de una línea (evidencia del pedido: qué se mostró y se cobró). */
+export interface OrderLineOffer {
+  key: string;
+  name: string;
+  version: number;
+}
+
 export interface OrderLine {
   reference: string;
   /** Nombre resuelto por el servidor en el momento de validar (descriptivo; la identidad es la referencia). */
   productName: string;
   quantity: number;
-  /** Precio del canal; null = "a consultar" (nunca un 0 inventado). */
+  /** Precio EFECTIVO del canal (el de lista o el de la oferta vigente que aplica); null = "a consultar" (nunca un 0 inventado). */
   unitPrice: number | null;
   subtotal: number | null;
+  /** Evidencia de la oferta: precio de lista y oferta aplicada. Solo existen cuando `unitPrice` es el de una oferta vigente. */
+  listPrice?: number;
+  offer?: OrderLineOffer;
 }
 
 /** Problema detectado al validar (determinista, listo para mostrar). */
@@ -276,7 +286,8 @@ export interface OrderPublicView {
   order_id: string;
   channel: OrderChannel;
   status: OrderStatus;
-  lines: Array<{ reference: string; product_name: string; quantity: number; unit_price: number | null; subtotal: number | null }>;
+  /** `list_price` y `offer` solo existen en las líneas cuyo precio es el de una oferta vigente (`offer` = el nombre público de la oferta). */
+  lines: Array<{ reference: string; product_name: string; quantity: number; unit_price: number | null; subtotal: number | null; list_price?: number; offer?: string }>;
   total_units: number;
   total: number;
   unpriced_units: number;
@@ -291,7 +302,14 @@ export function publicView(o: Order): OrderPublicView {
     order_id: o.orderId,
     channel: o.channel,
     status: o.status,
-    lines: o.lines.map((l) => ({ reference: l.reference, product_name: l.productName, quantity: l.quantity, unit_price: l.unitPrice, subtotal: l.subtotal })),
+    lines: o.lines.map((l) => ({
+      reference: l.reference,
+      product_name: l.productName,
+      quantity: l.quantity,
+      unit_price: l.unitPrice,
+      subtotal: l.subtotal,
+      ...(l.listPrice !== undefined && l.offer ? { list_price: l.listPrice, offer: l.offer.name } : {}),
+    })),
     total_units: o.totalUnits,
     total: o.total,
     unpriced_units: o.unpricedUnits,

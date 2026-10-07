@@ -325,7 +325,7 @@ interface OrderRow {
   huella_solicitud: string | null;
   contacto_phone_number_id: string | null;
   contacto_wa_id: string | null;
-  lineas: Array<{ reference: string; product_name: string; quantity: number; unit_price: number | null; subtotal: number | null }>;
+  lineas: Array<{ reference: string; product_name: string; quantity: number; unit_price: number | null; subtotal: number | null; list_price?: number; offer?: { key: string; name: string; version: number } }>;
   total_unidades: number;
   total: number | string;
   unidades_sin_precio: number;
@@ -413,7 +413,14 @@ export function orderFromRow(r: OrderRow): Order {
     source: r.origen,
     status: r.estado,
     contact: r.contacto_wa_id && r.contacto_phone_number_id ? { phoneNumberId: r.contacto_phone_number_id, waId: r.contacto_wa_id } : null,
-    lines: (r.lineas ?? []).map((l) => ({ reference: l.reference, productName: l.product_name, quantity: l.quantity, unitPrice: l.unit_price, subtotal: l.subtotal })),
+    lines: (r.lineas ?? []).map((l) => ({
+      reference: l.reference,
+      productName: l.product_name,
+      quantity: l.quantity,
+      unitPrice: l.unit_price,
+      subtotal: l.subtotal,
+      ...(l.list_price !== undefined && l.offer ? { listPrice: l.list_price, offer: l.offer } : {}),
+    })),
     totalUnits: r.total_unidades,
     total: Number(r.total),
     unpricedUnits: r.unidades_sin_precio,
@@ -432,7 +439,14 @@ export function orderFromRow(r: OrderRow): Order {
 }
 
 const linesToRow = (lines: OrderLine[]) =>
-  lines.map((l) => ({ reference: l.reference, product_name: l.productName, quantity: l.quantity, unit_price: l.unitPrice, subtotal: l.subtotal }));
+  lines.map((l) => ({
+    reference: l.reference,
+    product_name: l.productName,
+    quantity: l.quantity,
+    unit_price: l.unitPrice,
+    subtotal: l.subtotal,
+    ...(l.listPrice !== undefined && l.offer ? { list_price: l.listPrice, offer: l.offer } : {}),
+  }));
 const confirmationToRow = (c: OrderConfirmation | null) => (c ? { id: c.id, total: c.total, unpriced_units: c.unpricedUnits, expires_at: c.expiresAt } : null);
 const handoffToRow = (h: OrderHandoff | null) => (h ? { reason: h.reason, context: h.context, requested_by: h.requestedBy, at: h.at } : null);
 

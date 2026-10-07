@@ -8,7 +8,8 @@ import { SECCIONES_HOME } from "@/lib/cms-comercial/contrato";
 import type { Destino, Home } from "@/lib/cms-comercial/esquemas";
 import type { AssetPublicoCms, InstantaneaCms, PublicadaCms } from "@/lib/cms-comercial/publicado";
 import { AHORA, CAT_ARETES, CAT_DIJES, campana, combo, home, instantanea, oferta, publicada } from "@/lib/cms-comercial/testing/fixtures";
-import { assetsReferenciados, hrefDeDestino, imagenDeVitrina, rutaImagenCms, seccionesDeInicio, vitrinaDesdeCms, type ContextoVitrina } from "@/lib/cms-comercial/vitrina";
+import type { ProductoParaCombo } from "@/lib/cms-comercial/evaluacion";
+import { assetsReferenciados, hrefDeDestino, imagenDeVitrina, referenciasDeCombos, rutaImagenCms, seccionesDeInicio, vitrinaDesdeCms, type ContextoVitrina } from "@/lib/cms-comercial/vitrina";
 import { ORDEN_INICIO_CLASICO, SECCIONES_DIBUJADAS, SECCIONES_INICIO, type CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
 
 const ASSET_PORTADA = "a0000000-0000-4000-8000-000000000001";
@@ -91,9 +92,8 @@ describe("secciones: la tienda y el CMS hablan de lo mismo", () => {
     for (const s of SECCIONES_DIBUJADAS) assert.ok(SECCIONES_INICIO.includes(s), s);
     assert.deepEqual([...ORDEN_INICIO_CLASICO], ["portada", "categorias", "destacados", "banner"]);
   });
-  it("ofertas y combos todavía no se dibujan (no hay nada a medias en la tienda)", () => {
-    assert.ok(!SECCIONES_DIBUJADAS.includes("ofertas"));
-    assert.ok(!SECCIONES_DIBUJADAS.includes("combos"));
+  it("la tienda ya dibuja TODAS las secciones del CMS (portada, categorías, destacados, banner, ofertas, combos y campaña)", () => {
+    assert.deepEqual([...SECCIONES_DIBUJADAS].sort(), [...SECCIONES_HOME].sort());
   });
 });
 
@@ -197,13 +197,24 @@ describe("hrefDeDestino — un botón solo lleva a donde existe y está disponib
     it("campaña activa y sección dibujada: ancla a su sección", () => {
       assert.equal(hrefDeDestino({ tipo: "campana", clave: "campana-activa" }, ctxV(), evTodo), "/catalogo/prueba#campana");
     });
-    it("oferta y combo: la tienda aún no dibuja esas secciones, así que no hay enlace (nunca un ancla a la nada)", () => {
-      assert.equal(hrefDeDestino({ tipo: "oferta", clave: "oferta-activa" }, ctxV(), evTodo), null);
-      assert.equal(hrefDeDestino({ tipo: "combo", clave: "combo-activo" }, ctxV(), evTodo), null);
+    it("si la sección NO está en la página (la tienda no la dibuja o la home la oculta), no hay enlace: nunca un ancla a la nada", () => {
+      const sinOfertasNiCombos = ctxV({ dibujadas: ["portada", "categorias", "destacados", "banner", "campana"] });
+      assert.equal(hrefDeDestino({ tipo: "oferta", clave: "oferta-activa" }, sinOfertasNiCombos, evTodo), null);
+      assert.equal(hrefDeDestino({ tipo: "combo", clave: "combo-activo" }, sinOfertasNiCombos, evTodo), null);
     });
-    it("cuando la tienda sí las dibuja, oferta y combo activos llevan a su sección", () => {
+    it("cuando la sección está en la página, oferta y combo activos llevan a su sección", () => {
+      assert.equal(hrefDeDestino({ tipo: "oferta", clave: "oferta-activa" }, ctxV(), evTodo), "/catalogo/prueba#ofertas");
+      assert.equal(hrefDeDestino({ tipo: "combo", clave: "combo-activo" }, ctxV(), evTodo), "/catalogo/prueba#combos");
       assert.equal(hrefDeDestino({ tipo: "oferta", clave: "oferta-activa" }, todoDibujado, evTodo), "/catalogo/prueba#ofertas");
-      assert.equal(hrefDeDestino({ tipo: "combo", clave: "combo-activo" }, todoDibujado, evTodo), "/catalogo/prueba#combos");
+    });
+    it("una campaña activa pero que el bloque NO muestra (otra de mayor prioridad ocupa el lugar) no tiene enlace: el ancla llevaría a otra campaña", () => {
+      const dos = snapDe(homeCompleta(), {
+        campanas: [publicada("mayor", campana({ nombre: "Mayor", prioridad: 9, productos_destacados: ["DL-000001"] })), publicada("menor", campana({ nombre: "Menor", prioridad: 1, productos_destacados: ["DL-000002"] }))],
+      });
+      const e = { snap: dos, canal: "retail" as const, ahora: AHORA };
+      assert.equal(hrefDeDestino({ tipo: "campana", clave: "mayor" }, ctxV({ campanaMostrada: "mayor" }), e), "/catalogo/prueba#campana");
+      assert.equal(hrefDeDestino({ tipo: "campana", clave: "menor" }, ctxV({ campanaMostrada: "mayor" }), e), null);
+      assert.equal(hrefDeDestino({ tipo: "campana", clave: "mayor" }, ctxV({ campanaMostrada: null }), e), null, "sin ninguna campaña mostrada no hay ancla");
     });
     it("una clave inexistente no lleva a ningún lado", () => {
       assert.equal(hrefDeDestino({ tipo: "oferta", clave: "no-existe" }, todoDibujado, evTodo), null);
@@ -359,7 +370,7 @@ describe("vitrinaDesdeCms — el banner", () => {
 });
 
 describe("vitrinaDesdeCms — secciones, destacados y categorías", () => {
-  it("las secciones son las visibles que la tienda sabe dibujar, en el orden elegido (ofertas y combos se omiten por ahora)", () => {
+  it("las secciones son las visibles que la tienda sabe dibujar, en el orden elegido; una tienda que aún no dibuje alguna la omite", () => {
     const h = homeCompleta({
       secciones: [
         { tipo: "banner", visible: true },
@@ -370,10 +381,11 @@ describe("vitrinaDesdeCms — secciones, destacados y categorías", () => {
         { tipo: "campana", visible: true },
       ],
     });
-    assert.deepEqual(vitrinaDesdeCms(snapDe(h), REGISTRO, ctxV()).secciones, ["banner", "portada", "campana"]);
+    assert.deepEqual(vitrinaDesdeCms(snapDe(h), REGISTRO, ctxV()).secciones, ["banner", "ofertas", "combos", "portada", "campana"]);
+    assert.deepEqual(vitrinaDesdeCms(snapDe(h), REGISTRO, ctxV({ dibujadas: ["portada", "categorias", "destacados", "banner", "campana"] })).secciones, ["banner", "portada", "campana"]);
   });
 
-  it("cuando la tienda ya las dibuja (contexto), ofertas y combos entran en la lista", () => {
+  it("con todas las secciones visibles entran todas, en el orden elegido", () => {
     const h = homeCompleta({ secciones: TODAS_VISIBLES });
     const v = vitrinaDesdeCms(snapDe(h), REGISTRO, ctxV({ dibujadas: SECCIONES_INICIO }));
     assert.deepEqual(v.secciones, [...SECCIONES_HOME]);
@@ -479,7 +491,7 @@ describe("vitrinaDesdeCms — la campaña vigente", () => {
     assert.deepEqual(v.secciones, ["portada"]);
   });
 
-  it("el botón de la campaña que lleva a la propia campaña funciona (ancla) y uno a una oferta aún no dibujada no se muestra", () => {
+  it("el botón de la campaña que lleva a la propia campaña funciona (ancla) y uno a una oferta cuya sección no está en la página no se muestra", () => {
     const a = vitrinaDesdeCms(conCampanas(publicada("k", campana({ portada: { titulo: "Campaña", boton: { texto: "Mira", destino: { tipo: "campana", clave: "k" } } } }))), REGISTRO, ctxV());
     assert.equal(a.campana?.portada?.boton?.href, "/catalogo/prueba#campana");
     const b = vitrinaDesdeCms(
@@ -509,5 +521,188 @@ describe("vitrinaDesdeCms — pureza", () => {
     assert.deepEqual(seccionesDeInicio(REGISTRO), ORDEN_INICIO_CLASICO);
     assert.deepEqual(seccionesDeInicio({ secciones: ["banner", "portada"] }), ["banner", "portada"]);
     assert.deepEqual(seccionesDeInicio({ secciones: [] }), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ofertas y combos del inicio
+// ---------------------------------------------------------------------------
+
+const homeCon = (...secciones: Array<"ofertas" | "combos" | "campana">) =>
+  homeCompleta({ secciones: [{ tipo: "portada", visible: true }, ...secciones.map((tipo) => ({ tipo, visible: true }))] });
+
+describe("vitrinaDesdeCms — ofertas vigentes", () => {
+  it("anuncia las ofertas ACTIVAS para el detal, la de mayor prioridad primero, con el beneficio, la vigencia, las condiciones y qué cubren", () => {
+    const snap = snapDe(homeCon("ofertas"), {
+      ofertas: [
+        publicada("menor", oferta({ nombre: "Menor", prioridad: 1, beneficio: { tipo: "porcentaje", valor: 10 } })),
+        publicada("amor", oferta({ nombre: "Amor y Amistad", descripcion: "Temporada de regalos.", prioridad: 9, condiciones: "Hasta agotar existencias.", alcance: { todos: true, referencias: [], categorias: [] }, imagen: cms(ASSET_OFERTA, "Collar en oferta") })),
+      ],
+    });
+    const v = vitrinaDesdeCms(snap, REGISTRO, ctxV());
+    assert.deepEqual(v.ofertas?.map((o) => o.clave), ["amor", "menor"]);
+    assert.deepEqual(v.ofertas?.[0], {
+      clave: "amor",
+      nombre: "Amor y Amistad",
+      descripcion: "Temporada de regalos.",
+      imagen: { src: `/catalogo/prueba/vitrina/${ASSET_OFERTA}.webp`, width: 800, height: 800, alt: "Collar en oferta" },
+      beneficio: "20% de descuento",
+      vigencia: "del 25 de octubre de 2026 al 31 de octubre de 2026",
+      condiciones: "Hasta agotar existencias.",
+      alcance: "Toda la tienda",
+      href: "/catalogo/prueba?todo=1",
+    });
+  });
+
+  it("CONTRATO DE MODALIDAD: una oferta mayorista jamás se anuncia en la tienda detal; una «ambas» sí", () => {
+    const snap = snapDe(homeCon("ofertas"), { ofertas: [publicada("mayor", oferta({ modalidad: "mayorista", beneficio: { tipo: "porcentaje", valor: 30 } })), publicada("ambas", oferta({ modalidad: "ambas" })), publicada("detal", oferta({ modalidad: "detal" }))] });
+    assert.deepEqual(vitrinaDesdeCms(snap, REGISTRO, ctxV()).ofertas?.map((o) => o.clave).sort(), ["ambas", "detal"]);
+  });
+
+  it("vencida, programada o de una campaña apagada: no se anuncia; sin ninguna vigente la propiedad no existe", () => {
+    const snap = snapDe(homeCon("ofertas"), {
+      ofertas: [
+        publicada("vencida", oferta({ vigencia: { desde: "2026-09-01", hasta: "2026-09-30" } })),
+        publicada("programada", oferta({ vigencia: { desde: "2026-11-01", hasta: "2026-11-30" } })),
+        publicada("de-campana", oferta({ campana: "navidad" })),
+      ],
+    });
+    assert.equal(vitrinaDesdeCms(snap, REGISTRO, ctxV()).ofertas, undefined);
+  });
+
+  it("«Ver productos» lleva a la categoría si la oferta cubre UNA sola (y existe); si no, al listado", () => {
+    const hrefDe = (alcance: { todos: boolean; referencias: string[]; categorias: string[] }, categorias = new Set([CAT_ARETES, CAT_DIJES])) =>
+      vitrinaDesdeCms(snapDe(homeCon("ofertas"), { ofertas: [publicada("o", oferta({ alcance }))] }), REGISTRO, ctxV({ categorias })).ofertas?.[0].href;
+    assert.equal(hrefDe({ todos: false, referencias: [], categorias: [CAT_ARETES] }), `/catalogo/prueba?categoria=${CAT_ARETES}`);
+    assert.equal(hrefDe({ todos: false, referencias: [], categorias: [CAT_BORRADA] }), "/catalogo/prueba?todo=1", "categoría borrada: listado");
+    assert.equal(hrefDe({ todos: false, referencias: [], categorias: [CAT_ARETES, CAT_DIJES] }), "/catalogo/prueba?todo=1");
+    assert.equal(hrefDe({ todos: false, referencias: ["DL-000001"], categorias: [CAT_ARETES] }), "/catalogo/prueba?todo=1");
+    assert.equal(hrefDe({ todos: true, referencias: [], categorias: [] }), "/catalogo/prueba?todo=1");
+  });
+
+  it("el alcance se dice en palabras: toda la tienda, N productos seleccionados, N categorías o ambos", () => {
+    const alcanceDe = (alcance: { todos: boolean; referencias: string[]; categorias: string[] }) => vitrinaDesdeCms(snapDe(homeCon("ofertas"), { ofertas: [publicada("o", oferta({ alcance }))] }), REGISTRO, ctxV()).ofertas?.[0].alcance;
+    assert.equal(alcanceDe({ todos: false, referencias: ["DL-000001"], categorias: [] }), "1 producto seleccionado");
+    assert.equal(alcanceDe({ todos: false, referencias: ["DL-000001", "DL-000002"], categorias: [] }), "2 productos seleccionados");
+    assert.equal(alcanceDe({ todos: false, referencias: [], categorias: [CAT_ARETES] }), "1 categoría");
+    assert.equal(alcanceDe({ todos: false, referencias: ["DL-000001", "DL-000002"], categorias: [CAT_ARETES, CAT_DIJES] }), "2 productos seleccionados y 2 categorías");
+    assert.equal(alcanceDe({ todos: true, referencias: [], categorias: [] }), "Toda la tienda");
+  });
+
+  it("con la sección «ofertas» oculta o fuera de la lista no se anuncia nada aunque haya ofertas vigentes", () => {
+    const ofertas = [publicada("o", oferta())];
+    assert.equal(vitrinaDesdeCms(snapDe(homeCompleta(), { ofertas }), REGISTRO, ctxV()).ofertas, undefined);
+    assert.equal(vitrinaDesdeCms(snapDe(homeCompleta({ secciones: [{ tipo: "portada", visible: true }, { tipo: "ofertas", visible: false }] }), { ofertas }), REGISTRO, ctxV()).ofertas, undefined);
+  });
+});
+
+describe("vitrinaDesdeCms — combos vigentes (Etapa 1)", () => {
+  const componentes = [
+    { referencia: "DL-000001", cantidad: 1 },
+    { referencia: "DL-000002", cantidad: 2 },
+  ];
+  const hechos = (over: Record<string, Partial<ProductoParaCombo>> = {}): ReadonlyMap<string, ProductoParaCombo> =>
+    new Map(
+      (
+        [
+          { referencia: "DL-000001", nombre: "Aretes dorados", activo: true, disponibilidad: "available", maxCantidad: 7, precioLista: 90_000 },
+          { referencia: "DL-000002", nombre: "Cadena fina", activo: true, disponibilidad: "available", maxCantidad: null, precioLista: 50_000 },
+        ] satisfies ProductoParaCombo[]
+      ).map((p) => [p.referencia, { ...p, ...(over[p.referencia] ?? {}) }]),
+    );
+  const snapCombo = (over: Parameters<typeof combo>[0] = {}) => snapDe(homeCon("combos"), { combos: [publicada("regalo", combo({ nombre: "Regalo completo", componentes, precio: { detal: 150_000, mayorista: 110_000 }, ...over }))] });
+
+  it("muestra el combo con lo que incluye, el precio normal (lo que se paga por separado), el ahorro y la disponibilidad calculados por el backend", () => {
+    const v = vitrinaDesdeCms(snapCombo({ descripcion: "Collar y aretes.", condiciones: "Con asesora." }), REGISTRO, ctxV(), hechos());
+    assert.deepEqual(v.combos, [
+      {
+        clave: "regalo",
+        nombre: "Regalo completo",
+        descripcion: "Collar y aretes.",
+        componentes: [
+          { referencia: "DL-000001", nombre: "Aretes dorados", cantidad: 1, disponible: true },
+          { referencia: "DL-000002", nombre: "Cadena fina", cantidad: 2, disponible: true },
+        ],
+        precioNormal: 190_000,
+        precioCombo: 150_000,
+        ahorro: 40_000,
+        disponible: true,
+        vigencia: "del 25 de octubre de 2026 al 31 de octubre de 2026",
+        condiciones: "Con asesora.",
+        consultaHref: `https://wa.me/573001112233?text=${encodeURIComponent("Hola, me interesa el combo «Regalo completo» (código regalo).")}`,
+      },
+    ]);
+  });
+
+  it("sin los datos reales de los productos (no se pudieron consultar) los combos NO se muestran: nunca «disponibles» por suposición", () => {
+    assert.equal(vitrinaDesdeCms(snapCombo(), REGISTRO, ctxV()).combos, undefined);
+  });
+
+  it("si un componente no está disponible el backend decide: el combo se muestra como no disponible, sin enlace de pedido, y va después de los disponibles", () => {
+    const snap = snapDe(homeCon("combos"), {
+      combos: [
+        publicada("agotado", combo({ nombre: "Combo agotado", componentes, precio: { detal: 150_000, mayorista: 110_000 }, prioridad: 9 })),
+        publicada("bueno", combo({ nombre: "Combo bueno", componentes: [{ referencia: "DL-000002", cantidad: 1 }], precio: { detal: 40_000, mayorista: 30_000 }, prioridad: 1 })),
+      ],
+    });
+    const v = vitrinaDesdeCms(snap, REGISTRO, ctxV(), hechos({ "DL-000001": { disponibilidad: "sold_out" } }));
+    assert.deepEqual(v.combos?.map((c) => [c.clave, c.disponible]), [["bueno", true], ["agotado", false]]);
+    const agotado = v.combos![1];
+    assert.equal(agotado.consultaHref, null);
+    assert.deepEqual(agotado.componentes.map((c) => c.disponible), [false, true]);
+  });
+
+  it("un componente inactivo, inexistente o con menos stock del que pide deja el combo no disponible", () => {
+    for (const over of [{ "DL-000001": { activo: false } }, { "DL-000002": { maxCantidad: 1 } }] as Array<Record<string, Partial<ProductoParaCombo>>>) {
+      assert.equal(vitrinaDesdeCms(snapCombo(), REGISTRO, ctxV(), hechos(over)).combos?.[0].disponible, false, JSON.stringify(over));
+    }
+    const sinUno = new Map([...hechos()].filter(([ref]) => ref !== "DL-000002"));
+    assert.equal(vitrinaDesdeCms(snapCombo(), REGISTRO, ctxV(), sinUno).combos?.[0].disponible, false);
+  });
+
+  it("sin ahorro real no se inventa uno: ni precio normal tachado ni «ahorras»", () => {
+    const caro = vitrinaDesdeCms(snapCombo({ precio: { detal: 200_000, mayorista: 110_000 } }), REGISTRO, ctxV(), hechos()).combos?.[0];
+    assert.ok(caro && !("ahorro" in caro));
+    assert.equal(caro.precioNormal, 190_000);
+    const sinPrecio = vitrinaDesdeCms(snapCombo(), REGISTRO, ctxV(), hechos({ "DL-000002": { precioLista: null } })).combos?.[0];
+    assert.ok(sinPrecio && !("ahorro" in sinPrecio));
+    assert.equal(sinPrecio.precioNormal, null);
+  });
+
+  it("CONTRATO DE MODALIDAD: un combo mayorista jamás se muestra en la tienda detal", () => {
+    const snap = snapCombo({ modalidad: "mayorista", precio: { mayorista: 110_000 } });
+    assert.equal(vitrinaDesdeCms(snap, REGISTRO, ctxV(), hechos()).combos, undefined);
+  });
+
+  it("vencido o programado no se muestra", () => {
+    assert.equal(vitrinaDesdeCms(snapCombo({ vigencia: { desde: "2026-09-01", hasta: "2026-09-30" } }), REGISTRO, ctxV(), hechos()).combos, undefined);
+    assert.equal(vitrinaDesdeCms(snapCombo({ vigencia: { desde: "2026-11-01", hasta: "2026-11-30" } }), REGISTRO, ctxV(), hechos()).combos, undefined);
+  });
+
+  it("sin un WhatsApp válido del negocio el combo se muestra pero sin enlace de pedido", () => {
+    assert.equal(vitrinaDesdeCms(snapCombo(), REGISTRO, ctxV({ whatsapp: null }), hechos()).combos?.[0].consultaHref, null);
+    assert.equal(vitrinaDesdeCms(snapCombo(), REGISTRO, ctxV({ whatsapp: "123" }), hechos()).combos?.[0].consultaHref, null);
+  });
+
+  it("el stock exacto NUNCA sale hacia la tienda (ni las unidades que alcanzan, ni el máximo)", () => {
+    const texto = JSON.stringify(vitrinaDesdeCms(snapCombo(), REGISTRO, ctxV(), hechos()));
+    for (const prohibido of ["unidadesDisponibles", "maxCantidad", "stock", "motivoNoDisponible"]) assert.ok(!texto.includes(prohibido), prohibido);
+  });
+
+  it("con la sección «combos» oculta no se muestra nada", () => {
+    assert.equal(vitrinaDesdeCms(snapDe(homeCompleta(), { combos: [publicada("regalo", combo())] }), REGISTRO, ctxV(), hechos()).combos, undefined);
+  });
+
+  it("referenciasDeCombos: solo los componentes de los combos activos para el detal, sin repetir", () => {
+    const snap = snapDe(homeCon("combos"), {
+      combos: [
+        publicada("a", combo({ componentes: [{ referencia: "DL-000001", cantidad: 1 }, { referencia: "DL-000002", cantidad: 1 }] })),
+        publicada("b", combo({ componentes: [{ referencia: "DL-000002", cantidad: 1 }, { referencia: "DL-000003", cantidad: 1 }] })),
+        publicada("mayor", combo({ modalidad: "mayorista", precio: { mayorista: 1_000 }, componentes: [{ referencia: "DL-000099", cantidad: 2 }] })),
+        publicada("vencido", combo({ vigencia: { desde: "2026-09-01", hasta: "2026-09-30" }, componentes: [{ referencia: "DL-000098", cantidad: 2 }] })),
+      ],
+    });
+    assert.deepEqual(referenciasDeCombos(snap, AHORA).sort(), ["DL-000001", "DL-000002", "DL-000003"]);
+    assert.deepEqual(referenciasDeCombos(snapDe(null), AHORA), []);
   });
 });

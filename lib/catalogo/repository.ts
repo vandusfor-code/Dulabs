@@ -20,6 +20,7 @@ import type {
   StatusFilter,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
+import type { PuertoPrecios } from "@/lib/catalogo/precios";
 import type { CatalogPublication } from "@/lib/catalogo/publicacion";
 import type { ExistingProductKey, ImportRecord } from "@/lib/catalogo/import/types";
 import { moduloHabilitado } from "@/lib/tenant-modulos";
@@ -113,6 +114,11 @@ export interface AttachMediaData {
 }
 
 export interface CatalogRepository {
+  /**
+   * Precios EFECTIVOS (ofertas vigentes del CMS comercial). Lo pone quien compone el servicio (`conPrecios`); sin él —módulo apagado, repositorios de prueba,
+   * el panel de administración— rige EXACTAMENTE el precio de lista. Ver lib/catalogo/precios.ts.
+   */
+  readonly precios?: PuertoPrecios;
   listProducts(tenantId: string, filter: ProductListFilter): Promise<{ items: CatalogProduct[]; total: number }>;
   getProduct(tenantId: string, productId: string): Promise<CatalogProduct | null>;
   getProductByReference(tenantId: string, reference: string): Promise<CatalogProduct | null>;
@@ -186,6 +192,11 @@ export interface CatalogRepository {
   storagePathFromUrl(url: string): string | null;
   /** Abre una imagen del bucket para servirla por la ruta pública; null si no existe o no es una imagen permitida. */
   openImage(path: string): Promise<PublicImageObject | null>;
+}
+
+/** El mismo repositorio con el puerto de precios efectivos (sin puerto, el mismo repositorio). Las funciones del repositorio no dependen de `this`. */
+export function conPrecios(repo: CatalogRepository, precios: PuertoPrecios | null): CatalogRepository {
+  return precios ? { ...repo, precios } : repo;
 }
 
 export interface CatalogSearchQuery {

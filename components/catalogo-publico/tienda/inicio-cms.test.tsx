@@ -9,7 +9,8 @@ import { TiendaProvider } from "@/components/catalogo-publico/tienda/TiendaConte
 import { TiendaInicio } from "@/components/catalogo-publico/tienda/TiendaInicio";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 import type { PublicHome } from "@/lib/catalogo/service";
-import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
+import { formatCop } from "@/lib/business-agent-quote";
+import type { CatalogStorefrontConfig, ComboVitrina, OfertaVitrina } from "@/lib/catalogo/vitrina";
 
 const BASE = "/catalogo/prueba";
 const LISTA = `${BASE}?todo=1`;
@@ -63,6 +64,7 @@ function inicio(config: CatalogStorefrontConfig, home: PublicHome = HOME): strin
 }
 
 const cuenta = (html: string, patron: RegExp) => (html.match(patron) ?? []).length;
+const cop = (n: number) => formatCop(n);
 const pos = (html: string, texto: string) => {
   const i = html.indexOf(texto);
   assert.ok(i >= 0, `falta «${texto}»`);
@@ -150,13 +152,13 @@ describe("TiendaInicio con contenido del CMS — orden y visibilidad de las secc
     assert.ok(html.includes("Productos destacados"));
   });
 
-  it("ofertas y combos todavía no se dibujan: pedirlos no rompe ni deja un hueco", () => {
+  it("ofertas y combos sin nada vigente: pedirlos no deja un hueco ni un título vacío", () => {
     const html = inicio({ ...BASE_CONFIG, secciones: ["ofertas", "portada", "combos", "destacados"] });
     assert.ok(html.includes("Historias que brillan") && html.includes("Productos destacados"));
-    assert.ok(!html.includes("Ofertas") && !html.includes("Combos"));
+    assert.ok(!html.includes("Ofertas vigentes") && !html.includes(">Combos<"));
   });
 
-  it("los destacados muestran lo elegido en el CMS, con sus precios de lista (el precio efectivo llega en otro paso)", () => {
+  it("los destacados muestran lo elegido en el CMS, con el precio que entrega el catálogo", () => {
     const html = inicio(BASE_CONFIG);
     assert.ok(html.includes("Destacado uno") && html.includes("Destacado dos"));
   });
@@ -251,5 +253,118 @@ describe("TiendaInicio con contenido del CMS — la campaña vigente", () => {
     assert.ok(html.includes("Día de la Madre"));
     assert.ok(!html.includes("Madre e hija"));
     assert.ok(!html.includes("aspect-[16/9] bg-ink-2"), "sin imagen no hay contenedor de imagen");
+  });
+});
+
+describe("TiendaInicio con contenido del CMS — ofertas vigentes", () => {
+  const OFERTA: OfertaVitrina = {
+    clave: "amor-y-amistad",
+    nombre: "Amor y Amistad",
+    descripcion: "Temporada de regalos.",
+    beneficio: "20% de descuento",
+    vigencia: "hasta el 31 de octubre de 2026",
+    condiciones: "Hasta agotar existencias.",
+    alcance: "3 productos seleccionados",
+    href: LISTA,
+  };
+  const conOfertas = (...ofertas: OfertaVitrina[]): CatalogStorefrontConfig => ({ ...BASE_CONFIG, secciones: ["portada", "ofertas", "destacados"], ofertas });
+
+  it("anuncia cada oferta con su beneficio, qué cubre, hasta cuándo, sus condiciones y un enlace a los productos", () => {
+    const html = inicio(conOfertas(OFERTA));
+    assert.ok(html.includes('id="ofertas"') && html.includes('aria-labelledby="tienda-ofertas"'));
+    for (const t of ["Ofertas vigentes", "Amor y Amistad", "20% de descuento", "Temporada de regalos.", "3 productos seleccionados · hasta el 31 de octubre de 2026", "Hasta agotar existencias.", "Ver productos"]) assert.ok(html.includes(t), t);
+    assert.ok(html.includes(`href="${LISTA}"`));
+    assert.equal(cuenta(html, /<h1[ >]/g), 1, "el título principal sigue siendo uno solo");
+  });
+
+  it("una oferta con imagen del CMS la muestra por la ruta de la tienda; sin imagen no deja un recuadro vacío", () => {
+    const con = inicio(conOfertas({ ...OFERTA, imagen: cmsImg(ID_CAMPANA, "Collar en oferta") }));
+    assert.ok(con.includes(`url=%2Fcatalogo%2Fprueba%2Fvitrina%2F${ID_CAMPANA}.webp`) && con.includes("Collar en oferta"));
+    const sin = inicio(conOfertas(OFERTA));
+    assert.ok(!sin.includes("aspect-[16/9] bg-ink-2"));
+  });
+
+  it("la sección va donde la pusieron y solo existe si hay ofertas vigentes", () => {
+    const html = inicio({ ...BASE_CONFIG, secciones: ["destacados", "ofertas"], ofertas: [OFERTA] });
+    assert.ok(pos(html, "Productos destacados") < pos(html, 'id="ofertas"'));
+    assert.ok(!inicio({ ...BASE_CONFIG, secciones: ["ofertas"], ofertas: [] }).includes('id="ofertas"'));
+  });
+
+  it("el texto de la administradora se escapa", () => {
+    const html = inicio(conOfertas({ ...OFERTA, nombre: "<script>alert(1)</script>" }));
+    assert.ok(!html.includes("<script>alert") && html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"));
+  });
+});
+
+describe("TiendaInicio con contenido del CMS — combos (Etapa 1: se muestran y se consultan con una asesora; no se compran)", () => {
+  const COMBO: ComboVitrina = {
+    clave: "regalo-completo",
+    nombre: "Regalo completo",
+    descripcion: "Collar, dije y aretes.",
+    componentes: [
+      { referencia: "DL-000001", nombre: "Aretes dorados", cantidad: 1, disponible: true },
+      { referencia: "DL-000002", nombre: "Cadena fina", cantidad: 2, disponible: true },
+    ],
+    precioNormal: 190_000,
+    precioCombo: 150_000,
+    ahorro: 40_000,
+    disponible: true,
+    vigencia: "hasta el 31 de octubre de 2026",
+    condiciones: "Venta con asesora por WhatsApp.",
+    consultaHref: "https://wa.me/573001112233?text=Hola",
+  };
+  const conCombos = (...combos: ComboVitrina[]): CatalogStorefrontConfig => ({ ...BASE_CONFIG, secciones: ["portada", "combos"], combos });
+
+  it("muestra qué incluye, el precio del combo, el precio normal tachado, el ahorro, la vigencia y las condiciones", () => {
+    const html = inicio(conCombos(COMBO));
+    assert.ok(html.includes('id="combos"') && html.includes('aria-labelledby="tienda-combos"'));
+    for (const t of ["Combos", "Regalo completo", "Disponible", "Collar, dije y aretes.", "1 × Aretes dorados", "2 × Cadena fina", cop(150_000), cop(190_000), `Ahorras ${cop(40_000)}`, "Vigente hasta el 31 de octubre de 2026", "Venta con asesora por WhatsApp."]) assert.ok(html.includes(t), t);
+    assert.ok(html.includes("<s>" + cop(190_000) + "</s>") && html.includes("Precio normal: "), "el precio normal va tachado y con su texto para lectores de pantalla");
+  });
+
+  it("NO se compra desde el carrito: la sección no tiene botón de agregar; solo el enlace de WhatsApp con una asesora, en pestaña nueva", () => {
+    const html = inicio(conCombos(COMBO));
+    const seccion = html.slice(pos(html, 'id="combos"'));
+    assert.ok(!/aria-label="Agregar/i.test(seccion) && !/Agregar al carrito|Agregar a tu selección/i.test(seccion), "ningún botón de agregar al carrito");
+    assert.ok(seccion.includes('href="https://wa.me/573001112233?text=Hola" target="_blank" rel="noopener noreferrer"'));
+    assert.ok(seccion.includes("Pedir con una asesora"));
+  });
+
+  it("un combo no disponible lo dice, marca el componente agotado y NO ofrece el enlace de pedido", () => {
+    const html = inicio(conCombos({ ...COMBO, disponible: false, consultaHref: null, componentes: [{ ...COMBO.componentes[0], disponible: false }, COMBO.componentes[1]] }));
+    assert.ok(html.includes("No disponible por ahora"));
+    assert.ok(html.includes("1 × Aretes dorados (agotado)"));
+    assert.ok(!html.includes("Pedir con una asesora") && !html.includes("wa.me"));
+  });
+
+  it("sin ahorro (el precio normal no supera al del combo o no se pudo calcular) no se muestra ningún descuento inventado", () => {
+    const html = inicio(conCombos({ ...COMBO, ahorro: undefined, precioNormal: null }));
+    assert.ok(!html.includes("Ahorras") && !html.includes("<s>") && !html.includes("Precio normal: "));
+    assert.ok(html.includes(cop(150_000)));
+    const igual = inicio(conCombos({ ...COMBO, ahorro: undefined, precioNormal: 150_000 }));
+    assert.ok(!igual.includes("Ahorras") && !igual.includes("<s>" + cop(150_000)));
+  });
+
+  it("jamás aparece el stock exacto (solo disponible o no)", () => {
+    const html = inicio(conCombos(COMBO));
+    assert.ok(!/unidades disponibles|quedan \d+|stock/i.test(html));
+  });
+});
+
+describe("TiendaInicio con contenido del CMS — productos con oferta", () => {
+  const conOferta = (): PublicHome => ({
+    ...HOME,
+    featured: [{ ...producto(1, "Aretes en oferta"), price: 80_000, listPrice: 100_000, offer: { name: "Amor y Amistad", benefit: "20% de descuento", label: "-20%", until: "hasta el 31 de octubre de 2026", conditions: null } }, producto(2, "Sin oferta")],
+    categories: [],
+    campana: undefined,
+  });
+
+  it("la tarjeta muestra el precio efectivo, el de lista tachado con su texto accesible, la etiqueta y el beneficio; la que no tiene oferta queda igual", () => {
+    const html = inicio({ ...BASE_CONFIG, secciones: ["destacados"] }, conOferta());
+    const tarjeta = html.slice(pos(html, "Aretes en oferta") - 800, pos(html, "Sin oferta"));
+    for (const t of ["-20%", "20% de descuento", cop(80_000), "<s>" + cop(100_000) + "</s>", "Precio normal: "]) assert.ok(tarjeta.includes(t), t);
+    const otra = html.slice(pos(html, "Sin oferta"));
+    assert.ok(otra.includes(cop(92_000)), "el precio de lista de la otra tarjeta");
+    assert.equal(cuenta(otra, /<s>/g), 0, "sin oferta no hay precio tachado");
   });
 });

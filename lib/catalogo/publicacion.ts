@@ -9,7 +9,8 @@
  * La proyección pública lleva UN solo precio (el del contexto) y nada
  * interno: ni id técnico, ni tenant, ni el precio del otro contexto.
  */
-import { availabilityOf, isReference, priceFor, publicOrderLimit, type Availability, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
+import { availabilityOf, isReference, publicOrderLimit, type Availability, type CatalogCategory, type CatalogProduct, type PriceContext } from "@/lib/catalogo/domain";
+import { precioQueRige, type PrecioEfectivo } from "@/lib/catalogo/precios";
 
 export interface CatalogPublication {
   slug: string;
@@ -19,6 +20,18 @@ export interface CatalogPublication {
   wholesaleToken: string;
 }
 
+/** La oferta vigente que bajó el precio de un producto, lista para mostrar (sin ids internos ni el código interno de la oferta). */
+export interface PublicOffer {
+  name: string;
+  /** «20% de descuento», «$5.000 de descuento», «precio especial de $60.000». */
+  benefit: string;
+  /** Etiqueta corta de la tarjeta: «-20%», «-$5.000», «Precio especial». */
+  label: string;
+  /** «hasta el 31 de octubre de 2026», o null. */
+  until: string | null;
+  conditions: string | null;
+}
+
 export interface PublicCatalogProduct {
   reference: string;
   name: string;
@@ -26,8 +39,15 @@ export interface PublicCatalogProduct {
   material: string | null;
   color: string | null;
   categoryName: string | null;
-  /** Precio del contexto del link; null = "precio a consultar" (nunca un 0 inventado ni el precio del otro contexto). */
+  /**
+   * Precio EFECTIVO del contexto del link —el que se muestra y se cobra—: el de lista o el de la oferta vigente que aplica.
+   * null = "precio a consultar" (nunca un 0 inventado ni el precio del otro contexto).
+   */
   price: number | null;
+  /** Precio de lista (antes de la oferta). Solo existe cuando `price` es el de una oferta vigente; sin oferta, la propiedad no existe. */
+  listPrice?: number;
+  /** La oferta que baja el precio. Solo existe junto con `listPrice`. */
+  offer?: PublicOffer;
   /** Original optimizado (≤ 2048 px). Para compartir o ampliar; NO para mostrar en tarjetas. */
   imageUrl: string | null;
   /** Detalle (≤ 1200 px): ficha del producto y vista previa al compartir. */
@@ -126,7 +146,10 @@ export interface PublicProductImages {
  * convertidas a la ruta pública: `product.primaryImage` (URL de Storage con
  * {tenant}/{producto}/…) nunca se copia al HTML.
  */
-export function toPublicProduct(product: CatalogProduct, context: PriceContext, images: PublicProductImages | null = null): PublicCatalogProduct {
+export function toPublicProduct(product: CatalogProduct, context: PriceContext, images: PublicProductImages | null = null, efectivo: PrecioEfectivo | null = null): PublicCatalogProduct {
+  // Una oferta solo cuenta si deja un precio entero menor que el de lista; si algo no cuadra, rige el precio de lista (nunca una oferta a medias).
+  const rige = precioQueRige(product, context, efectivo);
+  const oferta = rige.oferta;
   return {
     reference: product.reference,
     name: product.name,
@@ -134,7 +157,8 @@ export function toPublicProduct(product: CatalogProduct, context: PriceContext, 
     material: product.material,
     color: product.color,
     categoryName: product.categoryName,
-    price: priceFor(product, context),
+    price: rige.precio,
+    ...(oferta ? { listPrice: rige.precioLista as number, offer: { name: oferta.nombre, benefit: oferta.beneficio, label: oferta.etiqueta, until: oferta.vigencia, conditions: oferta.condiciones } } : {}),
     imageUrl: images?.imageUrl ?? null,
     detailUrl: images?.detailUrl ?? null,
     thumbUrl: images?.thumbUrl ?? null,

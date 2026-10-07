@@ -598,3 +598,17 @@ lib/catalogo/inicio-cms.test.ts
 components/catalogo-publico/tienda/inicio-dorado.test.tsx
 components/catalogo-publico/tienda/inicio-cms.test.tsx
 components/catalogo-publico/tienda/inicio-siembra.pglite.test.tsx
+# Bloque 29 · PR 4 (el precio efectivo): una sola decisión de precio para lo que se muestra, lo que se firma y lo que se cobra (la oferta publicada baja el precio de verdad, nunca hay
+# discrepancia), con falla cerrada si no se puede verificar, el mínimo mayorista sobre el valor final, la evidencia en el pedido (precio de lista + oferta con su versión), las secciones de
+# ofertas y combos (Etapa 1: se consultan con una asesora, no se compran) y todo de punta a punta con el SQL real en Postgres embebido.
+lib/catalogo/precios.test.ts
+lib/cms-comercial/precios.test.ts
+lib/catalogo/precios-efectivos.test.ts
+lib/agente/agente-ofertas-precio-efectivo.test.ts
+lib/cms-comercial/precios.pglite.test.ts
+lib/catalogo/resolucion-ofertas.test.ts
+components/catalogo-publico/tienda/ofertas-ui.dom.test.tsx
+components/dashboard/catalogo/lineas-pedido-oferta.test.tsx
+lib/catalogo/pedidos/lineas-oferta-persistencia.test.ts
+lib/cms-comercial/tienda-real.pglite.test.ts
+lib/cms-comercial/lectura-publicada.test.ts

@@ -1,9 +1,9 @@
 import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { PriceContext } from "@/lib/catalogo/domain";
-import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
+import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
 import { crearDepsPublicasCms } from "@/lib/cms-comercial/publico-supabase";
 import type { ContextoVitrina } from "@/lib/cms-comercial/vitrina";
 import { cargarVitrinaInicio as cargarVitrinaPublica } from "@/lib/cms-comercial/vitrina-publica";
@@ -14,7 +14,7 @@ import { cargarVitrinaInicio as cargarVitrinaPublica } from "@/lib/cms-comercial
  * comparten una sola consulta. Lectura con service_role SOLO en el servidor;
  * la proyección pública no incluye ids internos ni el precio del otro contexto.
  */
-const servicio = () => createPublicCatalogService({ repo: createSupabaseCatalogRepository(supabaseAdmin()) });
+const servicio = () => createPublicCatalogService({ repo: repositorioConPrecios(supabaseAdmin()) });
 
 export const cargarCatalogoPublico = cache(
   (slug: string, context: PriceContext, token: string | undefined, q: string | undefined, categoria: string | undefined, pagina: number) =>

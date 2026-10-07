@@ -65,6 +65,11 @@ export function LineasPedido({ p, t }: { p: Pick<PedidoPanel, "lineas">; t: T })
             <span className="block truncate text-fg">{l.nombre}</span>
             <span className="text-xs text-mist">
               <span className="font-mono">{l.referencia}</span> · {l.cantidad} × {l.precio_unitario === null ? t("a consultar", "on request") : formatPrice(l.precio_unitario)}
+              {l.precio_lista !== undefined && l.oferta && (
+                <span className="block">
+                  {t("Oferta", "Offer")} «{l.oferta}» · {t("antes", "was")} {formatPrice(l.precio_lista)}
+                </span>
+              )}
             </span>
           </span>
           <span className="shrink-0 tabular-nums text-mist">{l.subtotal === null ? t("a consultar", "on request") : formatPrice(l.subtotal)}</span>

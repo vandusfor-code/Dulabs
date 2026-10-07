@@ -118,6 +118,7 @@ export function productoCarrito(product: PublicCatalogProduct): CartProduct {
     reference: product.reference,
     name: product.name,
     price: product.price,
+    ...(product.listPrice !== undefined && product.offer ? { listPrice: product.listPrice, offerLabel: product.offer.label } : {}),
     imageUrl: product.thumbUrl ?? product.imageUrl,
     available: product.available,
     maxQuantity: product.maxQuantity,

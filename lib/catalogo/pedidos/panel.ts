@@ -18,7 +18,8 @@ export interface PedidoPanel {
   canal: Order["channel"];
   origen: Order["source"];
   cliente: string | null;
-  lineas: Array<{ referencia: string; nombre: string; cantidad: number; precio_unitario: number | null; subtotal: number | null; foto?: string | null }>;
+  /** `precio_lista` y `oferta` (nombre) solo existen en las líneas cuyo precio es el de una oferta vigente al hacer el pedido (evidencia: qué se mostró y se cobró). */
+  lineas: Array<{ referencia: string; nombre: string; cantidad: number; precio_unitario: number | null; subtotal: number | null; precio_lista?: number; oferta?: string; foto?: string | null }>;
   unidades: number;
   total: number;
   sin_precio: number;
@@ -153,7 +154,14 @@ export function pedidoPanel(order: Order, reservations: readonly ReservationSumm
     canal: order.channel,
     origen: order.source,
     cliente: order.contact?.waId ?? null,
-    lineas: order.lines.map((l) => ({ referencia: l.reference, nombre: l.productName, cantidad: l.quantity, precio_unitario: l.unitPrice, subtotal: l.subtotal })),
+    lineas: order.lines.map((l) => ({
+      referencia: l.reference,
+      nombre: l.productName,
+      cantidad: l.quantity,
+      precio_unitario: l.unitPrice,
+      subtotal: l.subtotal,
+      ...(l.listPrice !== undefined && l.offer ? { precio_lista: l.listPrice, oferta: l.offer.name } : {}),
+    })),
     unidades: order.totalUnits,
     total: order.total,
     sin_precio: order.unpricedUnits,

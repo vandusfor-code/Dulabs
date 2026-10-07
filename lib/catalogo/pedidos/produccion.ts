@@ -9,6 +9,7 @@ import { actualizarEstadoConversacion } from "@/lib/conversacion-estado";
 import { extenderPausaChat } from "@/lib/pausas-chat";
 import { orderSigningKey } from "@/lib/catalogo/pedido-firma";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
+import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
 import type { AgentToolDeps } from "@/lib/catalogo/pedidos/herramientas";
 import type { IntakeDeps } from "@/lib/catalogo/pedidos/intake";
 import { createOrderEngine, type HumanHandoffPort, type OrderEngine } from "@/lib/catalogo/pedidos/motor";
@@ -54,7 +55,8 @@ export function productionOrderEngine(supabase: SupabaseClient): OrderEngine | n
   const handoff = supabaseHandoffPort(supabase);
   const engine = createOrderEngine({
     orders: createSupabaseOrdersRepository(supabase),
-    catalog: createSupabaseCatalogRepository(supabase),
+    // Con los precios efectivos (ofertas vigentes del CMS): el motor de pedidos, el mínimo mayorista y ARIA leen el MISMO precio que ve y paga el cliente.
+    catalog: repositorioConPrecios(supabase),
     key,
     handoff,
     // Fase 3B: el documento de identidad se cifra (AES-256-GCM, TOKEN_ENCRYPTION_KEY) antes de guardarlo.
@@ -88,7 +90,7 @@ export function productionAgentToolDeps(supabase: SupabaseClient): AgentToolDeps
   if (!engine) return null;
   return {
     engine,
-    catalog: createSupabaseCatalogRepository(supabase),
+    catalog: repositorioConPrecios(supabase),
     async ownsPhoneNumber(tenantId, phoneNumberId) {
       const { data, error } = await supabase.from("dulabs_clientes_config").select("id").eq("id_tenant", tenantId).eq("phone_number_id", phoneNumberId).limit(1);
       if (error) throw new Error(`[catalogo/pedidos] ownsPhoneNumber: ${error.code ?? "?"}`);

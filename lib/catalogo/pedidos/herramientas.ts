@@ -74,7 +74,14 @@ const productOut = z
     category: z.string().nullable(),
     material: z.string().nullable(),
     color: z.string().nullable(),
+    /** Precio EFECTIVO del canal de la conversación (el de lista o el de la oferta vigente): el que se cobra. */
     unit_price: money,
+    /** Solo cuando `unit_price` es el de una oferta vigente: el precio de lista y la oferta, tal como los redacta el backend (nunca se calculan ni se inventan). */
+    list_price: z.number().int().min(0).optional(),
+    offer: z
+      .object({ name: z.string(), benefit: z.string(), valid_until: z.string().nullable(), conditions: z.string().nullable() })
+      .strict()
+      .optional(),
     currency: z.literal("COP"),
     availability: z.enum(["available", "low", "sold_out"]),
     /** Solo si es pequeño (stock discreto, igual que la tienda). */
@@ -87,7 +94,11 @@ const orderOut = z
     order_id: orderId,
     channel: z.enum(["retail", "wholesale"]),
     status: z.enum(ORDER_STATUSES),
-    lines: z.array(z.object({ reference: z.string(), product_name: z.string(), quantity: z.number().int(), unit_price: money, subtotal: money }).strict()),
+    lines: z.array(
+      z
+        .object({ reference: z.string(), product_name: z.string(), quantity: z.number().int(), unit_price: money, subtotal: money, list_price: z.number().int().min(0).optional(), offer: z.string().optional() })
+        .strict(),
+    ),
     total_units: z.number().int().min(0),
     total: z.number().int().min(0),
     unpriced_units: z.number().int().min(0),
@@ -119,6 +130,14 @@ function discreetMax(p: ProductoResuelto): number | null {
   return p.maxQuantity !== null && p.maxQuantity <= PUBLIC_STOCK_VISIBLE ? p.maxQuantity : null;
 }
 
+/** La oferta vigente del CANAL de la conversación (la del otro canal nunca sale). Sin oferta no aporta ninguna propiedad: la vista queda idéntica a la de siempre. */
+function ofertaDeVista(p: ProductoResuelto, channel: OrderChannel): Pick<z.input<typeof productOut>, "list_price" | "offer"> {
+  const oferta = p.offers?.[channel] ?? null;
+  const lista = p.listPrices?.[channel];
+  if (!oferta || typeof lista !== "number") return {};
+  return { list_price: lista, offer: { name: oferta.nombre, benefit: oferta.beneficio, valid_until: oferta.vigencia, conditions: oferta.condiciones } };
+}
+
 /** Vista de un producto para el agente: solo el precio del canal y el stock discreto (reutilizada por lib/agente). */
 export function productView(p: ProductoResuelto, channel: OrderChannel): z.input<typeof productOut> {
   return {
@@ -128,8 +147,9 @@ export function productView(p: ProductoResuelto, channel: OrderChannel): z.input
     category: p.categoryName,
     material: p.material,
     color: p.color,
-    // Solo el precio del canal de la conversación: el del otro canal nunca sale.
+    // Solo el precio del canal de la conversación: el del otro canal nunca sale (tampoco su oferta).
     unit_price: channel === "wholesale" ? p.prices.wholesale : p.prices.retail,
+    ...ofertaDeVista(p, channel),
     currency: "COP",
     availability: p.availability,
     max_quantity: discreetMax(p),

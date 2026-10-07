@@ -66,6 +66,31 @@ T_INICIO = ["components/catalogo-publico/tienda/inicio-cms.test.tsx", "component
 T_SIEMBRA = [C + "siembra-vitrina.pglite.test.ts"]
 T_SIEMBRA_GEN = [C + "siembra-vitrina.test.ts"]
 
+# PR 4 (el precio efectivo)
+PRECIOS, PRECIOS_CMS, PEDIDO, RESOL = "lib/catalogo/precios.ts", C + "precios.ts", "lib/catalogo/pedido.ts", "lib/catalogo/resolucion.ts"
+CARRITO, PEDIDO_HTTP, TIENDA_CTX = "lib/catalogo/carrito.ts", "lib/catalogo/pedido-http.ts", "components/catalogo-publico/tienda/TiendaContext.tsx"
+MOTOR, HERR_PED, REPO_PED, CONTRATO_PED, PANEL = ("lib/catalogo/pedidos/" + n for n in ("motor.ts", "herramientas.ts", "repositorio.ts", "contrato.ts", "panel.ts"))
+CHECKOUT = "lib/agente/checkout.ts"
+TIENDA_UI = "components/catalogo-publico/tienda/"
+HOJA, FICHA, TARJETA = TIENDA_UI + "HojaCarrito.tsx", TIENDA_UI + "FichaProducto.tsx", TIENDA_UI + "TarjetaProducto.tsx"
+T_DECISION = ["lib/catalogo/precios.test.ts", C + "precios.test.ts", "lib/catalogo/precios-efectivos.test.ts"]
+T_PUERTO = [C + "precios.test.ts", "lib/catalogo/precios-efectivos.test.ts"]
+T_SERVICIO = ["lib/catalogo/precios-efectivos.test.ts", "lib/agente/agente-ofertas-precio-efectivo.test.ts"]
+T_PEDIDO = ["lib/catalogo/pedido.test.ts", "lib/catalogo/precios-efectivos.test.ts"]
+T_RESOL = ["lib/catalogo/resolucion-ofertas.test.ts", "lib/agente/agente-ofertas-precio-efectivo.test.ts"]
+T_MOTOR = ["lib/agente/agente-ofertas-precio-efectivo.test.ts", "lib/catalogo/pedidos/lineas-oferta-persistencia.test.ts"]
+T_PERSIST = ["lib/catalogo/pedidos/lineas-oferta-persistencia.test.ts"]
+T_PANEL = ["components/dashboard/catalogo/lineas-pedido-oferta.test.tsx"]
+T_CARRITO = ["lib/catalogo/carrito.test.ts", TIENDA_UI + "ofertas-ui.dom.test.tsx"]
+T_UI_OFERTAS = [TIENDA_UI + "ofertas-ui.dom.test.tsx", TIENDA_UI + "inicio-cms.test.tsx", TIENDA_UI + "inicio-dorado.test.tsx"]
+T_E2E_PRECIOS = [C + "precios.pglite.test.ts"]
+
+PRECIOS_SUPA, PUB_SUPA, PUBLIC_LOADER, PRODUCCION = C + "precios-supabase.ts", C + "publico-supabase.ts", "lib/catalogo/public-loader.ts", "lib/catalogo/pedidos/produccion.ts"
+T_REAL = [C + "tienda-real.pglite.test.ts"]
+
+LECTURA = C + "lectura-publicada.ts"
+T_LECTURA = [C + "lectura-publicada.test.ts"]
+
 # (id, descripción, archivo, buscar, reemplazar, pruebas)
 M = [
     # --- Fechas y vigencia -------------------------------------------------------------------------------------------------------------------
@@ -268,18 +293,18 @@ M = [
     ("M179", "se piden secciones que la tienda no sabe dibujar", VIT, "visibles.filter((s) => dibujadas.includes(s))", "visibles", T_VIT),
     ("M180", "los destacados elegidos pasan aunque su sección esté apagada", VIT, 'if (secciones.includes("destacados") && h.productos_destacados.length > 0)', "if (h.productos_destacados.length > 0)", T_VIT),
     ("M181", "las categorías elegidas pasan aunque su sección esté apagada", VIT, 'if (secciones.includes("categorias") && h.categorias_destacadas.length > 0)', "if (h.categorias_destacadas.length > 0)", T_VIT),
-    ("M182", "la campaña se elige para el canal mayorista", VIT, 'const ev: ContextoEvaluacion = { snap, canal: "retail", ahora: ctx.ahora };', 'const ev: ContextoEvaluacion = { snap, canal: "wholesale", ahora: ctx.ahora };', T_VIT),
-    ("M183", "una campaña sin portada ni productos ocupa el lugar de otra con contenido", VIT, "if (!p && productos.length === 0) continue;", "", T_VIT),
+    ("M182", "la campaña se elige para el canal mayorista", VIT, 'const ev: ContextoEvaluacion = { snap, canal: "retail", ahora: ctxEntrada.ahora };', 'const ev: ContextoEvaluacion = { snap, canal: "wholesale", ahora: ctxEntrada.ahora };', T_VIT),
+    ("M183", "una campaña sin portada ni productos ocupa el lugar de otra con contenido", VIT, "return campanasActivas(ev).find((c) => c.contenido.portada || c.contenido.productos_destacados.length > 0);", "return campanasActivas(ev)[0];", T_VIT),
     ("M184", "la portada de la campaña ignora la imagen de la campaña", VIT, "p.imagen ?? c.contenido.imagen", "p.imagen", T_VIT),
     ("M185", "la imagen de la portada de una campaña no figura entre las publicadas", VIT, "    ver(c.contenido.portada?.imagen);\n", "", T_VIT + T_IMGPUB),
     ("M186", "la imagen del banner no figura entre las publicadas", VIT, "    ver(snap.home.contenido.banner?.imagen);\n", "", T_VIT + T_IMGPUB),
     # --- PR 3 · carga con respaldo -------------------------------------------------------------------------------------------------------------
     ("M187", "la tienda de tecnología consulta el CMS", VITPUB, 'if (registro.tema === "tecnologia") return deSiempre(registro);', "", T_VITPUB),
-    ("M188", "se lee el CMS de «ningún negocio»", VITPUB, "return tenantId ? deps.cargar(tenantId) : null;", 'return deps.cargar(tenantId ?? "");', T_VITPUB),
-    ("M189", "un CMS apagado se trata como una falla", VITPUB, "    if (!snap) return deSiempre(registro);\n", "", T_VITPUB),
+    ("M188", "se lee el CMS de «ningún negocio»", VITPUB, "const snap = tenantId ? await deps.cargar(tenantId) : null;", 'const snap = await deps.cargar(tenantId ?? "");', T_VITPUB),
+    ("M189", "un CMS apagado se trata como una falla", VITPUB, "    if (!leido) return deSiempre(registro);\n", "", T_VITPUB),
     ("M190", "la vitrina del respaldo dice venir del CMS", VITPUB, 'origen: "cms" };', 'origen: "registro" };', T_VITPUB),
     ("M191", "una lectura lenta deja la tienda esperando el plazo largo", VITPUB, "deps.plazoMs ?? PLAZO_VITRINA_MS,", "PLAZO_VITRINA_MS,", T_VITPUB),
-    ("M192", "un aviso que falla rompe la tienda", VITPUB, "    } catch {\n      /* el aviso nunca puede romper la tienda */\n    }\n", "    } finally {\n    }\n", T_VITPUB),
+    ("M192", "un aviso que falla rompe la tienda", VITPUB, "  } catch {\n    /* el aviso nunca puede romper la tienda */\n  }\n", "  } finally {\n  }\n", T_VITPUB),
     ("M193", "una lista vacía de destacados se pide al catálogo", VITPUB, "config.destacados && config.destacados.length > 0 ?", "config.destacados ?", T_VITPUB),
     # --- PR 3 · imagen pública ------------------------------------------------------------------------------------------------------------------
     ("M194", "la ruta de imágenes acepta nombres con algo después de .webp", IMGPUB, r"\.webp$/;", r"\.webp/;", T_IMGPUB),
@@ -326,6 +351,120 @@ M = [
     ("M231", "«Ver mi tienda» lleva a una tienda sin publicar", ADAPT, "return publicacion?.published ? retailPath(publicacion.slug) : null;", "return publicacion ? retailPath(publicacion.slug) : null;", T_EDITOR),
     ("M232", "una falla al buscar la tienda rompe el contexto del editor", RUTA_CTX, ".then((r) => r ?? null, () => null)", ".then((r) => r ?? null)", T_EDITOR),
     ("M233", "«Ver mi tienda» deja el control a la otra página", TIENDA_APP, 'rel="noopener noreferrer" className={cn(actionBtn, "text-[13px]")}', 'className={cn(actionBtn, "text-[13px]")}', T_DOM),
+    # --- PR 4 · la decisión del precio efectivo (una sola para lo que se muestra, se firma y se cobra) ---------------------------------------------------
+    ("M234", 'una oferta evaluada sobre OTRO precio de lista se aplica', PRECIOS, 'efectivo.precioLista === lista && ', '', T_DECISION),
+    ("M235", 'una oferta puede dejar el precio en cero', PRECIOS, 'efectivo.precio >= 1 && ', '', T_DECISION),
+    ("M236", 'una «oferta» que deja el mismo precio de lista rige', PRECIOS, 'efectivo.precio < lista) {', 'efectivo.precio <= lista) {', T_DECISION),
+    ("M237", 'una oferta con un precio con decimales rige', PRECIOS, 'Number.isInteger(efectivo.precio) && ', '', T_DECISION),
+    ("M238", 'un precio sin oferta reemplaza al de lista', PRECIOS, 'if (efectivo && oferta !== null && ', 'if (efectivo && ', T_DECISION),
+    ("M239", 'el precio de lista se toma del otro canal', PRECIOS, 'const lista = priceFor(producto, canal);\n  const oferta', 'const lista = priceFor(producto, "retail");\n  const oferta', T_DECISION),
+    # --- PR 4 · del módulo del CMS al evaluador de precios ----------------------------------------------------------------------------------------------
+    ("M240", '«-20%» pierde el signo menos', PRECIOS_CMS, 'return `-${beneficio.valor}%`;', 'return `${beneficio.valor}%`;', T_PUERTO),
+    ("M241", 'el monto fijo se rotula «Precio especial»', PRECIOS_CMS, 'if (beneficio.tipo === "monto_fijo") return', 'if (false) return', T_PUERTO),
+    ("M242", 'la vigencia de la oferta no se cuenta al cliente', PRECIOS_CMS, 'vigencia: o.vigencia.hasta ? describirVigencia({ hasta: o.vigencia.hasta }) : null,', 'vigencia: null,', T_PUERTO),
+    ("M243", 'el cliente mayorista recibe las ofertas del detal', PRECIOS_CMS, 'wholesale: ofertasActivas({ snap, canal: "wholesale", ahora }),', 'wholesale: ofertasActivas({ snap, canal: "retail", ahora }),', T_PUERTO),
+    ("M244", 'el precio efectivo ignora la oferta y se cobra el de lista', PRECIOS_CMS, 'return { precio: r.precioFinal, precioLista: r.precioLista, oferta: ofertaDePrecio(r.oferta) };', 'return { precio: lista, precioLista: r.precioLista, oferta: ofertaDePrecio(r.oferta) };', T_PUERTO),
+    ("M245", 'sin ofertas publicadas no hay evaluador (el módulo encendido deja de contar)', PRECIOS_CMS, 'return snap ? crearEvaluadorPrecios(snap, deps.ahora()) : null;', 'return snap && snap.ofertas.length > 0 ? crearEvaluadorPrecios(snap, deps.ahora()) : null;', T_PUERTO),
+    ("M246", 'el precio efectivo usa el reloj del servidor y no el inyectado', PRECIOS_CMS, 'crearEvaluadorPrecios(snap, deps.ahora())', 'crearEvaluadorPrecios(snap, Date.now())', T_PUERTO),
+    ("M247", 'un error al leer lo publicado se traga y se cobra la lista', PRECIOS_CMS, 'const snap = await deps.cargar(tenantId);', 'const snap = await deps.cargar(tenantId).catch(() => null);', T_PUERTO),
+    ("M248", 'las ofertas se leen del negocio equivocado', PRECIOS_CMS, 'const snap = await deps.cargar(tenantId);', 'const snap = await deps.cargar("otro-negocio");', T_PUERTO),
+    # --- PR 4 · el servicio público: mostrar, firmar y cobrar con el mismo precio ------------------------------------------------------------------------
+    ("M249", 'si no se pudieron verificar las ofertas, la cotización y el pedido siguen con un precio sin verificar', SERVICE, 'if (estricto) throw new PreciosNoDisponibles(error);', '', T_SERVICIO),
+    ("M250", 'si no se pudieron verificar las ofertas, la tienda se cae en vez de mostrar el precio de lista', SERVICE, 'console.error("[catalogo/precios] no se pudieron verificar las ofertas; se muestra el precio de lista:", error instanceof Error ? error.message : error);', 'throw error;', T_SERVICIO),
+    ("M251", 'la selección con ofertas queda en cachés compartidas (no avisa los precios dinámicos)', SERVICE, '...(evaluador ? { dynamicPricing: true } : {}), products: activos, evaluador };', 'products: activos, evaluador };', T_SERVICIO),
+    ("M252", 'el pedido se prepara sin la verificación estricta de las ofertas', SERVICE, '        context,\n        true,\n', '        context,\n        false,\n', T_SERVICIO),
+    ("M253", 'la selección exige verificar las ofertas y se cae si no se pueden leer', SERVICE, 'const resolved = await resolveFor(pub, input.references, context, false);', 'const resolved = await resolveFor(pub, input.references, context, true);', T_SERVICIO),
+    ("M254", 'el pedido cobra el precio de lista aunque se mostró la oferta', SERVICE, 'price: rige.precio,', 'price: rige.precioLista ?? rige.precio,', T_SERVICIO),
+    ("M255", 'el pedido pierde la evidencia de la oferta', SERVICE, '...(rige.oferta && rige.precioLista !== null ? { listPrice: rige.precioLista, offer: { key: rige.oferta.clave, name: rige.oferta.nombre, version: rige.oferta.version } } : {}),', '', T_SERVICIO),
+    ("M256", 'la solicitud guardada pierde la evidencia de la oferta', SERVICE, '...(l.listPrice !== undefined && l.offer ? { listPrice: l.listPrice, offer: l.offer } : {}),', '', T_SERVICIO),
+    ("M257", 'el mensaje de WhatsApp no cuenta el ahorro', SERVICE, ', savings: order.savings });', ' });', T_SERVICIO),
+    ("M258", 'la ficha del producto muestra el precio de lista', SERVICE, 'toPublicProduct(product, context, gallery[0] ?? null, evaluador?.de(product, context))', 'toPublicProduct(product, context, gallery[0] ?? null)', T_SERVICIO),
+    ("M259", 'el listado muestra el precio de lista', SERVICE, 'products: await project(pub, listing.items, input.context, evaluador),', 'products: await project(pub, listing.items, input.context),', T_SERVICIO),
+    ("M260", 'el inicio muestra el precio de lista', SERVICE, 'const projected = await project(pub, [...unique.values()], "retail", evaluador);', 'const projected = await project(pub, [...unique.values()], "retail");', T_SERVICIO),
+    ("M261", 'la cotización firma el precio de lista y no el que se muestra', SERVICE, 'new Map(items.map((p) => [p.reference, p.price]))', 'new Map(items.map((p) => [p.reference, p.listPrice ?? p.price]))', T_SERVICIO),
+    # --- PR 4 · el pedido y su mensaje ------------------------------------------------------------------------------------------------------------------
+    ("M262", 'la línea del pedido pierde la evidencia de la oferta', PEDIDO, '...(product.listPrice !== undefined && product.offer ? { listPrice: product.listPrice, offer: product.offer } : {}),', '', T_PEDIDO),
+    ("M263", 'el ahorro ignora la cantidad', PEDIDO, '(l.listPrice - l.unitPrice) * l.quantity : 0), 0);', '(l.listPrice - l.unitPrice) : 0), 0);', T_PEDIDO),
+    ("M264", 'el ahorro cuenta líneas cuyo precio de lista no es mayor', PEDIDO, 'l.unitPrice !== null && l.listPrice > l.unitPrice ? (l.listPrice - l.unitPrice) * l.quantity', 'l.unitPrice !== null ? (l.listPrice - l.unitPrice) * l.quantity', T_PEDIDO),
+    ("M265", 'el mensaje muestra un ahorro de cero', PEDIDO, 'if (extra.savings !== undefined && extra.savings > 0) resumen.push(', 'if (extra.savings !== undefined) resumen.push(', T_PEDIDO),
+    # --- PR 4 · la resolución interna (motor de pedidos y ARIA) y las herramientas del agente ---------------------------------------------------------
+    ("M266", 'el motor y ARIA leen el precio de lista y no el efectivo', RESOL, 'prices: { retail: detal.precio, wholesale: mayor.precio },', 'prices: { retail: p.pricing.retail, wholesale: p.pricing.wholesale },', T_RESOL),
+    ("M267", 'el pedido de un canal lleva la oferta del otro canal', RESOL, 'const oferta = p.offers?.[channel] ?? null;', 'const oferta = p.offers?.retail ?? null;', T_RESOL),
+    ("M268", 'el pedido de un canal lleva el precio de lista del otro canal', RESOL, 'const lista = p.listPrices?.[channel];', 'const lista = p.listPrices?.retail;', T_RESOL),
+    ("M269", 'si no se pueden verificar las ofertas, la resolución sigue con el precio de lista', RESOL, 'const evaluador = repo.precios ? await repo.precios.paraNegocio(tenantId) : null;', 'const evaluador = repo.precios ? await repo.precios.paraNegocio(tenantId).catch(() => null) : null;', T_RESOL),
+    ("M270", 'el motor guarda la oferta del otro canal', MOTOR, 'const oferta = p.offers?.[channel] ?? null;', 'const oferta = p.offers?.retail ?? null;', T_MOTOR),
+    ("M271", 'el motor no guarda la evidencia de la oferta al calcular el pedido', MOTOR, '...(oferta && typeof lista === "number" ? { listPrice: lista, offer: { key: oferta.clave, name: oferta.nombre, version: oferta.version } } : {}),', '', T_MOTOR),
+    ("M272", 'el motor no guarda la evidencia de la oferta de la solicitud del catálogo', MOTOR, '...(l.listPrice !== undefined && l.offer ? { listPrice: l.listPrice, offer: l.offer } : {}),', '', T_MOTOR),
+    ("M273", 'ARIA ve la oferta del otro canal', HERR_PED, 'const oferta = p.offers?.[channel] ?? null;', 'const oferta = p.offers?.retail ?? null;', T_SERVICIO),
+    ("M274", 'el pedido que ve ARIA pierde la evidencia de la oferta', CONTRATO_PED, '...(l.listPrice !== undefined && l.offer ? { list_price: l.listPrice, offer: l.offer.name } : {}),', '', T_SERVICIO),
+    ("M275", 'el pedido que ve ARIA muestra el código interno de la oferta', CONTRATO_PED, 'offer: l.offer.name }', 'offer: l.offer.key }', T_SERVICIO),
+    ("M276", 'el mínimo mayorista exige más que el mínimo (no cuenta el valor exacto)', CHECKOUT, 'order.total >= minimum) return null;', 'order.total > minimum) return null;', T_SERVICIO),
+    # --- PR 4 · la evidencia de la oferta en la base de datos y en el panel ----------------------------------------------------------------------------
+    ("M277", 'las líneas guardadas pierden la evidencia de la oferta', REPO_PED, '...(l.listPrice !== undefined && l.offer ? { list_price: l.listPrice, offer: l.offer } : {}),', '', T_PERSIST),
+    ("M278", 'las líneas leídas pierden la evidencia de la oferta', REPO_PED, '...(l.list_price !== undefined && l.offer ? { listPrice: l.list_price, offer: l.offer } : {}),', '', T_PERSIST),
+    ("M279", 'el panel pierde la evidencia de la oferta', PANEL, '...(l.listPrice !== undefined && l.offer ? { precio_lista: l.listPrice, oferta: l.offer.name } : {}),', '', T_PANEL),
+    ("M280", 'el panel muestra el código interno de la oferta', PANEL, 'oferta: l.offer.name }', 'oferta: l.offer.key }', T_PANEL),
+    # --- PR 4 · el carrito del cliente -----------------------------------------------------------------------------------------------------------------
+    ("M281", 'el ahorro del carrito cuenta lo agotado', CARRITO, 'return orderableLines(state).reduce((sum, l) =>', 'return state.lines.reduce((sum, l) =>', T_CARRITO),
+    ("M282", 'el ahorro del carrito ignora la cantidad', CARRITO, '(l.listPrice - l.unitPrice) * l.quantity : 0), 0);', '(l.listPrice - l.unitPrice) : 0), 0);', T_CARRITO),
+    ("M283", 'el ahorro del carrito cuenta líneas sin descuento', CARRITO, 'l.unitPrice !== null && l.listPrice > l.unitPrice ? (l.listPrice - l.unitPrice) * l.quantity', 'l.unitPrice !== null ? (l.listPrice - l.unitPrice) * l.quantity', T_CARRITO),
+    ("M284", 'agregar de nuevo conserva el precio tachado de una oferta que terminó', CARRITO, '? { ...sinOferta(l), name: product.name,', '? { ...l, name: product.name,', T_CARRITO),
+    ("M285", 'reconciliar conserva el precio tachado de una oferta que se pausó', CARRITO, 'const next: CartLine = { ...sinOferta(l), name: fresh.name,', 'const next: CartLine = { ...l, name: fresh.name,', T_CARRITO),
+    ("M286", 'el carrito guardado acepta un precio de lista que no es mayor al efectivo', CARRITO, 'unitPrice !== null && l.listPrice > unitPrice ? l.listPrice : undefined', 'unitPrice !== null ? l.listPrice : undefined', T_CARRITO),
+    ("M287", 'el carrito guardado acepta una etiqueta enorme', CARRITO, 'l.offerLabel.length <= 40', 'true', T_CARRITO),
+    ("M288", 'el carrito guardado conserva una etiqueta sin precio de lista', CARRITO, '...(listPrice !== undefined ? { listPrice, ...(offerLabel ? { offerLabel } : {}) } : {}),', '...(listPrice !== undefined ? { listPrice } : {}), ...(offerLabel ? { offerLabel } : {}),', T_CARRITO),
+    ("M289", 'un precio de lista que no es número se guarda en el carrito', CARRITO, 'product.listPrice !== undefined && Number.isFinite(product.listPrice) ?', 'product.listPrice !== undefined ?', T_CARRITO),
+    ("M290", 'el producto de la tienda llega al carrito sin su oferta', TIENDA_CTX, '...(product.listPrice !== undefined && product.offer ? { listPrice: product.listPrice, offerLabel: product.offer.label } : {}),', '', T_CARRITO),
+    ("M291", 'la selección de la tienda no lleva la oferta al carrito', PEDIDO_HTTP, '...(p.listPrice !== undefined && p.offer ? { listPrice: p.listPrice, offerLabel: p.offer.label } : {}),', '', T_SERVICIO),
+    ("M292", 'las respuestas con ofertas se guardan en cachés compartidas', PEDIDO_HTTP, 'canal.context === "wholesale" || resolved.dynamicPricing', 'canal.context === "wholesale"', T_SERVICIO),
+    ("M293", 'las respuestas mayoristas se guardan en cachés compartidas', PEDIDO_HTTP, 'canal.context === "wholesale" || resolved.dynamicPricing', 'resolved.dynamicPricing', T_SERVICIO + ["lib/catalogo/pedido-fase6.test.ts"]),
+    # --- PR 4 · lo que ve el cliente: tarjeta, ficha y hoja «Tu selección» ------------------------------------------------------------------------------
+    ("M294", 'la hoja no cuenta cuánto se ahorra', HOJA, '{ahorro > 0 && (', '{false && (', T_UI_OFERTAS),
+    ("M295", 'la hoja anuncia un ahorro de cero', HOJA, '{ahorro > 0 && (', '{true && (', T_UI_OFERTAS),
+    ("M296", 'la hoja no muestra el precio de lista de cada producto', HOJA, '{l.listPrice !== undefined && (', '{false && (', T_UI_OFERTAS),
+    ("M297", 'la ficha no muestra el precio de lista tachado', FICHA, '{producto.listPrice !== undefined && (', '{false && (', T_UI_OFERTAS),
+    ("M298", 'la ficha no muestra la etiqueta de la oferta', FICHA, '{producto.offer && <span className="rounded-full', '{false && <span className="rounded-full', T_UI_OFERTAS),
+    ("M299", 'la ficha no muestra el recuadro de la oferta', FICHA, '{producto.offer && (', '{false && (', T_UI_OFERTAS),
+    ("M300", 'la ficha no muestra hasta cuándo vale la oferta', FICHA, '{producto.offer.until && <p className="mt-0.5 text-mist">Vigente {producto.offer.until}</p>}', '', T_UI_OFERTAS),
+    ("M301", 'la ficha no muestra las condiciones de la oferta', FICHA, '{producto.offer.conditions && <p', '{false && <p', T_UI_OFERTAS),
+    ("M302", 'la tarjeta no muestra la etiqueta de la oferta', TARJETA, '{product.offer && (', '{false && (', T_UI_OFERTAS),
+    ("M303", 'la tarjeta no cuenta en qué consiste la oferta', TARJETA, '{product.offer && <p className="mt-1 text-[11.5px]', '{false && <p className="mt-1 text-[11.5px]', T_UI_OFERTAS),
+    ("M304", 'la tarjeta no muestra el precio de lista tachado', TARJETA, ') : product.listPrice !== undefined ? (', ') : false ? (', T_UI_OFERTAS),
+    ("M305", 'la sección de ofertas se dibuja sin ofertas', INICIO, 'return config.ofertas && config.ofertas.length > 0 ? (', 'return config.ofertas ? (', T_UI_OFERTAS),
+    ("M306", 'el combo muestra un ahorro que no existe (sin ahorro calculado)', INICIO, '{c.precioNormal !== null && c.ahorro !== undefined && (', '{c.precioNormal !== null && (', T_UI_OFERTAS),
+    # --- PR 4 · del CMS a la home: ofertas y combos -----------------------------------------------------------------------------------------------------
+    ("M307", '«Ver productos» lleva a una categoría que no existe', VIT, 'ctx.categorias.has(alcance.categorias[0])', 'true', T_VIT),
+    ("M308", '«Ver productos» de una oferta con varias categorías lleva a una sola', VIT, 'alcance.categorias.length === 1 &&', 'alcance.categorias.length >= 1 &&', T_VIT),
+    ("M309", 'una oferta de toda la tienda se anuncia por productos', VIT, 'if (a.todos) return "Toda la tienda";', '', T_VIT),
+    ("M310", 'los combos no disponibles salen primero', VIT, 'return [...salida.filter((c) => c.disponible), ...salida.filter((c) => !c.disponible)];', 'return [...salida.filter((c) => !c.disponible), ...salida.filter((c) => c.disponible)];', T_VIT),
+    ("M311", 'un combo no disponible ofrece el enlace de pedido', VIT, 'consultaHref: v.disponible ? consultaDeCombo(ctx.whatsapp, v.nombre, v.clave) : null,', 'consultaHref: consultaDeCombo(ctx.whatsapp, v.nombre, v.clave),', T_VIT),
+    ("M312", 'el mensaje de pedido del combo se manda sin codificar', VIT, 'encodeURIComponent(`Hola, me interesa el combo «${nombre}» (código ${clave}).`)', '`Hola, me interesa el combo «${nombre}» (código ${clave}).`', T_VIT),
+    ("M313", 'los combos se arman sin los datos reales de sus componentes', VIT, 'if (secciones.includes("combos") && productos) {', 'if (secciones.includes("combos")) {', T_VIT),
+    ("M314", 'las secciones que la tienda no dibuja siguen en la lista', VIT, 'const secciones = visibles.filter((s) => dibujadas.includes(s));', 'const secciones = visibles;', T_VIT),
+    ("M315", 'los botones no saben qué secciones están en la página', VIT, 'const ctx: ContextoVitrina = { ...ctxEntrada, dibujadas: secciones, campanaMostrada: campana?.clave ?? null };', 'const ctx: ContextoVitrina = { ...ctxEntrada, campanaMostrada: campana?.clave ?? null };', T_VIT),
+    ("M316", 'el botón de una campaña lleva a otra campaña distinta de la que se muestra', VIT, 'const llevaAlBloque = ctx.campanaMostrada !== undefined ? ctx.campanaMostrada === destino.clave : campanasActivas(ev).some((c) => c.clave === destino.clave);', 'const llevaAlBloque = campanasActivas(ev).some((c) => c.clave === destino.clave);', T_VIT),
+    ("M317", 'un botón lleva a la sección de ofertas aunque no esté en la página', VIT, 'dibujadas.includes("ofertas") && ofertasActivas(ev)', 'ofertasActivas(ev)', T_VIT),
+    ("M318", 'un botón lleva a la sección de combos aunque no esté en la página', VIT, 'dibujadas.includes("combos") && combosActivos(ev)', 'combosActivos(ev)', T_VIT),
+    ("M319", 'se consultan los componentes de los combos mayoristas', VIT, 'combosActivos({ snap, canal: "retail", ahora })', 'combosActivos({ snap, canal: "wholesale", ahora })', T_VIT),
+    ("M320", 'se consulta dos veces el mismo producto de los combos', VIT, 'return [...new Set(combosActivos({ snap, canal: "retail", ahora }).flatMap((c) => c.contenido.componentes.map((x) => x.referencia)))];', 'return combosActivos({ snap, canal: "retail", ahora }).flatMap((c) => c.contenido.componentes.map((x) => x.referencia));', T_VIT),
+    # --- PR 4 · la carga de la vitrina con los productos de los combos ----------------------------------------------------------------------------------
+    ("M321", 'se consultan productos aunque no haya combos vigentes', VITPUB, 'if (deps.productosDeCombos && referencias.length > 0) {', 'if (deps.productosDeCombos) {', T_VITPUB),
+    ("M322", 'una falla al consultar productos no se avisa', VITPUB, '            avisar(deps, error);\n            return undefined;', '            return undefined;', T_VITPUB),
+    ("M323", 'una falla al consultar productos tumba toda la vitrina', VITPUB, 'deps.productosDeCombos(tenantId, referencias).catch((error: unknown) => {\n            avisar(deps, error);\n            return undefined;\n          });', 'deps.productosDeCombos(tenantId, referencias);', T_VITPUB),
+    ("M324", 'los productos de los combos se consultan en el negocio equivocado', VITPUB, 'productos = await deps.productosDeCombos(tenantId, referencias)', 'productos = await deps.productosDeCombos("otro-negocio", referencias)', T_VITPUB),
+    ("M325", 'los productos consultados no llegan a la vitrina', VITPUB, '{ ...ctx, ahora }, leido.productos)', '{ ...ctx, ahora }, undefined)', T_VITPUB),
+    # --- PR 4 · el cableado REAL de producción (adaptadores de Supabase) ------------------------------------------------------------------------
+    ("M326", 'el cableado real de producción no trae los precios efectivos', PRECIOS_SUPA, 'conPrecios(createSupabaseCatalogRepository(supabase), crearPuertoPreciosSupabase(supabase))', 'conPrecios(createSupabaseCatalogRepository(supabase), null)', T_REAL),
+    ("M327", 'el cableado real de producción usa un reloj que no es el del servidor', PRECIOS_SUPA, 'ahora: () => Date.now()', 'ahora: () => 0', T_REAL),
+    ("M328", 'los productos de los combos se consultan con el precio de lista y no con el efectivo', PUB_SUPA, 'createResolucionCatalogo({ repo: dep().conPrecios })', 'createResolucionCatalogo({ repo: dep().repo })', T_REAL),
+    ("M329", 'las rutas de selección y pedido de la tienda no usan los precios efectivos', PEDIDO_HTTP, 'createPublicCatalogService({ repo: repositorioConPrecios(supabase), orders })', 'createPublicCatalogService({ repo: { ...repositorioConPrecios(supabase), precios: undefined }, orders })', T_REAL),
+    ("M330", 'las páginas de la tienda no usan los precios efectivos', PUBLIC_LOADER, 'createPublicCatalogService({ repo: repositorioConPrecios(supabaseAdmin()) })', 'createPublicCatalogService({ repo: { ...repositorioConPrecios(supabaseAdmin()), precios: undefined } })', T_REAL),
+    ("M331", 'las herramientas de ARIA de producción no usan los precios efectivos', PRODUCCION, '    catalog: repositorioConPrecios(supabase),\n    async ownsPhoneNumber', '    catalog: { ...repositorioConPrecios(supabase), precios: undefined },\n    async ownsPhoneNumber', T_REAL),
+    ("M332", 'el motor de pedidos de producción no usa los precios efectivos', PRODUCCION, '    catalog: repositorioConPrecios(supabase),\n    key,', '    catalog: { ...repositorioConPrecios(supabase), precios: undefined },\n    key,', T_REAL),
+    # --- PR 4 · una sola lectura de lo publicado por página -------------------------------------------------------------------------------------
+    ("M333", 'la lectura de lo publicado se guarda para siempre (nunca ve lo que se publica después)', LECTURA, 'export const leerPublicado = cache(', 'export const leerPublicado = ((fn) => { const guardadas = new Map<string, unknown>(); return ((s: SupabaseClient, t: string) => { if (!guardadas.has(t)) guardadas.set(t, fn(s, t)); return guardadas.get(t); }) as typeof fn; })(', T_LECTURA),
+    ("M334", 'la lectura de lo publicado entrega la del primer negocio a todos los demás', LECTURA, 'export const leerPublicado = cache(', 'export const leerPublicado = ((fn) => { let primera: unknown; return ((s: SupabaseClient, t: string) => (primera ??= fn(s, t))) as typeof fn; })(', T_LECTURA),
+    ("M335", 'la lectura de lo publicado lee un negocio distinto al pedido', LECTURA, 'crearLectorSupabase(supabase).cargar(tenantId));', 'crearLectorSupabase(supabase).cargar("otro-negocio"));', T_LECTURA),
 ]
 
 

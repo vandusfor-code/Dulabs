@@ -10,14 +10,20 @@
  */
 import type { OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
+import type { ProductoParaCombo } from "@/lib/cms-comercial/evaluacion";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
-import { vitrinaDesdeCms, type ContextoVitrina } from "@/lib/cms-comercial/vitrina";
+import { referenciasDeCombos, vitrinaDesdeCms, type ContextoVitrina } from "@/lib/cms-comercial/vitrina";
 
 export interface DepsVitrinaPublica {
   /** Id del negocio de una tienda publicada y visible (null si no existe). SOLO servidor. */
   tenantDe(slug: string): Promise<string | null>;
   /** Lector del CMS: null = el CMS no existe para ese negocio (módulo apagado o sin migración). */
   cargar(tenantId: string): Promise<InstantaneaCms | null>;
+  /**
+   * Los datos REALES de los productos que componen los combos vigentes (activo, disponibilidad, máximo pedible y el precio que se paga por separado hoy): sin
+   * esto los combos no se muestran (nunca «disponibles» por suposición). Si falla, solo se omiten los combos; el resto de la vitrina sale igual.
+   */
+  productosDeCombos?(tenantId: string, referencias: readonly string[]): Promise<ReadonlyMap<string, ProductoParaCombo>>;
   /** Reloj inyectado (milisegundos). */
   ahora(): number;
   /** Tope de espera de toda la lectura del CMS. Pasado el tope, la tienda sigue con su vitrina de siempre. */
@@ -67,26 +73,43 @@ const deSiempre = (registro: CatalogStorefrontConfig): VitrinaInicio => ({ confi
 
 const avisoPorDefecto = (error: unknown) => console.error("[cms-comercial/vitrina] se usa la vitrina de siempre:", error instanceof Error ? error.message : "error desconocido");
 
+/** El aviso nunca puede romper la tienda. */
+function avisar(deps: DepsVitrinaPublica, error: unknown): void {
+  try {
+    (deps.alFallar ?? avisoPorDefecto)(error);
+  } catch {
+    /* el aviso nunca puede romper la tienda */
+  }
+}
+
 /** Nunca lanza: ante cualquier problema devuelve la vitrina de siempre. `ctx` lleva la tienda (slug, rutas, WhatsApp y categorías); el reloj lo pone `deps`. */
 export async function cargarVitrinaInicio(deps: DepsVitrinaPublica, registro: CatalogStorefrontConfig, ctx: Omit<ContextoVitrina, "ahora">): Promise<VitrinaInicio> {
   if (registro.tema === "tecnologia") return deSiempre(registro);
   try {
-    const snap = await conPlazo(
+    const ahora = deps.ahora();
+    const leido = await conPlazo(
       (async () => {
         const tenantId = await deps.tenantDe(ctx.slug);
-        return tenantId ? deps.cargar(tenantId) : null;
+        const snap = tenantId ? await deps.cargar(tenantId) : null;
+        if (!tenantId || !snap) return null;
+        // Los combos vigentes necesitan los datos reales de sus componentes; sin ellos (o si fallan) los combos no se muestran.
+        const referencias = deps.productosDeCombos ? referenciasDeCombos(snap, ahora) : [];
+        let productos: ReadonlyMap<string, ProductoParaCombo> | undefined;
+        if (deps.productosDeCombos && referencias.length > 0) {
+          productos = await deps.productosDeCombos(tenantId, referencias).catch((error: unknown) => {
+            avisar(deps, error);
+            return undefined;
+          });
+        }
+        return { snap, productos };
       })(),
       deps.plazoMs ?? PLAZO_VITRINA_MS,
     );
-    if (!snap) return deSiempre(registro);
-    const config = vitrinaDesdeCms(snap, registro, { ...ctx, ahora: deps.ahora() });
+    if (!leido) return deSiempre(registro);
+    const config = vitrinaDesdeCms(leido.snap, registro, { ...ctx, ahora }, leido.productos);
     return config === registro ? deSiempre(registro) : { config, opciones: opcionesDeInicio(config), origen: "cms" };
   } catch (error) {
-    try {
-      (deps.alFallar ?? avisoPorDefecto)(error);
-    } catch {
-      /* el aviso nunca puede romper la tienda */
-    }
+    avisar(deps, error);
     return deSiempre(registro);
   }
 }

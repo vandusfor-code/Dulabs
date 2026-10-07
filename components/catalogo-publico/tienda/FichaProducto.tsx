@@ -59,8 +59,25 @@ export function FichaProducto({ producto, categorias, basePath, listPath }: { pr
 
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-2xl font-semibold tabular-nums text-fg">{producto.price === null ? <span className="text-lg font-medium text-mist">Precio a consultar</span> : formatCop(producto.price)}</p>
+            {producto.listPrice !== undefined && (
+              <p className="text-lg tabular-nums text-mist">
+                <span className="sr-only">Precio normal: </span>
+                <s>{formatCop(producto.listPrice)}</s>
+              </p>
+            )}
+            {producto.offer && <span className="rounded-full bg-[var(--tienda-oro)] px-3 py-1 text-xs font-semibold leading-none text-white">{producto.offer.label}</span>}
             <EstadoDisponibilidad availability={producto.availability} />
           </div>
+
+          {producto.offer && (
+            <div className="rounded-[20px] border border-[var(--tienda-oro)]/40 bg-[var(--tienda-oro-suave)] px-4 py-3 text-sm">
+              <p className="font-medium text-fg">
+                {producto.offer.name} · {producto.offer.benefit}
+              </p>
+              {producto.offer.until && <p className="mt-0.5 text-mist">Vigente {producto.offer.until}</p>}
+              {producto.offer.conditions && <p className="mt-1 text-[13px] text-fg/80">{producto.offer.conditions}</p>}
+            </div>
+          )}
 
           {producto.description && <p className="whitespace-pre-line text-[15px] leading-relaxed text-fg/85">{producto.description}</p>}
 

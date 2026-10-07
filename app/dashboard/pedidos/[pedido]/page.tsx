@@ -282,6 +282,11 @@ export default function PedidoGestionPage() {
                       <p>
                         {l.cantidad} × {l.precio_unitario === null ? t("a consultar", "on request") : formatPrice(l.precio_unitario)}
                       </p>
+                      {l.precio_lista !== undefined && l.oferta && (
+                        <p>
+                          {t("Oferta", "Offer")} «{l.oferta}» · {t("antes", "was")} {formatPrice(l.precio_lista)}
+                        </p>
+                      )}
                       <p className="text-sm font-medium text-fg">{l.subtotal === null ? "—" : formatPrice(l.subtotal)}</p>
                     </div>
                   </li>

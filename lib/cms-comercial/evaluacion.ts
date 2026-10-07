@@ -236,7 +236,11 @@ export function vistaOferta(ctx: ContextoEvaluacion, oferta: PublicadaCms<"ofert
 // Combos
 // ---------------------------------------------------------------------------
 
-/** Lo que se necesita de un producto componente. `precioLista` es el del canal del cliente (null = a consultar). */
+/**
+ * Lo que se necesita de un producto componente. `precioLista` es lo que el cliente paga por ese producto por separado HOY en su canal (null = a consultar):
+ * quien arma el combo para la tienda o para ARIA pasa el precio EFECTIVO (con la oferta vigente, si la hay), así el «precio normal» y el ahorro del combo
+ * nunca prometen un descuento que ya no existe.
+ */
 export interface ProductoParaCombo {
   referencia: string;
   nombre: string;

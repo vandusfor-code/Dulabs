@@ -14,9 +14,10 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { EnlaceIntencion } from "@/components/catalogo-publico/tienda/EnlaceIntencion";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, MessageCircle } from "lucide-react";
+import { formatCop } from "@/lib/business-agent-quote";
 import type { PublicHome } from "@/lib/catalogo/service";
-import { heroOf, ORDEN_INICIO_CLASICO, type CampanaVitrina, type CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
+import { heroOf, ORDEN_INICIO_CLASICO, type CampanaVitrina, type CatalogStorefrontConfig, type ComboVitrina, type OfertaVitrina } from "@/lib/catalogo/vitrina";
 import { Revelar } from "@/components/catalogo-publico/tienda/Revelar";
 import { TarjetaProducto } from "@/components/catalogo-publico/tienda/TarjetaProducto";
 
@@ -186,6 +187,125 @@ function CampanaInicio({ campana, productos, basePath }: { campana: CampanaVitri
   );
 }
 
+const TITULO_SECCION = "font-serif-tienda mb-4 text-[28px] font-medium leading-none text-fg sm:text-4xl";
+const TARJETA = "flex h-full flex-col overflow-hidden rounded-[20px] border border-edge/80 bg-card";
+
+/** Imagen de una tarjeta de oferta o combo (el texto es HTML real; la imagen no lleva texto encima). */
+function ImagenTarjeta({ imagen }: { imagen: NonNullable<OfertaVitrina["imagen"]> }) {
+  return (
+    <div className="relative aspect-[16/9] bg-ink-2">
+      <Image
+        src={imagen.src}
+        alt={imagen.alt}
+        fill
+        sizes="(min-width: 1152px) 360px, (min-width: 768px) 33vw, 82vw"
+        className="object-cover"
+        style={{ objectPosition: imagen.focus ?? "center" }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Ofertas vigentes (CMS): anuncian el beneficio, qué cubren y hasta cuándo. Los precios de cada producto ya reflejan la oferta en todas las tarjetas; este bloque solo
+ * la explica. Una oferta mayorista jamás llega aquí (la tienda detal solo recibe las del detal).
+ */
+function OfertasInicio({ ofertas }: { ofertas: readonly OfertaVitrina[] }) {
+  return (
+    <section id="ofertas" aria-labelledby="tienda-ofertas" className="scroll-mt-24">
+      <h2 id="tienda-ofertas" className={TITULO_SECCION}>
+        Ofertas vigentes
+      </h2>
+      <ul className="tienda-scroll -mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-3 md:gap-5 md:overflow-visible md:px-0">
+        {ofertas.map((o) => (
+          <li key={o.clave} className="w-[82%] shrink-0 snap-start sm:w-[46%] md:w-auto">
+            <article className={TARJETA}>
+              {o.imagen && <ImagenTarjeta imagen={o.imagen} />}
+              <div className="flex flex-1 flex-col gap-1.5 px-4 pb-4 pt-3.5">
+                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[var(--tienda-oro)]">{o.beneficio}</p>
+                <h3 className="font-serif-tienda text-[22px] font-medium leading-tight text-fg">{o.nombre}</h3>
+                {o.descripcion && <p className="text-[13.5px] leading-snug text-mist">{o.descripcion}</p>}
+                <p className="text-[12.5px] text-mist">
+                  {o.alcance}
+                  {o.vigencia ? ` · ${o.vigencia}` : ""}
+                </p>
+                {o.condiciones && <p className="text-[12px] leading-snug text-mist">{o.condiciones}</p>}
+                <Enlace href={o.href} className="mt-auto inline-flex h-11 w-fit items-center gap-1.5 pt-1 text-sm font-medium text-[var(--tienda-oro)] transition-colors hover:text-[var(--tienda-oro-hover)]">
+                  Ver productos
+                  <ArrowRight className="size-4" strokeWidth={1.8} aria-hidden />
+                </Enlace>
+              </div>
+            </article>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Combos vigentes (CMS, Etapa 1): se muestran con lo que incluyen, su precio y su disponibilidad (la decide el backend), pero NO se compran desde el carrito: la venta
+ * la cierra una asesora por WhatsApp. Nunca el stock exacto.
+ */
+function CombosInicio({ combos }: { combos: readonly ComboVitrina[] }) {
+  return (
+    <section id="combos" aria-labelledby="tienda-combos" className="scroll-mt-24">
+      <h2 id="tienda-combos" className={TITULO_SECCION}>
+        Combos
+      </h2>
+      <ul className="grid gap-4 md:grid-cols-2 md:gap-5 lg:grid-cols-3">
+        {combos.map((c) => (
+          <li key={c.clave}>
+            <article className={TARJETA}>
+              {c.imagen && <ImagenTarjeta imagen={c.imagen} />}
+              <div className="flex flex-1 flex-col gap-2 px-4 pb-4 pt-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="font-serif-tienda text-[22px] font-medium leading-tight text-fg">{c.nombre}</h3>
+                  <span
+                    className={
+                      "mt-1 inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-medium leading-none " +
+                      (c.disponible ? "bg-[var(--tienda-oro-suave)] text-fg" : "bg-ink-2 text-mist")
+                    }
+                  >
+                    {c.disponible ? "Disponible" : "No disponible por ahora"}
+                  </span>
+                </div>
+                {c.descripcion && <p className="text-[13.5px] leading-snug text-mist">{c.descripcion}</p>}
+                <ul className="space-y-0.5 text-[13.5px] text-fg/90">
+                  {c.componentes.map((x) => (
+                    <li key={x.referencia} className={x.disponible ? undefined : "text-mist"}>
+                      {x.cantidad} × {x.nombre}
+                      {x.disponible ? "" : " (agotado)"}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-auto flex flex-wrap items-baseline gap-x-3 gap-y-0.5 pt-1">
+                  <span className="text-xl font-semibold tabular-nums text-fg">{formatCop(c.precioCombo)}</span>
+                  {c.precioNormal !== null && c.ahorro !== undefined && (
+                    <span className="text-sm tabular-nums text-mist">
+                      <span className="sr-only">Precio normal: </span>
+                      <s>{formatCop(c.precioNormal)}</s>
+                    </span>
+                  )}
+                  {c.ahorro !== undefined && <span className="text-[12.5px] font-medium text-[var(--tienda-oro)]">Ahorras {formatCop(c.ahorro)}</span>}
+                </div>
+                {c.vigencia && <p className="text-[12.5px] text-mist">Vigente {c.vigencia}</p>}
+                {c.condiciones && <p className="text-[12px] leading-snug text-mist">{c.condiciones}</p>}
+                {c.consultaHref ? (
+                  <Enlace href={c.consultaHref} className={BOTON_ORO}>
+                    <MessageCircle className="size-4" strokeWidth={1.8} aria-hidden />
+                    Pedir con una asesora
+                  </Enlace>
+                ) : null}
+              </div>
+            </article>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function TiendaInicio({
   home,
   config,
@@ -250,8 +370,19 @@ export function TiendaInicio({
             <CampanaInicio campana={config.campana} productos={home.campana ?? []} basePath={basePath} />
           </Revelar>
         ) : null;
+      case "ofertas":
+        return config.ofertas && config.ofertas.length > 0 ? (
+          <Revelar key={tipo}>
+            <OfertasInicio ofertas={config.ofertas} />
+          </Revelar>
+        ) : null;
+      case "combos":
+        return config.combos && config.combos.length > 0 ? (
+          <Revelar key={tipo}>
+            <CombosInicio combos={config.combos} />
+          </Revelar>
+        ) : null;
       default:
-        // Ofertas y combos: la tienda todavía no los dibuja (no están en SECCIONES_DIBUJADAS); nunca se muestran a medias.
         return null;
     }
   }
