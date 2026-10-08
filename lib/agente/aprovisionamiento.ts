@@ -13,7 +13,7 @@
  *
  * Qué NO hace: no activa la IA, no pone el cierre con aceptación humana, no crea personas, no carga catálogo, no escribe textos comerciales.
  */
-import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herramientas";
+import { AGENT_TOOL_NAMES, esHerramientaComercial, type AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { checkoutOpcionesSchema, type CheckoutOpciones } from "@/lib/agente/perfil-negocio";
 import type { PaymentMethod } from "@/lib/catalogo/pedidos/contrato";
 
@@ -63,8 +63,11 @@ export const CREDENCIAL_GEMINI_ASLC = "env:GEMINI_KEY_ASLC";
 // Fila base del agente (DESHABILITADA)
 // ---------------------------------------------------------------------------
 
-/** Herramientas de ASLC: todas menos confirm_order (la aceptación del pedido es SIEMPRE de una persona; el modelo no confirma). */
-export const HERRAMIENTAS_ASLC: readonly AgentToolName[] = Object.freeze(AGENT_TOOL_NAMES.filter((t) => t !== "confirm_order"));
+/**
+ * Herramientas de ASLC: todas menos confirm_order (la aceptación del pedido es SIEMPRE de una persona; el modelo no confirma) y menos las de información comercial
+ * del CMS (Bloque 29: ASLC no usa el CMS; agregar una herramienta nueva al universo cerrado NO debe cambiar lo que ASLC ya tiene aprovisionado).
+ */
+export const HERRAMIENTAS_ASLC: readonly AgentToolName[] = Object.freeze(AGENT_TOOL_NAMES.filter((t) => t !== "confirm_order" && !esHerramientaComercial(t)));
 
 /** Opciones del checkout que ya se pueden fijar: solo domicilio y solo los pagos aprobados. Lo demás espera al negocio. */
 export function opcionesBaseAslc(): CheckoutOpciones {

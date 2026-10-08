@@ -92,7 +92,7 @@ describe("configuración del agente: explícita y fail-closed", () => {
 
   it("el universo de herramientas es cerrado y conocido", () => {
     // Fase 3B.6: 17 (se agregó consultar_envio: cambiar este universo es una decisión explícita, nunca un efecto lateral).
-    assert.equal(AGENT_TOOL_NAMES.length, 17);
+    assert.equal(AGENT_TOOL_NAMES.length, 21);
     assert.ok(!AGENT_TOOL_NAMES.some((n) => /sql|stock|price|delete|update_product/.test(n)));
   });
 });

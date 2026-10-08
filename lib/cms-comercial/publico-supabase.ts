@@ -5,7 +5,8 @@
  * Perezoso a propósito: el cliente de base de datos se crea al primer uso, DENTRO de quien llama, para que cualquier falla (por ejemplo, una variable de
  * entorno ausente) caiga en su manejo de errores (la tienda usa su vitrina de siempre; la imagen responde 502) y no rompa la página al construir las dependencias.
  */
-import { createResolucionCatalogo, type ProductoResuelto } from "@/lib/catalogo/resolucion";
+import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
+import { productoParaCombo } from "@/lib/cms-comercial/consulta";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { createPublicCatalogService } from "@/lib/catalogo/service";
 import type { ProductoParaCombo } from "@/lib/cms-comercial/evaluacion";
@@ -13,13 +14,8 @@ import { leerPublicado } from "@/lib/cms-comercial/lectura-publicada";
 import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
 import { supabaseAdmin } from "@/lib/supabase";
 
-/**
- * Lo que un combo necesita saber de un producto: si está activo, su disponibilidad (discreta: nunca el stock exacto), cuántas unidades se pueden pedir como máximo y el precio EFECTIVO detal
- * (lo que el cliente pagaría hoy por separado: así «precio normal» y «ahorro» nunca prometen un descuento que ya no existe).
- */
-export function productoParaCombo(p: ProductoResuelto): ProductoParaCombo {
-  return { referencia: p.reference, nombre: p.name, activo: p.status === "ACTIVE", disponibilidad: p.availability, maxCantidad: p.maxQuantity, precioLista: p.prices.retail };
-}
+// El mapeo producto → datos del combo vive en consulta.ts (lo comparten la tienda y ARIA); se vuelve a exportar aquí por los nombres que ya usan otros archivos.
+export { productoParaCombo };
 
 function construir() {
   const supabase = supabaseAdmin();

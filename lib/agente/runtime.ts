@@ -33,9 +33,11 @@ import { conversationStage, stageGuidance, type ConversationStage } from "@/lib/
 import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
 import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
-import type { AgentToolName } from "@/lib/agente/nombres-herramientas";
+import { esHerramientaComercial, type AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { coberturaDeCiudad, type EnviosConfig, type ShippingDecision } from "@/lib/agente/envios";
 import { emptyShippingEvidence } from "@/lib/agente/envios-anclaje";
+import { emptyComercialEvidence, registrarHechoComercial } from "@/lib/agente/comercial-anclaje";
+import { variablesDeNegocio } from "@/lib/cms-comercial/variables-negocio";
 import { textoDeEnvio } from "@/lib/agente/textos-cliente";
 import { FOTO_SIN_REFERENCIA, MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, hablaDePago, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
 import {
@@ -259,7 +261,7 @@ export interface AgentTurnTrace {
    * `values`: solo los MONTOS bloqueados (con "$", "COP" o "mil"; nunca referencias, enlaces ni otros
    * números, que podrían ser datos del cliente) para diagnosticar qué cifra inventó el modelo.
    */
-  grounding: { violations: GroundingViolation["kind"][]; corrected: boolean; values?: string[] };
+  grounding: { violations: GroundingViolation["kind"][]; corrected: boolean; values?: string[]; /** Bloque 29 · PR 5: tipos de afirmación comercial sin respaldo (percent_unbacked, offer_unbacked…), sin ningún valor ni nombre. */ codes?: string[] };
   order_id: string | null;
   images: number;
   error_kind: string | null;
@@ -311,6 +313,8 @@ export const FALLBACK_MESSAGES = {
   handoff: "Te comunico con una asesora para ayudarte mejor. En breve te escribe.",
   safety: "Disculpa, con eso no puedo ayudarte por aquí. ¿Te ayudo con algo de nuestro catálogo?",
   unverified: "Disculpa, no pude verificar esa información en el catálogo. ¿Me confirmas la referencia o el producto que buscas?",
+  /** Bloque 29 · PR 5: una afirmación sobre ofertas, descuentos, combos, campañas, vigencias o políticas que el sistema no respalda (aun después de corregirla): una persona la confirma. */
+  commercial: "Disculpa, no pude verificar esa información (promoción, descuento o política del negocio). Una asesora te la confirma en breve.",
   /** Bloque 23: una escritura quedó sin respuesta (no se sabe si se hizo): ni "listo" ni "falló". */
   pending: "Estoy verificando el estado de tu pedido. Escríbeme de nuevo en un momento y te confirmo cómo quedó.",
 } as const;
@@ -347,6 +351,11 @@ const SIDE_QUESTION_TOOLS: readonly AgentToolName[] = [
   "get_customer_context",
   // Fase 3B.6: una pregunta de envío durante el checkout se responde SOLO con el motor de envíos (lectura pura).
   "consultar_envio",
+  // Bloque 29 · PR 5: una pregunta de promoción, combo, campaña o política durante el checkout se responde SOLO con lo publicado (lectura pura).
+  "consultar_ofertas",
+  "consultar_combos",
+  "consultar_campanas",
+  "consultar_contenido_comercial",
 ];
 const STEP_LABEL: Readonly<Record<CheckoutStep, string>> = {
   name: "nombre",
@@ -368,7 +377,9 @@ const SIDE_QUESTION_RULES = (step: CheckoutStep) =>
   `El cliente está REGISTRANDO su pedido con el sistema (paso actual: ${STEP_LABEL[step]}) y te hizo una pregunta. Responde SOLO esa pregunta, en 1 a 3 frases, con datos de las herramientas o de la configuración del negocio (políticas). Si el dato no está (por ejemplo, el costo o el tiempo del envío no están configurados), dilo con honestidad y di que una asesora lo confirma al registrar el pedido. No pidas nombre, dirección, entrega ni pago; no confirmes ni registres pedidos; no agregues ni quites productos; no repitas la pregunta del paso: el sistema la repite después de tu respuesta.`;
 
 const CORRECTION = (v: GroundingViolation[]) =>
-  v.some((x) => x.kind === "shipping")
+  v.some((x) => x.kind === "commercial") && !v.some((x) => x.kind === "shipping")
+    ? "[VERIFICACIÓN DEL SISTEMA] Dijiste algo sobre ofertas, descuentos, porcentajes, combos, campañas, vigencias o políticas del negocio que el sistema NO respalda. Llama a la herramienta que corresponde (consultar_ofertas, consultar_combos, consultar_campanas o consultar_contenido_comercial) y responde SOLO con lo que devuelva: cita beneficio, vigencia, condiciones y cifras tal cual y no calcules nada. Si devuelve empty=true, di con naturalidad que por ahora no hay; si no puedes verificarlo, ofrece una asesora. No menciones esta verificación."
+    : v.some((x) => x.kind === "shipping")
     ? "[VERIFICACIÓN DEL SISTEMA] Dijiste algo sobre el envío (tiempo, cobertura, costo o transportadora) que el sistema NO respalda. Llama a consultar_envio con la ciudad del cliente y responde SOLO con lo que devuelva: repite customer_text tal cual, el mismo día solo como una posibilidad (nunca una garantía) y ningún costo, transportadora o cobertura que no venga en su respuesta. Si no puedes verificarlo, ofrece una asesora. No menciones esta verificación."
     : v.some((x) => x.kind === "cart")
     ? "[VERIFICACIÓN DEL SISTEMA] La selección NO cambió: la herramienta rechazó el cambio (lee su motivo). No digas que agregaste o dejaste listo nada: hazle al cliente la pregunta concreta que indica la herramienta (cuál producto o cuántas unidades). No menciones esta verificación."
@@ -376,6 +387,12 @@ const CORRECTION = (v: GroundingViolation[]) =>
     .map((x) => x.value)
     .slice(0, 5)
     .join(", ")}). Reescríbela usando SOLO referencias, precios y cantidades devueltos por las herramientas, o consulta la herramienta que corresponda. No menciones esta verificación.`;
+
+/** Los TIPOS de afirmación comercial sin respaldo (sin el valor ni el nombre que escribió el modelo): para diagnosticar sin guardar contenido. */
+function registrarCodigosComerciales(trace: AgentTurnTrace, violations: GroundingViolation[]): void {
+  const tipos = [...new Set(violations.filter((v) => v.kind === "commercial").map((v) => v.value.split(":")[0]))];
+  if (tipos.length > 0) trace.grounding.codes = [...new Set([...(trace.grounding.codes ?? []), ...tipos])];
+}
 
 /** Resumen SEGURO de argumentos: referencias, cantidades y números; de los textos libres solo el largo. */
 export function summarizeArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -982,6 +999,10 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   // que usa el motor de envíos pero aún NO tiene reglas configuradas no puede afirmar tiempos, cobertura, costo ni transportadora (sin
   // hechos del motor no hay respaldo: una persona). Delacour no tiene la herramienta ni reglas: sin cambios.
   const shippingGuard = enviosRules !== null || deps.config.tools.includes("consultar_envio");
+  // Bloque 29 · PR 5: con alguna herramienta comercial en la lista del número, lo que el texto diga de ofertas, descuentos, combos, campañas, vigencias y cifras de
+  // políticas debe estar respaldado por esas herramientas en el mismo turno (comercial-anclaje.ts). Sin ellas (Delacour hoy, ASLC, otros): sin cambios.
+  const commercialGuard = deps.config.tools.some(esHerramientaComercial);
+  const commercialToolContext = { valores: variablesDeNegocio(deps.config.business).variables, nowMs: now() };
   const checkoutIO: CheckoutIO | null = checkoutOptions
     ? {
         engine: deps.tools.engine,
@@ -1080,9 +1101,11 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
       handoffMotive: null,
       newProposal: null,
       shipping: { rules: enviosRules, nowMs: now() },
+      comercial: commercialToolContext,
     };
     const ev = emptyEvidence();
     if (shippingGuard) ev.shipping = emptyShippingEvidence();
+    if (commercialGuard) ev.comercial = emptyComercialEvidence(channel);
     addCustomerEvidence(text, ev);
     addEvidence(activeOrder, ev);
     addOrderStateEvidence(activeOrder, ev);
@@ -1112,6 +1135,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
             trace.tool_calls.push({ name: tc.name.slice(0, 40), result: outcome.ok ? "ok" : outcome.error.code, ms: now() - t0, args: summarizeArgs(tc.args) });
             const output = outcome.ok ? outcome.data : { error: outcome.error };
             addEvidence(output, ev);
+            if (outcome.ok) registrarHechoComercial(ev.comercial, tc.name, outcome.data);
             // Fase 3B.6: un envío que el sistema no puede verificar NO se responde con el modelo: sin respuesta verificable
             // (el checkout decide según `pregunta_sin_respuesta`: pasar a una persona o seguir con el paso).
             if (tc.name === "consultar_envio" && outcome.ok) {
@@ -1133,6 +1157,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         const check = checkGrounding(r.text, ev);
         if (!check.ok) {
           trace.grounding.violations.push(...check.violations.map((v) => v.kind));
+          registrarCodigosComerciales(trace, check.violations);
           return null;
         }
         return r.text.trim().slice(0, 1_200);
@@ -1243,6 +1268,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
   const evidence: Evidence = emptyEvidence();
   // Fase 3B.6: con reglas de envío, lo que el texto diga de envíos debe estar respaldado por consultar_envio (ver envios-anclaje.ts).
   if (shippingGuard) evidence.shipping = emptyShippingEvidence();
+  // Bloque 29 · PR 5: lo comercial solo se afirma con lo que las herramientas comerciales devolvieron en este turno.
+  if (commercialGuard) evidence.comercial = emptyComercialEvidence(channel);
   addCustomerEvidence(input.text, evidence);
   addEvidence(activeOrder, evidence);
   addOrderStateEvidence(activeOrder, evidence);
@@ -1284,6 +1311,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
     handoffMotive: null,
     newProposal: null,
     shipping: { rules: enviosRules, nowMs: now() },
+    comercial: commercialToolContext,
   };
 
   let writes = 0;
@@ -1352,6 +1380,8 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
           trace.tool_calls.push({ name: tc.name.slice(0, 40), result: outcome.ok ? "ok" : outcome.error.code, ms: now() - t0, args: summarizeArgs(tc.args) });
           const output = outcome.ok ? outcome.data : { error: outcome.error };
           addEvidence(output, evidence);
+          // Bloque 29 · PR 5: la respuesta ESTRUCTURADA de las herramientas comerciales es el único respaldo de lo que se diga de ofertas, combos, campañas y políticas.
+          if (outcome.ok) registrarHechoComercial(evidence.comercial, tc.name, outcome.data);
           // Fase 3B.6: la respuesta ESTRUCTURADA del motor de envíos es el único respaldo de lo que se diga del envío.
           if (tc.name === "consultar_envio" && outcome.ok) {
             const d = outcome.data as unknown as ShippingDecision;
@@ -1434,6 +1464,7 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         break;
       }
       trace.grounding.violations.push(...check.violations.map((v) => v.kind));
+      registrarCodigosComerciales(trace, check.violations);
       const montos = check.violations.filter((v) => v.kind === "amount" && /\$|cop|\bmil\b/i.test(v.value) && v.value.length <= 24).map((v) => v.value);
       if (montos.length > 0) trace.grounding.values = [...(trace.grounding.values ?? []), ...montos].slice(0, 10);
       if (corrected) {
@@ -1503,6 +1534,18 @@ export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput
         outcome = "handoff";
       } catch {
         reply = textoDeEnvio(enviosRules, "error_consulta") ?? FALLBACK_MESSAGES.technical;
+        outcome = "fallback";
+      }
+    } else if (failure === "unverified" && trace.grounding.violations.includes("commercial") && !ctx.handedOff) {
+      // Bloque 29 · PR 5: el modelo insistió en una afirmación sobre ofertas, descuentos, combos, campañas, vigencias o políticas que el sistema no respalda (aun
+      // después de corregirla): salida segura a una persona, con mensaje fijo. Nunca se envía lo que dijo.
+      try {
+        await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: "Afirmación comercial sin respaldo del sistema", actor: "system", requestId });
+        trace.handoff = { source: "system", motive: "other" };
+        reply = FALLBACK_MESSAGES.commercial;
+        outcome = "handoff";
+      } catch {
+        reply = FALLBACK_MESSAGES.technical;
         outcome = "fallback";
       }
     } else if (ctx.state.failures >= 2 && !ctx.handedOff) {

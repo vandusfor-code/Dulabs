@@ -612,3 +612,13 @@ components/dashboard/catalogo/lineas-pedido-oferta.test.tsx
 lib/catalogo/pedidos/lineas-oferta-persistencia.test.ts
 lib/cms-comercial/tienda-real.pglite.test.ts
 lib/cms-comercial/lectura-publicada.test.ts
+# Bloque 29 · PR 5 (ARIA y el CMS): lo que ARIA puede saber de lo publicado (consultas puras), las cuatro herramientas comerciales y su contrato, la guarda de anclaje comercial (lo respaldado
+# sale, lo inventado no), el runtime real con un modelo guionizado (12 casos obligatorios, 18 preguntas adversariales, regresión sin las herramientas), las preguntas durante el checkout, el
+# cableado real de producción y los scripts de migración de los textos del prompt (04 a 07) ejecutados de verdad en Postgres embebido.
+lib/cms-comercial/consulta.test.ts
+lib/agente/comercial-anclaje.test.ts
+lib/agente/agente-comercial-aria.test.ts
+lib/agente/agente-comercial-checkout.test.ts
+lib/agente/agente-comercial-produccion.pglite.test.ts
+lib/cms-comercial/migracion-textos.test.ts
+lib/cms-comercial/migracion-textos.pglite.test.ts

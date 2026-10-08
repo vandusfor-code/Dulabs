@@ -6,8 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { availabilityOf, isReference, type CatalogProduct } from "@/lib/catalogo/domain";
 import { retailPath } from "@/lib/catalogo/publicacion";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
-import type { ProductoVista, PuertoCatalogo, PuertoVariables, VariablesNegocio } from "@/lib/cms-comercial/puertos";
-import { formatearPesos, type ValoresVariables } from "@/lib/cms-comercial/variables";
+import type { ProductoVista, PuertoCatalogo, PuertoVariables } from "@/lib/cms-comercial/puertos";
+import { variablesDeNegocio } from "@/lib/cms-comercial/variables-negocio";
 
 /** Un precio de 0 o negativo equivale a «a consultar»: ninguna oferta puede apoyarse en él. */
 const precioONulo = (v: number | null): number | null => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null);
@@ -57,19 +57,7 @@ interface FilaConfigAgente {
   negocio: unknown;
 }
 
-const esObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-
-/** Valores de las variables a partir de `negocio` (la configuración del negocio de ARIA). Lo que no esté configurado simplemente no existe. */
-export function variablesDeNegocio(negocio: unknown): VariablesNegocio {
-  const n = esObjeto(negocio) ? negocio : {};
-  const pedido = esObjeto(n.pedido) ? n.pedido : {};
-  const variables: ValoresVariables = {};
-  const minimo = typeof pedido.minimo_mayorista === "number" && Number.isInteger(pedido.minimo_mayorista) && pedido.minimo_mayorista > 0 ? pedido.minimo_mayorista : null;
-  if (minimo !== null) variables.minimo_mayorista = formatearPesos(minimo);
-  if (typeof pedido.direccion_tienda === "string" && pedido.direccion_tienda.trim() !== "") variables.direccion_tienda = pedido.direccion_tienda.trim();
-  if (typeof n.nombre_negocio === "string" && n.nombre_negocio.trim() !== "") variables.nombre_negocio = n.nombre_negocio.trim();
-  return { variables, minimoMayorista: minimo };
-}
+export { variablesDeNegocio };
 
 export function crearPuertoVariablesSupabase(supabase: SupabaseClient): PuertoVariables {
   return {
