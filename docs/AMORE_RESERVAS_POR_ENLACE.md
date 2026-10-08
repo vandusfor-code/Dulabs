@@ -3,8 +3,8 @@
 Rama `feat/amore-reservas-por-enlace`. Negocio: AMORE (`ed6ae77f-8a0c-483e-a5d9-8ede68eca50f`), canal WhatsApp-QR, Google Calendar vía Nylas,
 portal `https://www.dulabs.co/reservar/amore`.
 
-> **Estado de producción al escribir esto: NADA de esto está aplicado ni desplegado.** La migración `20261209000000_dulabs_cita_enlaces.sql` y los scripts
-> de `supabase/provisioning/amore/` los corre el dueño. El bot **no** se reactivó para tráfico general. Ver §13 y §15.
+> **Estado actual (verificado en producción el 2026-10-07): todo está aplicado, desplegado y funcionando; ver §18.** Las secciones §11 a §15 conservan el estado de
+> producción *al momento en que se escribieron* (histórico): la migración y el SQL ya se aplicaron, el bot general ya está activo y la prueba controlada real ya se hizo.
 
 ## 1. Qué estaba mal
 
@@ -151,7 +151,7 @@ de Postgres que importan (EXCLUDE de solapes, unicidad de idempotencia) y un Goo
 ## 12. Qué NO se verificó en producción
 
 Lectura y escritura en producción no se hicieron desde esta sesión (la herramienta no lo permitió y la regla del proyecto exige OK del dueño). Por eso no se puede
-afirmar cuántas citas futuras tienen identidad legacy: eso lo responde el diagnóstico 01.
+afirmar cuántas citas futuras tienen identidad legacy: eso lo responde el diagnóstico 01. *(Resuelto el 2026-10-07: ver §18.)*
 
 ## 13. Runbook de producción (lo hace el dueño, en este orden)
 
@@ -189,8 +189,7 @@ Pruebas: \`lib/mi-cita/panel.test.ts\` (27) y 21 mutaciones del módulo y sus ru
 
 ## 15. Estado de producción
 
-Sin cambios aplicados. Pendientes del dueño: fusionar el PR, migración 20261209, diagnóstico/reparación de citas legacy y la prueba controlada. El bot de AMORE no se
-reactivó para tráfico general.
+Histórico (cuando se escribió este documento): sin cambios aplicados. **Ya resuelto: el estado verificado el 2026-10-07 está en §18.**
 
 ## 16. Varios servicios en una sola cita (manos + pies) y versión móvil del portal
 
@@ -241,3 +240,28 @@ horarios» (con «Reintentar»); si alguien toma el horario, el aviso queda a la
 
 **Pruebas:** `components/reservar-amore/historial-pasos.dom.test.tsx` (17: el mecanismo con la API de historial y la página completa), `components/mi-cita/mi-cita-amore.dom.test.tsx`
 (14), y casos nuevos en `formato.test.ts`. Sin migraciones ni SQL.
+
+## 18. Estado de cierre — verificado en producción el 2026-10-07
+
+Verificación autorizada por el dueño en el chat: lecturas de **solo lectura** (un cliente HTTP que rechaza todo método distinto de GET/HEAD, así que no podía escribir) y UNA prueba
+controlada real con el número del dueño. No se escribió nada más en producción. Los números son una fotografía de ese día.
+
+| Qué | Resultado |
+|---|---|
+| Despliegue | `main` desplegado en Vercel (Production, success); sin respuestas 5xx ni registros de error en la última hora |
+| Portal `/reservar/amore` | 200; catálogo con 51 servicios en 7 categorías, hasta 3 servicios por cita; 4 profesionales con calendario; en celular (375×812) carga con «Comenzar ahora» fijo abajo |
+| Disponibilidad real | 40/40 consultas en `ok` (4 profesionales × 10 días) leyendo Google Calendar vía Nylas |
+| Migración 20261209 | **aplicada**: `dulabs_cita_enlaces` existe y ya emite enlaces (11 activos, el último de pocas horas antes) |
+| Citas futuras | 5 activas: 0 invisibles para el chat (identidad `whatsapp-qr:<negocio>` + teléfono normalizado), 5/5 con evento de Google, 4/5 con enlace (la quinta lo recibe con su recordatorio) |
+| Bot de WhatsApp (QR) | sesión conectada con latido reciente, flow «AMORE — Asistente» publicado, todas las conversaciones en `automatico`, respuestas automáticas a diario; nada lo restringe al público (la única `ia_restringida_a` es la del número viejo de Meta, que solo contesta el aviso de migración) |
+| Recordatorios | configuración guardada del negocio: **3 h antes** (`recordatorio_anticipacion_minutos = 180`) con texto propio. En 30 días, **15/15** citas elegibles (reservadas con ≥ 3 h de antelación) recibieron su aviso y el mensaje saliente quedó guardado a la hora objetivo; una cita reservada con menos antelación no puede recibir uno. El cron de QStash se dispara exactamente cada 10 min (HTTP 200) |
+| Nylas | app en **sandbox** (límite de 5 cuentas conectadas; hoy hay 3, todas `valid`); la cuenta principal de AMORE es la de la clienta (grant creado el 2026-10-06). No bloquea el uso actual: ninguna clienta se conecta a Nylas |
+| Prueba controlada real (portal → «Mi cita») | **reservar** (HTTP 200, enlace emitido, WhatsApp de confirmación con el enlace + política de confirmar 1 hora antes) → **ver «Mi cita»** → **reprogramar** (la misma cita; evento viejo borrado y nuevo creado; WhatsApp «reprogramada») → **cancelar** (cita cancelada, evento borrado de Google, horario libre otra vez para el público, WhatsApp «cancelada»). El evento quedó **directo en el calendario de la profesional, sin invitados** |
+| Pruebas | `npm run test:flow`: 8066/8066 sobre `main`, en un entorno aislado sin credenciales |
+
+**Decisiones del negocio que NO son defectos** (siguen abiertas a propósito):
+1. En el panel de AMORE, página «Recordatorios», la sección *Confirmación de cita* (interruptor + plantilla) **no está conectada** a los envíos reales: la confirmación real es el texto del
+   portal con el enlace; solo la sección *Recordatorio* usa la configuración guardada. Decidir si se conecta o se oculta.
+2. Aviso mínimo para cancelar o cambiar, y aviso a la profesional cuando la clienta cambia o cancela por el enlace (§11, puntos 5 y 8).
+3. Pasar la app de Nylas a un plan de producción (de pago) solo si se quiere quitar el límite de cuentas y el aviso de seguridad que Nylas muestra al crear conexiones nuevas.
+4. Redacción: el texto de confirmación termina la hora con doble punto («p. m..»), porque el formateador de la hora ya trae el punto y la frase agrega otro.
