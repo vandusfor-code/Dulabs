@@ -37,6 +37,7 @@ import { esHerramientaComercial, type AgentToolName } from "@/lib/agente/nombres
 import { coberturaDeCiudad, type EnviosConfig, type ShippingDecision } from "@/lib/agente/envios";
 import { emptyShippingEvidence } from "@/lib/agente/envios-anclaje";
 import { emptyComercialEvidence, registrarHechoComercial } from "@/lib/agente/comercial-anclaje";
+import { aplicarPilotoComercial } from "@/lib/agente/piloto-comercial";
 import { variablesDeNegocio } from "@/lib/cms-comercial/variables-negocio";
 import { textoDeEnvio } from "@/lib/agente/textos-cliente";
 import { FOTO_SIN_REFERENCIA, MEDIA_DEL_CLIENTE, MEDIA_MESSAGES, hablaDePago, NON_TEXT_MESSAGES, NON_TEXT_NOTICE_COOLDOWN_MS, nonTextPolicy, type NonTextAction, type NonTextKind } from "@/lib/agente/entrada";
@@ -486,7 +487,9 @@ export async function classifyCustomerMedia(
   return { tipo: "pedir", ...(read ? { read } : {}) };
 }
 
-export async function runAgentTurn(deps: AgentRuntimeDeps, input: AgentTurnInput): Promise<{ outcome: AgentTurnOutcome; reply: string | null; trace: AgentTurnTrace }> {
+export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTurnInput): Promise<{ outcome: AgentTurnOutcome; reply: string | null; trace: AgentTurnTrace }> {
+  // Bloque 29 · piloto: con `negocio.comercial_piloto`, un contacto que no está en la lista conversa como si el número no tuviera las herramientas comerciales.
+  let deps = aplicarPilotoComercial(depsEntrada, input.waId);
   const limits = { ...DEFAULT_LIMITS, ...deps.limits };
   const now = deps.now ?? Date.now;
   const started = now();

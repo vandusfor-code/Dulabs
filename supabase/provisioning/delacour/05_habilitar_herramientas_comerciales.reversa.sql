@@ -1,8 +1,8 @@
 -- CMS COMERCIAL (Bloque 29) — REVERSA de 05_habilitar_herramientas_comerciales.sql para Delacour.
 -- Corre en el SQL Editor de Supabase como UNA sola sentencia (un bloque DO, atómico).
 --
--- QUÉ HACE: quita de la lista de herramientas de ARIA las cuatro del CMS (ARIA y su guarda vuelven a ser exactamente los de antes del script 05). Lo publicado en el CMS queda
---   guardado y sin efecto sobre ARIA.
+-- QUÉ HACE: quita de la lista de herramientas de ARIA las cuatro del CMS y el piloto (negocio.comercial_piloto): ARIA y su guarda vuelven a ser exactamente los de antes del script 05
+--   para TODOS los clientes. Lo publicado en el CMS queda guardado y sin efecto sobre ARIA.
 -- SE NIEGA si algún tema crítico (promociones, venta-al-por-mayor, envios, medios-de-pago, garantias, cambios-y-devoluciones, horario, ubicacion) ya se RETIRÓ del prompt (está publicado en el CMS pero ya no en el prompt): sin las herramientas, ARIA quedaría sin esa
 --   información. Primero restaura esos temas con 06_retirar_textos_del_prompt.reversa.sql; para apagar de todos modos, confirma en la misma sesión:
 --       set dulabs.confirmar_reversa_herramientas = 'si';
@@ -71,8 +71,10 @@ begin
   end if;
 
   update public.dulabs_agente_runtime_config
-     set herramientas = array(select h from unnest(herramientas) with ordinality as x(h, o) where not (h = any (array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[])) order by o), updated_at = now()
-   where id = v_cfg.id and herramientas && array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[];
+     set herramientas = array(select h from unnest(herramientas) with ordinality as x(h, o) where not (h = any (array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[])) order by o),
+         negocio = negocio - 'comercial_piloto',
+         updated_at = now()
+   where id = v_cfg.id and (herramientas && array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[] or (negocio->'comercial_piloto') is not null);
 
-  raise notice 'Delacour: herramientas comerciales retiradas de ARIA';
+  raise notice 'Delacour: herramientas comerciales (y piloto) retiradas de ARIA';
 end $$;

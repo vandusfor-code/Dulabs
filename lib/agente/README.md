@@ -57,7 +57,8 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 `consultar_ofertas`, `consultar_combos`, `consultar_campanas` y `consultar_contenido_comercial`. Devuelven solo lo publicado, vigente y aplicable al canal del turno
 (`lib/cms-comercial/consulta.ts`); el modelo no pasa negocio, canal ni fecha. Sin el módulo o con una falla de lectura responden `UNAVAILABLE` (nunca un vacío falso).
 Detalle, contrato y activación: `lib/cms-comercial/README.md` («ARIA lee del CMS») y `supabase/provisioning/delacour/README.md`. El universo cerrado son 21 nombres; la lista de
-ASLC (16) no las incluye.
+ASLC (16) no las incluye. **Piloto por número**: con `negocio.comercial_piloto` (lista de `wa_id`, 1 a 20) solo esos contactos reciben las herramientas, la guarda comercial y la sección del
+prompt; los demás conversan EXACTAMENTE como siempre (`lib/agente/piloto-comercial.ts`, aplicado una sola vez al entrar el turno). Sin la lista, todos.
 
 ## Guardas deterministas
 

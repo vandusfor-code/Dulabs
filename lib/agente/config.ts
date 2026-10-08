@@ -39,6 +39,11 @@ export const businessConfigSchema = z
       .array(z.object({ tema: z.string().trim().min(1).max(60), info: z.string().trim().min(1).max(800) }).strict())
       .max(40)
       .optional(),
+    /**
+     * Bloque 29 · piloto: si existe, las herramientas comerciales del CMS (y su guarda y su sección del prompt) solo se activan para estos contactos (wa_id: solo dígitos con
+     * el indicativo del país, p. ej. 57XXXXXXXXXX); los demás clientes conversan como si el número no las tuviera. Sin este campo, todos los clientes las tienen.
+     */
+    comercial_piloto: z.array(z.string().regex(/^[1-9][0-9]{7,14}$/)).min(1).max(20).optional(),
     /** Bloque 32: mensajes FIJOS (sin IA) del inicio. Sin ellos, todo sigue como antes. */
     inicio: z
       .object({

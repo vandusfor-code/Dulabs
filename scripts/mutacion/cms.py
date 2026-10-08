@@ -17,7 +17,9 @@ la carga con respaldo (la tienda nunca se cae por el CMS), la ruta pública de i
 el dibujo de las secciones, la siembra de la vitrina actual (SQL real en Postgres embebido) y los avisos y el enlace del editor.
 PR 5 (ARIA y el CMS): lo que ARIA puede saber de lo publicado (consultas puras), las cuatro herramientas comerciales (contrato estricto, negocio y canal del turno, «no disponible» nunca un vacío
 falso), la guarda de anclaje comercial (porcentajes, descuentos, ofertas, combos, campañas, vigencias, ausencias, fuga mayorista y cifras de políticas), su integración en el runtime (turno
-normal y pregunta del checkout), el cableado real de producción y los scripts de migración de los textos del prompt (04 a 06, SQL real en Postgres embebido)."""
+normal y pregunta del checkout), el cableado real de producción y los scripts de migración de los textos del prompt (04 a 06, SQL real en Postgres embebido).
+PILOTO por número (negocio.comercial_piloto): quién recibe las herramientas comerciales (runtime), el esquema de la configuración y los scripts 05, 05b, 05 reversa, 06 y 07 (SQL real en Postgres embebido;
+cada mutante de un script corre solo la suite de ESE script, para que las ~25 mutaciones no tarden horas)."""
 import atexit
 import os
 import subprocess
@@ -102,6 +104,22 @@ T_RUNTIME_ARIA = ["lib/agente/agente-comercial-aria.test.ts", "lib/agente/agente
 T_CHECKOUT_ARIA = ["lib/agente/agente-comercial-checkout.test.ts"]
 T_PROD_ARIA = ["lib/agente/agente-comercial-produccion.pglite.test.ts"]
 T_MIGRACION = [C + "migracion-textos.pglite.test.ts"]
+
+# Piloto por número: el código del runtime y del esquema, y la suite de cada script SQL (se filtra por el nombre de su describe).
+PILOTO_TS, CONFIG_TS = "lib/agente/piloto-comercial.ts", "lib/agente/config.ts"
+SQL05B, SQL07 = PROV + "05b_abrir_herramientas_comerciales_a_todos.sql", PROV + "07_estado_migracion_textos_solo_lectura.sql"
+T_PILOTO = ["lib/agente/agente-comercial-aria.test.ts", C + "migracion-textos.test.ts"]
+
+
+def suite(nombre):
+    return ["--test-name-pattern=" + nombre, C + "migracion-textos.pglite.test.ts"]
+
+
+T_M05 = suite(r"05_habilitar_herramientas_comerciales\.sql")
+T_M05B = suite(r"05b_abrir_herramientas_comerciales_a_todos\.sql")
+T_M05R = suite(r"05_habilitar_herramientas_comerciales\.reversa\.sql")
+T_M06 = suite(r"06_retirar_textos_del_prompt\.sql")
+T_M07 = suite(r"07_estado_migracion_textos_solo_lectura\.sql")
 
 LECTURA = C + "lectura-publicada.ts"
 T_LECTURA = [C + "lectura-publicada.test.ts"]
@@ -571,9 +589,9 @@ M = [
     ("M423", 'el script 05 habilita las herramientas con temas críticos sin publicar', SQL05, "if v_sin_publicar is not null and coalesce(current_setting('dulabs.permitir_temas_sin_publicar', true), '') <> 'si' then", 'if false then', T_MIGRACION),
     ("M424", 'el script 05 ignora la confirmación explícita de la administradora', SQL05, "coalesce(current_setting('dulabs.permitir_temas_sin_publicar', true), '') <> 'si'", 'true', T_MIGRACION),
     ("M425", 'el script 05 cuenta como pendiente un tema crítico archivado', SQL05, "e.archivada_at is null and e.estado <> 'publicada'", "e.estado <> 'publicada'", T_MIGRACION),
-    ("M426", 'el script 05 deja pasar más de 30 herramientas', SQL05, 'if cardinality(v_cfg.herramientas) + cardinality(v_nuevas) > 30 then', 'if false then', T_MIGRACION),
+    ("M426", 'el script 05 deja pasar más de 30 herramientas', SQL05, 'if v_nuevas is not null and cardinality(v_cfg.herramientas) + cardinality(v_nuevas) > 30 then', 'if false then', T_M05),
     ("M427", 'el script 05 duplica las herramientas que ya estaban', SQL05, '   where not (h = any (v_cfg.herramientas));', '   where true;', T_MIGRACION),
-    ("M428", 'el script 05 falla al repetirse (no detecta que ya están habilitadas)', SQL05, 'if v_nuevas is null then', 'if false then', T_MIGRACION),
+    ("M428", 'el script 05 falla al repetirse (no detecta que ya están habilitadas)', SQL05, "if v_nuevas is null and (v_cfg.negocio->'comercial_piloto') is not distinct from to_jsonb(v_numeros) then", 'if false then', T_M05),
     ("M429", 'la reversa del 05 apaga las herramientas aunque un tema crítico ya solo viva en el CMS', SQL05R, "if v_retirados is not null and coalesce(current_setting('dulabs.confirmar_reversa_herramientas', true), '') <> 'si' then", 'if false then', T_MIGRACION),
     ("M430", 'el script 06 retira del prompt sin las herramientas habilitadas', SQL06, 'if not (v_cfg.herramientas @> array', 'if false and (v_cfg.herramientas @> array', T_MIGRACION),
     ("M431", 'el script 06 corre sin que le indiquen los temas', SQL06, "if v_lista = '' then", 'if false then', T_MIGRACION),
@@ -594,6 +612,33 @@ M = [
     ("M446", 'negar un descuento calificado se permite aunque la herramienta NO se haya consultado', ANCL_C, '!(calificada && consultada)', '!calificada', T_GUARDA),
     ("M447", '«la campaña de Amor y Amistad» se bloquea aunque una herramienta devolvió esa oferta', ANCL_C, 'if (!nombrada) out.add("campaign_unbacked");', 'out.add("campaign_unbacked");', T_GUARDA),
     ("M448", '«no tengo el historial de promociones» se toma por afirmar que no existen', ANCL_C, '|cerca|historial|registro|registros|antecedentes|memoria|recuerdo|archivo)', '|cerca)', T_GUARDA),
+    # --- Piloto por número ---------------------------------------------------------------------------------------------------------------------
+    ("M449", 'el contacto del piloto también pierde las herramientas', PILOTO_TS, 'if (!piloto || piloto.includes(waId)) return deps;', 'if (!piloto) return deps;', T_ARIA),
+    ("M450", 'sin piloto (abierto a todos) nadie recibe las herramientas', PILOTO_TS, 'if (!piloto || piloto.includes(waId)) return deps;', 'if (piloto && piloto.includes(waId)) return deps;', T_ARIA),
+    ("M451", 'un contacto fuera del piloto conserva las herramientas comerciales', PILOTO_TS, '  return { ...deps, config: { ...deps.config, tools: deps.config.tools.filter((t) => !esHerramientaComercial(t)) } };', '  return deps;', T_ARIA),
+    ("M452", 'a un contacto fuera del piloto solo se le quita UNA herramienta comercial', PILOTO_TS, 'tools: deps.config.tools.filter((t) => !esHerramientaComercial(t))', 'tools: deps.config.tools.filter((t) => t !== "consultar_ofertas")', T_ARIA),
+    ("M453", 'el runtime no aplica el piloto', RUNTIME, 'let deps = aplicarPilotoComercial(depsEntrada, input.waId);', 'let deps = depsEntrada;', T_ARIA),
+    ("M454", 'el runtime compara el piloto con otro dato del mensaje (no con el número del contacto)', RUNTIME, 'let deps = aplicarPilotoComercial(depsEntrada, input.waId);', 'let deps = aplicarPilotoComercial(depsEntrada, input.wamid);', T_ARIA),
+    ("M455", 'el esquema acepta un piloto vacío', CONFIG_TS, '{7,14}$/)).min(1).max(20).optional()', '{7,14}$/)).max(20).optional()', T_PILOTO),
+    ("M456", 'el esquema acepta más de 20 números de piloto', CONFIG_TS, '{7,14}$/)).min(1).max(20).optional()', '{7,14}$/)).min(1).max(200).optional()', T_PILOTO),
+    ("M457", 'el esquema acepta cualquier texto como número de piloto', CONFIG_TS, 'z.array(z.string().regex(/^[1-9][0-9]{7,14}$/))', 'z.array(z.string())', T_PILOTO),
+    ("M458", 'el script 05 habilita las herramientas sin números de piloto (las abre al público)', SQL05, "if v_piloto_txt = '' then", 'if false then', T_M05),
+    ("M459", 'el script 05 acepta un celular sin el indicativo (nunca coincidiría con un número de WhatsApp)', SQL05, "if v_n ~ '^3[0-9]{9}$' then", 'if false then', T_M05),
+    ("M460", 'el script 05 acepta cualquier texto como número de piloto', SQL05, "if v_n !~ '^[1-9][0-9]{7,14}$' then", 'if false then', T_M05),
+    ("M461", 'el script 05 admite más de 20 números de piloto', SQL05, 'if cardinality(v_numeros) > 20 then', 'if false then', T_M05),
+    ("M462", 'el script 05 cuenta los números de piloto repetidos', SQL05, 'array_agg(distinct u.n order by u.n)', 'array_agg(u.n order by u.n)', T_M05),
+    ("M463", 'el script 05 no guarda el piloto (las herramientas quedarían abiertas a todos)', SQL05, "negocio = jsonb_set(negocio, '{comercial_piloto}', to_jsonb(v_numeros), true),", 'negocio = negocio,', T_M05),
+    ("M464", 'el script 05 repetido con OTROS números no los cambia', SQL05, "if v_nuevas is null and (v_cfg.negocio->'comercial_piloto') is not distinct from to_jsonb(v_numeros) then", 'if v_nuevas is null then', T_M05),
+    ("M465", 'el script 05 acepta volver a un piloto con las herramientas ya abiertas a todos (los textos retirados del prompt se perderían para los demás)', SQL05, "if v_cfg.herramientas @> array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[] and (v_cfg.negocio->'comercial_piloto') is null then", 'if false then', T_M05),
+    ("M466", 'el script 05b abre a todos sin que las herramientas estén habilitadas', SQL05B, "if not (v_cfg.herramientas @> array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[]) then", 'if false then', T_M05B),
+    ("M467", 'el script 05b abre a todos sin ningún texto publicado', SQL05B, 'if v_publicados = 0 then', 'if false then', T_M05B),
+    ("M468", 'el script 05b abre a todos con temas críticos sin publicar', SQL05B, "if v_sin_publicar is not null and coalesce(current_setting('dulabs.permitir_temas_sin_publicar', true), '') <> 'si' then", 'if false then', T_M05B),
+    ("M469", 'el script 05b borra más que el piloto', SQL05B, "set negocio = negocio - 'comercial_piloto', updated_at = now()", "set negocio = '{}'::jsonb, updated_at = now()", T_M05B),
+    ("M470", 'el script 05b repetido cambia la configuración (la fecha de actualización)', SQL05B, "if (v_cfg.negocio->'comercial_piloto') is null then", 'if false then', T_M05B),
+    ("M471", 'la reversa del 05 deja el piloto en la configuración', SQL05R, "negocio = negocio - 'comercial_piloto',", 'negocio = negocio,', T_M05R),
+    ("M472", 'la reversa del 05 no limpia un piloto que quedó sin herramientas', SQL05R, " or (negocio->'comercial_piloto') is not null);", ');', T_M05R),
+    ("M473", 'el script 06 retira textos del prompt con las herramientas todavía en piloto', SQL06, "if (v_cfg.negocio->'comercial_piloto') is not null then", 'if false then', T_M06),
+    ("M474", 'el estado (07) dice «abiertas a todos» aunque haya piloto', SQL07, "when (select negocio->'comercial_piloto' from aria) is null then 'abiertas a TODOS los clientes'", "when true then 'abiertas a TODOS los clientes'", T_M07),
 ]
 
 

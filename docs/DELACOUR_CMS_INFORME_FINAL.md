@@ -1,14 +1,15 @@
 # Bloque 29 — CMS comercial de Delacour y fuente de verdad para ARIA · INFORME FINAL
 
-Cinco PR apilados. **Nada se ejecutó en producción**: los scripts SQL, sus reversas y los pasos exactos para activar están en el punto 16. El merge y la activación los haces tú.
+Cinco PR apilados, hoy todos en `main` (la consolidación #179 trajo los intermedios) y desplegados. En producción solo corriste tú la migración y los scripts 01 a 03; **los scripts 04 a 07 (ARIA) NO se han ejecutado**. Los pasos exactos para activar están en el punto 16 y el piloto por número, que permite probar ARIA con tu número sin abrirla al público, en el punto 17.
 
 | PR | Qué entrega | Estado |
 |---|---|---|
 | #174 · PR 1 | Fundación: SQL, ciclo borrador → publicar, evaluación determinista, validación, servicio con roles, lector verificado, API | **Fusionado** en `main` |
-| #175 · PR 2 | Dashboard «Tienda» (editor, imágenes, vista previa, versiones, historial) | Abierto |
-| #176 · PR 3 | La tienda lee del CMS (con respaldo total) + siembra de la vitrina actual | Abierto |
-| #177 · PR 4 | El precio efectivo: ofertas y combos en la tienda, el carrito, la cotización, el pedido y el motor | Abierto |
-| **PR 5** | **ARIA lee del CMS (4 herramientas + guarda anti-invención) + migración de los textos del prompt + evaluación** | Este PR |
+| #175 · PR 2 | Dashboard «Tienda» (editor, imágenes, vista previa, versiones, historial) | **Fusionado** en `main` (vía #179) |
+| #176 · PR 3 | La tienda lee del CMS (con respaldo total) + siembra de la vitrina actual | **Fusionado** en `main` (vía #179) |
+| #177 · PR 4 | El precio efectivo: ofertas y combos en la tienda, el carrito, la cotización, el pedido y el motor | **Fusionado** en `main` (vía #179) |
+| #178 · PR 5 | ARIA lee del CMS (4 herramientas + guarda anti-invención) + migración de los textos del prompt + evaluación | **Fusionado** en `main` (vía #179) |
+| **PR 6** | **Piloto por número**: las herramientas de ARIA solo para los números que indiques (punto 17) | Este PR |
 
 ---
 
@@ -166,7 +167,7 @@ Los 113 del PR 5, por área: consultas y herramientas de ARIA 23 · guarda de an
 
 Nada de esto se ejecuta solo. Todo es SQL en el **SQL Editor de Supabase**, una sentencia por script; cada script se niega a correr fuera de orden y se puede repetir sin efectos nuevos. Las reversas se corren en el orden inverso.
 
-**A. Merge y despliegue.** Fusiona #175 → #176 → #177 → PR 5 (#174 ya está fusionado), cada uno después de revisarlo. Los cuatro son inertes: sin el módulo ni la migración, todo se comporta como hoy. No hay variables de entorno nuevas.
+**A. Merge y despliegue.** Los cinco PR del Bloque 29 ya están en `main` y desplegados. El piloto por número (punto 17) va en un PR aparte con base `main`: fusiónalo y espera el despliegue **antes** del paso 9. Todo sigue inerte hasta que corras los scripts: sin el módulo ni la migración, todo se comporta como hoy. No hay variables de entorno nuevas.
 
 **B. Base de datos y tienda** (`supabase/provisioning/delacour/`, detalle en su `README.md`):
 
@@ -185,12 +186,54 @@ Nada de esto se ejecuta solo. Todo es SQL en el **SQL Editor de Supabase**, una 
 | 6 | Ver el estado | `07_estado_migracion_textos_solo_lectura.sql` | Los 22 temas «en el prompt» y «no migrado»; `0 de 4 habilitadas` | — |
 | 7 | Copiar los textos como borradores | `04_migrar_textos_a_borradores.sql` | 22 borradores; ARIA no cambia | `04_…reversa.sql` (archiva los que nadie tocó) |
 | 8 | **La administradora revisa y publica** en Tienda → Contenido | (Dashboard) | El `07` muestra `prompt+cms` en los publicados | — |
-| 9 | Habilitar las herramientas y la guarda | `05_habilitar_herramientas_comerciales.sql` | Se niega si no hay texto publicado o queda sin publicar un tema crítico; al correr, `herramientas` suma las 4 | `05_…reversa.sql` (apaga de inmediato; ARIA vuelve a ser la de antes) |
+| 9 | Habilitar las herramientas y la guarda **solo para tu número** | `set dulabs.piloto_comercial = '57XXXXXXXXXX';` y luego `05_habilitar_herramientas_comerciales.sql` (misma sesión) | Se niega sin números, con un número mal escrito, si no hay texto publicado, si queda sin publicar un tema crítico o si ya están abiertas a todos; al correr, `herramientas` suma las 4 y `negocio.comercial_piloto` guarda tus números: **solo ellos** las reciben, los demás clientes siguen como hoy | `05_…reversa.sql` (apaga de inmediato para todos y quita el piloto) |
 | 10 | **Verificar con conversaciones reales** (tu número) | — | Ver la lista de abajo | — |
-| 11 | Retirar del prompt, tema por tema | `set dulabs.retirar_temas = 'promociones,envios';` y luego `06_retirar_textos_del_prompt.sql` | Se niega si las herramientas no están habilitadas o el tema no está publicado | `set dulabs.restaurar_temas = '…';` y `06_…reversa.sql` |
+| 11 | Abrir a todos los clientes (cuando el paso 10 salió bien) | `05b_abrir_herramientas_comerciales_a_todos.sql` | Quita el piloto: todos los clientes reciben las herramientas; el `07` dice «abiertas a TODOS los clientes» | `05_…reversa.sql`; para volver a un piloto, el `05` otra vez con tu número |
+| 12 | Retirar del prompt, tema por tema | `set dulabs.retirar_temas = 'promociones,envios';` y luego `06_retirar_textos_del_prompt.sql` | Se niega mientras haya piloto, si las herramientas no están habilitadas o el tema no está publicado | `set dulabs.restaurar_temas = '…';` y `06_…reversa.sql` |
 
-**Qué probar en el paso 10** (desde tu número, como cliente detal y luego como mayorista): «¿qué promociones tienen?», «¿cuál es la garantía?», «¿horario?», «¿dónde están?», «¿hacen envíos?», «me dijeron que había 50 % de descuento», «dame un descuento por pagar de contado», «¿tienen combos?», una pregunta sobre lo mayorista como detal (debe pasar a una asesora sin llamar al modelo) y una pregunta sobre algo que el CMS no tiene (debe ofrecer una asesora, no inventar). Si algo sale mal: reversa del `05` (un solo script) y listo.
+**Qué probar en el paso 10** (desde tu número, como cliente detal y luego como mayorista): «¿qué promociones tienen?», «¿cuál es la garantía?», «¿horario?», «¿dónde están?», «¿hacen envíos?», «me dijeron que había 50 % de descuento», «dame un descuento por pagar de contado», «¿tienen combos?», una pregunta sobre lo mayorista como detal (debe pasar a una asesora sin llamar al modelo) y una pregunta sobre algo que el CMS no tiene (debe ofrecer una asesora, no inventar). Mientras estén en piloto, escribe también desde un número que NO esté en la lista: debe conversar exactamente como siempre. Si algo sale mal: reversa del `05` (un solo script) y listo.
 
 **D. Apagado de emergencia.** Reversa del `05` (ARIA vuelve a ser exactamente la de antes) y, si hiciera falta, deshabilitar el módulo `cms_comercial` del negocio (la tienda y los precios vuelven a los de lista al instante).
 
-**E. Para regenerar los scripts 03 a 07** (no se editan a mano): `ACTUALIZAR_SQL=1 npx tsx --test lib/cms-comercial/siembra-vitrina.test.ts lib/cms-comercial/migracion-textos.test.ts`.
+**E. Para regenerar los scripts 03 a 07 (incluido el 05b)** (no se editan a mano): `ACTUALIZAR_SQL=1 npx tsx --test lib/cms-comercial/siembra-vitrina.test.ts lib/cms-comercial/migracion-textos.test.ts`.
+
+## 17. Piloto por número (PR 6)
+
+**Para qué.** Probar ARIA con el CMS **solo con tu número** antes de abrirla al público. Las herramientas de un agente se habilitan por *línea* del negocio (la fila de ARIA de ese número de WhatsApp), no por cliente: sin este PR, el script 05 habría activado las cuatro herramientas, la guarda anti-invención y la sección comercial del prompt para **todos** los clientes de Delacour a la vez.
+
+**Cómo funciona.**
+- `negocio.comercial_piloto`: lista de números de contacto (`wa_id`: solo dígitos con el indicativo del país, por ejemplo 57 + el celular; de 1 a 20).
+- Con la lista, **solo esos contactos** reciben las herramientas comerciales, la guarda anti-invención y la sección «información comercial» del prompt. Todos los demás conversan **exactamente** como si el número no las tuviera: mismo prompt (byte a byte) y mismas herramientas, probado con el runtime real. Sin la lista, las reciben todos.
+- Se aplica una sola vez, al entrar el turno (`aplicarPilotoComercial` en `lib/agente/piloto-comercial.ts`, llamada desde `runAgentTurn`); el resto del runtime no sabe que existe el piloto.
+- Falla cerrada: una lista mal escrita deja la configuración inválida (ARIA no responde), nunca abierta a todos. El esquema y los scripts usan la misma expresión de número y una prueba lo exige.
+
+**Scripts** (generados por código; ningún número real en el repositorio):
+
+| Script | Cambio |
+|---|---|
+| `05_habilitar_herramientas_comerciales.sql` | Ahora **exige** los números (`set dulabs.piloto_comercial = '57…';` en la misma sesión): se niega sin números, con un celular sin el 57, con un número inválido, con más de 20 y si las herramientas ya están abiertas a todos. Acepta espacios, `+`, guiones y paréntesis; ordena y quita repetidos. Correrlo otra vez con otros números cambia el piloto |
+| `05b_abrir_herramientas_comerciales_a_todos.sql` (nuevo) | Quita el piloto: desde ese momento, todos los clientes. Se niega si las herramientas no están habilitadas, si no queda texto publicado o si quedó sin publicar un tema crítico |
+| `05_…reversa.sql` | Quita las herramientas **y** el piloto (se niega, como antes, si un tema crítico ya solo vive en el CMS) |
+| `06_retirar_textos_del_prompt.sql` | Se niega mientras haya piloto: retirar un texto del prompt dejaría a los demás clientes sin esa información |
+| `07_estado_migracion_textos_solo_lectura.sql` | Una fila más, «piloto de las herramientas»: sin herramientas · solo N número(s) con sus últimos 4 dígitos · abiertas a TODOS |
+
+**Orden obligatorio.** Fusionar este PR y esperar a que Vercel termine el despliegue **antes** del paso 9. El esquema de la configuración es estricto y el código anterior no conoce `comercial_piloto`: si el `05` se corriera antes, ARIA recibiría una configuración inválida y dejaría de responder hasta correr la reversa del `05`.
+
+**Números.**
+
+| | |
+|---|---|
+| Pruebas nuevas | **28**: scripts con Postgres embebido 40 → 54 (+14), generación de los scripts 33 → 38 (+5), turno completo con el runtime real 51 → 60 (+9) |
+| Regresión completa (`npm run test:flow`, sobre `main` + este PR) | **8.094 pruebas, 8.094 pasan, 0 fallan** (antes 8.066 con 1 falla: la de AMORE «Mi cita», que arregló #180) |
+| Mutación | **28/28 detectados a la primera**: 26 nuevos (M449–M474) y 2 reapuntados (M426 y M428). El script suma 474 patrones y todos aplican exactamente una vez. Cada mutante de un script SQL corre solo la suite de ESE script |
+| `tsc` | 0 errores (heap 4 GB) |
+| ESLint | 0 problemas en 8 archivos |
+| `next build` | OK (heap 4 GB) |
+
+**Lo que cubren las pruebas.** El contacto del piloto recibe las 4 herramientas, el prompt comercial y la guarda (lo inventado no sale). Cualquier otro contacto: ni herramientas, ni sección, ni guarda (la traza queda sin cambios) y, si el modelo pidiera una herramienta comercial, `TOOL_NOT_ALLOWED` sin siquiera leer el CMS. Varios números en el piloto; sin piloto, todos; el piloto no hace nada en un número que no tiene las herramientas; una lista inválida en la base deja la configuración inválida. Cada guarda de los scripts (sin números, celular sin el 57, letras, ceros iniciales, largo, huecos entre comas, 20 y 21 números, repetidos, correr de nuevo con otros números, ya abiertas a todos) y que un intento fallido no deja nada; el negocio de otro no se toca.
+
+**Límites.**
+1. El piloto se compara con el número del contacto tal como lo entrega WhatsApp (`wa_id`). Si WhatsApp entregara un formato distinto para algún país, ese número no coincidiría y simplemente no recibiría las herramientas (falla segura: no abre a nadie).
+2. El canal (detal o mayorista) de un contacto lo fija el backend la primera vez y solo una asesora puede cambiarlo: para probar los dos canales hacen falta dos números en el piloto (separados por coma) o que una asesora cambie el canal de tu número.
+3. Mientras exista el piloto, el `06` está bloqueado a propósito.
+4. Con el piloto activo, los demás clientes quedan sin la guarda comercial nueva (conversan como hoy). Es lo esperado: el piloto existe para no cambiarles nada.

@@ -6,7 +6,8 @@
 --   en_el_cms     no migrado · borrador · publicada · pausada · archivada   (publicada = ARIA lo consulta con las herramientas)
 --   version       versión publicada (si hay)
 --   fuente        prompt (solo en el prompt) · prompt+cms (en ambos: la etapa de verificación) · cms (solo en el CMS publicado) · sin texto
--- La última fila (herramientas) dice cuántas de las 4 herramientas comerciales están habilitadas para ARIA.
+-- Las dos últimas filas dicen cuántas de las 4 herramientas comerciales están habilitadas para ARIA y si siguen en PILOTO (solo ciertos números, con sus últimos 4 dígitos) o ya están
+--   abiertas a TODOS los clientes.
 -- Si el CMS no está instalado, esta consulta falla con «relation does not exist»: es la respuesta.
 --
 -- GENERADO por el código (lib/cms-comercial/migracion-textos.ts): una prueba lo regenera y lo compara con este archivo. No se edita a mano.
@@ -75,4 +76,11 @@ select p.orden, p.legado, null, exists (select 1 from en_prompt e where e.n = lo
 union all
 select 2000, 'herramientas comerciales', null, null,
        (select count(*) from unnest(array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[]) as h where h = any (coalesce((select herramientas from aria), array[]::text[])))::text || ' de 4 habilitadas', null, null
+union all
+select 2001, 'piloto de las herramientas', null, null,
+       case
+         when not coalesce((select herramientas @> array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[] from aria), false) then 'no aplica (sin herramientas)'
+         when (select negocio->'comercial_piloto' from aria) is null then 'abiertas a TODOS los clientes'
+         else 'solo ' || (select jsonb_array_length(negocio->'comercial_piloto') from aria)::text || ' número(s): ' || (select string_agg('…' || right(n, 4), ', ') from aria, jsonb_array_elements_text(aria.negocio->'comercial_piloto') as n)
+       end, null, null
 order by 1;

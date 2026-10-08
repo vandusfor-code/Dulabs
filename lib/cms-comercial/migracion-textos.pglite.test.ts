@@ -2,7 +2,8 @@
  * CMS comercial — la MIGRACIÓN de los textos de ARIA (supabase/provisioning/delacour/04–07) ejecutada de verdad en Postgres embebido, con un Delacour SINTÉTICO (24 temas
  * con textos inventados). Demuestra, paso a paso:
  *   04  borradores (nunca publicados), el mínimo mayorista pasa a variable, no pisa, no toca el prompt ni otros negocios;
- *   05  herramientas comerciales solo con contenido publicado (y sin temas críticos pendientes); válido para ARIA;
+ *   05  herramientas comerciales SOLO para el piloto (los números que se indican), con contenido publicado (y sin temas críticos pendientes); válido para ARIA y para el runtime;
+ *   05b abrirlas a TODOS los clientes (termina el piloto);
  *   06  retirar del prompt SOLO lo indicado y publicado; ARIA lo responde desde el CMS (herramienta real, canal y variables);
  *   las reversas, las guardas fuera de orden y el estado (07).
  * Solo lo ejecuta esta prueba: nada se corre en producción.
@@ -13,7 +14,8 @@ import { businessConfigSchema, parseAgentConfig, type AgentConfigRow } from "@/l
 import { buildSystemInstruction, type TurnFacts } from "@/lib/agente/contexto";
 import { emptyConversationState } from "@/lib/agente/estado";
 import { executeAgentTool, type AgentToolsDeps, type AgentTurnToolContext } from "@/lib/agente/herramientas";
-import { AGENT_TOOL_NAMES, HERRAMIENTAS_COMERCIALES } from "@/lib/agente/nombres-herramientas";
+import { AGENT_TOOL_NAMES, HERRAMIENTAS_COMERCIALES, esHerramientaComercial } from "@/lib/agente/nombres-herramientas";
+import { aplicarPilotoComercial } from "@/lib/agente/piloto-comercial";
 import { checksumDe } from "@/lib/cms-comercial/checksum";
 import { TEXTOS_MIGRABLES, TEMAS_QUE_SE_QUEDAN_EN_EL_PERFIL, CLAVES_CRITICAS } from "@/lib/cms-comercial/migracion-textos";
 import { crearLectorSupabase } from "@/lib/cms-comercial/lector";
@@ -21,6 +23,7 @@ import {
   CONOCIMIENTO_SINTETICO,
   HERRAMIENTAS_ARIA_HOY,
   crearDelacourSintetico,
+  scriptAbrirHerramientasATodos,
   scriptEstadoMigracion,
   scriptHabilitarHerramientas,
   scriptMigrarTextos,
@@ -68,6 +71,19 @@ interface FilaAria {
 }
 const aria = async (b: BaseCms) => (await b.sql<FilaAria>("select id, negocio, herramientas, updated_at from public.dulabs_agente_runtime_config order by phone_number_id"))[0];
 const temasDelPrompt = async (b: BaseCms) => ((await aria(b)).negocio.conocimiento ?? []).map((k) => k.tema);
+/** La configuración de ARIA tal como la carga la aplicación (el esquema real): si el SQL dejara algo inválido, ARIA quedaría fuera de servicio. */
+async function cargarConfig(b: BaseCms) {
+  const fila = (await b.sql<AgentConfigRow>("select id_tenant, phone_number_id, tipo, habilitado, proveedor, modelo, credencial_ref, nivel_razonamiento, herramientas, canal, negocio from public.dulabs_agente_runtime_config order by phone_number_id"))[0];
+  const r = parseAgentConfig(fila, { tenantId: TENANT_A, phoneNumberId: fila.phone_number_id });
+  assert.equal(r.kind, "ok", JSON.stringify(r));
+  if (r.kind !== "ok") throw new Error("la configuración no es válida");
+  return r.config;
+}
+/** La configuración de ARIA de OTRO negocio: ningún script de Delacour debe cambiarla. */
+const sembrarAjena = (b: BaseCms, negocio = "{}") =>
+  b.aplicarSql(`insert into public.dulabs_agente_runtime_config (id_tenant, phone_number_id, tipo, habilitado, proveedor, modelo, credencial_ref, herramientas, canal, negocio)
+    values ('${TENANT_B}', '999', 'catalog_sales', true, 'gemini', 'gemini-3.6-flash', 'env:GEMINI_KEY_PRUEBA', array['search_products'], 'retail', '${negocio}'::jsonb)`);
+const ajena = async (b: BaseCms) => (await b.sql<{ herramientas: string[]; negocio: unknown }>("select herramientas, negocio from public.dulabs_agente_runtime_config where id_tenant = $1", [TENANT_B]))[0];
 
 /** Publica un contenido como lo hace la aplicación: con el checksum del contenido canónico. */
 async function publicar(b: BaseCms, clave: string, nota = "Publicación de prueba") {
@@ -86,14 +102,16 @@ async function editar(b: BaseCms, clave: string, cambios: Record<string, unknown
   const r = await b.sql<{ r: { resultado: string } }>("select public.dulabs_cms_guardar_borrador($1::uuid, $2::uuid, $3::jsonb, $4::int, null::uuid, $5) as r", [TENANT_A, e.id, JSON.stringify({ ...base, ...cambios }), e.rev, "Ana"]);
   assert.equal(r[0].r.resultado, "ok");
 }
-/** Un ajuste de sesión solo para este script (se limpia al terminar: PGlite conserva la sesión entre llamadas). */
-async function conAjuste(b: BaseCms, nombre: string, valor: string, script: string) {
+/** Ajustes de sesión solo para este script (se limpian al terminar: PGlite conserva la sesión entre llamadas). */
+async function conAjustes(b: BaseCms, ajustes: Record<string, string>, script: string) {
+  const nombres = Object.keys(ajustes);
   try {
-    await b.aplicarSql(`set ${nombre} = '${valor}'; ${script}`);
+    await b.aplicarSql(`${nombres.map((n) => `set ${n} = '${ajustes[n]}';`).join(" ")} ${script}`);
   } finally {
-    await b.aplicarSql(`reset ${nombre}`);
+    for (const n of nombres) await b.aplicarSql(`reset ${n}`);
   }
 }
+const conAjuste = (b: BaseCms, nombre: string, valor: string, script: string) => conAjustes(b, { [nombre]: valor }, script);
 const retirar = (b: BaseCms, claves: string) => conAjuste(b, "dulabs.retirar_temas", claves, scriptRetirarDelPrompt());
 const restaurar = (b: BaseCms, claves: string) => conAjuste(b, "dulabs.restaurar_temas", claves, scriptReversaRetirarDelPrompt());
 const estadoPorTema = async (b: BaseCms) => Object.fromEntries((await b.sql<{ tema: string; en_el_prompt: boolean | null; en_el_cms: string; fuente: string | null }>(scriptEstadoMigracion())).map((r) => [r.tema, r]));
@@ -104,11 +122,24 @@ const conteos = async (b: BaseCms) => ({
 });
 const textoOriginal = (tema: string) => CONOCIMIENTO_SINTETICO.find((k) => k.tema === tema)!.info;
 
-/** Todo el recorrido hasta tener las herramientas habilitadas (los textos siguen en el prompt). */
-async function hastaHerramientas(b: BaseCms) {
+/** Números SINTÉTICOS de piloto (wa_id: indicativo + celular). Nunca un número real. */
+const PILOTO = "573009998877";
+const OTRO = "573001112233";
+/** El 05 es SOLO piloto: siempre se corre con los números indicados en la misma sesión, como lo hace la persona en el SQL Editor. */
+const piloto = (b: BaseCms, numeros: string = PILOTO, ajustes: Record<string, string> = {}) => conAjustes(b, { "dulabs.piloto_comercial": numeros, ...ajustes }, scriptHabilitarHerramientas());
+/** El 05b termina el piloto: las herramientas pasan a TODOS los clientes. */
+const abrirATodos = (b: BaseCms, ajustes: Record<string, string> = {}) => conAjustes(b, ajustes, scriptAbrirHerramientasATodos());
+
+/** Todo el recorrido hasta tener las herramientas habilitadas SOLO para el piloto (los textos siguen en el prompt). */
+async function hastaPiloto(b: BaseCms) {
   await b.aplicarSql(scriptMigrarTextos());
   await publicarTodos(b);
-  await b.aplicarSql(scriptHabilitarHerramientas());
+  await piloto(b);
+}
+/** … y abiertas a TODOS los clientes (como queda tras el 05b: desde aquí se puede retirar del prompt con el 06). */
+async function hastaHerramientas(b: BaseCms) {
+  await hastaPiloto(b);
+  await abrirATodos(b);
 }
 
 // ===========================================================================
@@ -282,33 +313,34 @@ describe("04_migrar_textos_a_borradores.reversa.sql", () => {
 });
 
 // ===========================================================================
-// 05 — herramientas comerciales
+// 05 — herramientas comerciales (SOLO para el piloto)
 // ===========================================================================
 
 describe("05_habilitar_herramientas_comerciales.sql", () => {
   it("se NIEGA mientras no haya ningún texto publicado (solo borradores, o nada)", async () => {
     const b = await delacour();
-    await assert.rejects(b.aplicarSql(scriptHabilitarHerramientas()), /todavía no hay ningún texto comercial publicado/);
+    await assert.rejects(piloto(b), /todavía no hay ningún texto comercial publicado/);
     await b.aplicarSql(scriptMigrarTextos());
-    await assert.rejects(b.aplicarSql(scriptHabilitarHerramientas()), /todavía no hay ningún texto comercial publicado/);
+    await assert.rejects(piloto(b), /todavía no hay ningún texto comercial publicado/);
     assert.deepEqual((await aria(b)).herramientas, [...HERRAMIENTAS_ARIA_HOY]);
+    assert.equal((await aria(b)).negocio.comercial_piloto, undefined);
   });
 
   it("se NIEGA si un tema crítico sigue sin publicar (nombra cuáles); pasa al publicarlo, o con la confirmación explícita", async () => {
     const b = await delacour();
     await b.aplicarSql(scriptMigrarTextos());
     await publicarTodos(b, ["envios", "garantias"]);
-    await assert.rejects(b.aplicarSql(scriptHabilitarHerramientas()), /siguen sin publicar: envios · garantias/);
+    await assert.rejects(piloto(b), /siguen sin publicar: envios · garantias/);
     assert.deepEqual((await aria(b)).herramientas, [...HERRAMIENTAS_ARIA_HOY]);
     await publicar(b, "envios");
-    await assert.rejects(b.aplicarSql(scriptHabilitarHerramientas()), /siguen sin publicar: garantias/);
+    await assert.rejects(piloto(b), /siguen sin publicar: garantias/);
     // Un tema NO crítico sin publicar no frena.
     const otro = await delacour();
     await otro.aplicarSql(scriptMigrarTextos());
     await publicarTodos(otro, ["regalos"]);
-    await otro.aplicarSql(scriptHabilitarHerramientas());
+    await piloto(otro);
     // Con la confirmación explícita, aun con un crítico pendiente.
-    await conAjuste(b, "dulabs.permitir_temas_sin_publicar", "si", scriptHabilitarHerramientas());
+    await piloto(b, PILOTO, { "dulabs.permitir_temas_sin_publicar": "si" });
     assert.deepEqual((await aria(b)).herramientas.slice(-4), [...HERRAMIENTAS_COMERCIALES]);
   });
 
@@ -318,19 +350,19 @@ describe("05_habilitar_herramientas_comerciales.sql", () => {
     await publicarTodos(b, ["envios"]);
     const e = await una(b, "envios");
     await b.sql("select public.dulabs_cms_archivar($1::uuid, $2::uuid, null::uuid, 'Ana')", [TENANT_A, e.id]);
-    await b.aplicarSql(scriptHabilitarHerramientas());
+    await piloto(b);
     assert.deepEqual((await aria(b)).herramientas.slice(-4), [...HERRAMIENTAS_COMERCIALES]);
   });
 
-  it("agrega SOLO las cuatro, al final y en su orden, sin quitar ni reordenar las demás; el prompt no cambia; repetirlo no hace nada", async () => {
+  it("agrega SOLO las cuatro, al final y en su orden, sin quitar ni reordenar las demás; guarda el piloto; el resto del prompt no cambia; repetirlo con los mismos números no hace nada", async () => {
     const b = await delacour();
     const antes = await aria(b);
-    await hastaHerramientas(b);
+    await hastaPiloto(b);
     const despues = await aria(b);
     assert.deepEqual(despues.herramientas, [...antes.herramientas, ...HERRAMIENTAS_COMERCIALES]);
-    assert.deepEqual(despues.negocio, antes.negocio);
+    assert.deepEqual(despues.negocio, { ...antes.negocio, comercial_piloto: [PILOTO] });
     const marca = JSON.stringify(await aria(b));
-    await b.aplicarSql(scriptHabilitarHerramientas());
+    await piloto(b);
     assert.equal(JSON.stringify(await aria(b)), marca);
   });
 
@@ -338,19 +370,18 @@ describe("05_habilitar_herramientas_comerciales.sql", () => {
     const b = await delacour({ aria: { herramientas: [...HERRAMIENTAS_ARIA_HOY, "consultar_ofertas"] } });
     await b.aplicarSql(scriptMigrarTextos());
     await publicarTodos(b);
-    await b.aplicarSql(scriptHabilitarHerramientas());
+    await piloto(b);
     const h = (await aria(b)).herramientas;
     assert.equal(h.filter((x) => x === "consultar_ofertas").length, 1);
     for (const n of HERRAMIENTAS_COMERCIALES) assert.ok(h.includes(n), n);
   });
 
-  it("la configuración resultante es VÁLIDA para ARIA (el cargador de la aplicación la acepta) y trae las cuatro herramientas", async () => {
+  it("la configuración resultante es VÁLIDA para ARIA (el cargador de la aplicación la acepta) y trae las cuatro herramientas y el piloto", async () => {
     const b = await delacour();
-    await hastaHerramientas(b);
-    const fila = (await b.sql<AgentConfigRow>("select id_tenant, phone_number_id, tipo, habilitado, proveedor, modelo, credencial_ref, nivel_razonamiento, herramientas, canal, negocio from public.dulabs_agente_runtime_config"))[0];
-    const r = parseAgentConfig(fila, { tenantId: TENANT_A, phoneNumberId: fila.phone_number_id });
-    assert.equal(r.kind, "ok", JSON.stringify(r));
-    if (r.kind === "ok") for (const n of HERRAMIENTAS_COMERCIALES) assert.ok(r.config.tools.includes(n), n);
+    await hastaPiloto(b);
+    const config = await cargarConfig(b);
+    for (const n of HERRAMIENTAS_COMERCIALES) assert.ok(config.tools.includes(n), n);
+    assert.deepEqual(config.business.comercial_piloto, [PILOTO]);
   });
 
   it("se NIEGA si la lista superaría las 30 herramientas permitidas, y no deja nada", async () => {
@@ -358,34 +389,151 @@ describe("05_habilitar_herramientas_comerciales.sql", () => {
     const b = await delacour({ aria: { herramientas: muchas } });
     await b.aplicarSql(scriptMigrarTextos());
     await publicarTodos(b);
-    await assert.rejects(b.aplicarSql(scriptHabilitarHerramientas()), /superaría el máximo permitido \(30\)/);
+    await assert.rejects(piloto(b), /superaría el máximo permitido \(30\)/);
     assert.deepEqual((await aria(b)).herramientas, muchas);
+    assert.equal((await aria(b)).negocio.comercial_piloto, undefined);
   });
 
   it("se NIEGA fuera de orden (sin módulo, sin configuración de ARIA) y no toca otros negocios", async () => {
-    await assert.rejects((await delacour({ modulo: false })).aplicarSql(scriptHabilitarHerramientas()), /el módulo cms_comercial no está habilitado/);
-    await assert.rejects((await delacour({ aria: { filas: 0 } })).aplicarSql(scriptHabilitarHerramientas()), /exactamente UNA configuración de ARIA/);
+    await assert.rejects(piloto(await delacour({ modulo: false })), /el módulo cms_comercial no está habilitado/);
+    await assert.rejects(piloto(await delacour({ aria: { filas: 0 } })), /exactamente UNA configuración de ARIA/);
     const b = await delacour();
     await b.aplicarSql(scriptMigrarTextos());
     await publicarTodos(b);
-    await b.aplicarSql(`insert into public.dulabs_agente_runtime_config (id_tenant, phone_number_id, tipo, habilitado, proveedor, modelo, credencial_ref, herramientas, canal, negocio)
-      values ('${TENANT_B}', '999', 'catalog_sales', true, 'gemini', 'gemini-3.6-flash', 'env:GEMINI_KEY_PRUEBA', array['search_products'], 'retail', '{}'::jsonb)`);
-    await b.aplicarSql(scriptHabilitarHerramientas());
-    const ajena = await b.sql<{ herramientas: string[] }>("select herramientas from public.dulabs_agente_runtime_config where id_tenant = $1", [TENANT_B]);
-    assert.deepEqual(ajena[0].herramientas, ["search_products"]);
+    await sembrarAjena(b);
+    await piloto(b);
+    const otra = await ajena(b);
+    assert.deepEqual(otra.herramientas, ["search_products"]);
+    assert.deepEqual(otra.negocio, {});
+  });
+
+  it("SIN números no habilita nada: este script nunca abre al público por sí solo (ni con el ajuste vacío, en blanco o solo con signos)", async () => {
+    const b = await delacour();
+    await b.aplicarSql(scriptMigrarTextos());
+    await publicarTodos(b);
+    const marca = JSON.stringify(await aria(b));
+    await assert.rejects(b.aplicarSql(scriptHabilitarHerramientas()), /indica el número \(o los números\) de piloto/);
+    for (const vacio of ["", "   ", "+ ( ) -"]) await assert.rejects(piloto(b, vacio), /indica el número \(o los números\) de piloto/, JSON.stringify(vacio));
+    assert.equal(JSON.stringify(await aria(b)), marca, "ningún intento cambió nada");
+  });
+
+  it("valida cada número (celular sin indicativo, letras, ceros, muy cortos o largos, huecos entre comas) y si UNO falla no se guarda NINGUNO", async () => {
+    const b = await delacour();
+    await b.aplicarSql(scriptMigrarTextos());
+    await publicarTodos(b);
+    const marca = JSON.stringify(await aria(b));
+    await assert.rejects(piloto(b, "3009998877"), /«3009998877» parece un celular colombiano SIN el indicativo del país/);
+    await assert.rejects(piloto(b, `${PILOTO},3009998877`), /parece un celular colombiano SIN el indicativo del país/);
+    for (const malo of ["0573009998877", "1234567", "1234567890123456", "57300abc8877", "57300.9998877", `${PILOTO},`, ",", `${PILOTO},,${OTRO}`]) {
+      await assert.rejects(piloto(b, malo), /no es un número válido/, malo);
+    }
+    assert.equal(JSON.stringify(await aria(b)), marca, "ningún intento guardó nada");
+  });
+
+  it("acepta el número como se escribe (espacios, +, guiones, paréntesis), lo ordena, quita los repetidos y lo guarda como lista de texto", async () => {
+    const b = await delacour();
+    await b.aplicarSql(scriptMigrarTextos());
+    await publicarTodos(b);
+    await piloto(b, `+57 300 999-8877 , (57) 300 111 2233,${PILOTO}`);
+    assert.deepEqual((await aria(b)).negocio.comercial_piloto, [OTRO, PILOTO]);
+  });
+
+  it("admite hasta 20 números (los repetidos no cuentan) y la configuración sigue siendo válida; el número 21 se niega", async () => {
+    const veinte = Array.from({ length: 20 }, (_, i) => `57300000${1000 + i}`);
+    const b = await delacour();
+    await b.aplicarSql(scriptMigrarTextos());
+    await publicarTodos(b);
+    await piloto(b, [...veinte, ...veinte].join(","));
+    assert.deepEqual((await aria(b)).negocio.comercial_piloto, veinte);
+    assert.equal((await cargarConfig(b)).business.comercial_piloto?.length, 20);
+    const c = await delacour();
+    await c.aplicarSql(scriptMigrarTextos());
+    await publicarTodos(c);
+    await assert.rejects(piloto(c, [...veinte, "573000001999"].join(",")), /el piloto admite hasta 20 números/);
+    assert.equal((await aria(c)).negocio.comercial_piloto, undefined);
+  });
+
+  it("volver a correrlo con OTROS números cambia el piloto (sin duplicar herramientas); con los mismos números no hace nada", async () => {
+    const b = await delacour();
+    await hastaPiloto(b);
+    const herramientas = (await aria(b)).herramientas;
+    await piloto(b, OTRO);
+    assert.deepEqual((await aria(b)).negocio.comercial_piloto, [OTRO]);
+    assert.deepEqual((await aria(b)).herramientas, herramientas);
+    const marca = JSON.stringify(await aria(b));
+    await piloto(b, OTRO);
+    assert.equal(JSON.stringify(await aria(b)), marca);
+    await piloto(b, `${OTRO}, ${PILOTO}`);
+    assert.deepEqual((await aria(b)).negocio.comercial_piloto, [OTRO, PILOTO]);
+  });
+
+  it("se NIEGA si las herramientas ya están ABIERTAS a todos (volver al piloto empieza por la reversa, que protege los temas retirados del prompt) y no cambia nada", async () => {
+    const b = await delacour();
+    await hastaHerramientas(b);
+    const marca = JSON.stringify(await aria(b));
+    await assert.rejects(piloto(b), /ya están ABIERTAS a todos los clientes/);
+    assert.equal(JSON.stringify(await aria(b)), marca);
+    // El camino de vuelta: la reversa y, de nuevo, el piloto.
+    await b.aplicarSql(scriptReversaHabilitarHerramientas());
+    await piloto(b, OTRO);
+    assert.deepEqual((await aria(b)).negocio.comercial_piloto, [OTRO]);
+    // Con un tema ya retirado del prompt, ni siquiera la reversa lo permite sin confirmar: los demás clientes no pierden ese texto sin que nadie lo decida.
+    const c = await delacour();
+    await hastaHerramientas(c);
+    await retirar(c, "envios");
+    await assert.rejects(piloto(c), /ya están ABIERTAS a todos los clientes/);
+    await assert.rejects(c.aplicarSql(scriptReversaHabilitarHerramientas()), /ya no están en el prompt y solo viven en el CMS: envios/);
+  });
+
+  it("con el piloto, la configuración es VÁLIDA y el piloto decide quién conserva las herramientas: su número, las cuatro y el prompt comercial; cualquier otro, EXACTAMENTE la configuración y el prompt de antes", async () => {
+    const b = await delacour();
+    const antes = await cargarConfig(b);
+    await hastaPiloto(b);
+    const config = await cargarConfig(b);
+    const deps = { config };
+    // El contacto del piloto: la misma configuración, sin tocar.
+    assert.equal(aplicarPilotoComercial(deps, PILOTO), deps);
+    // Cualquier otro: sin las cuatro, con las demás herramientas igual y en el mismo orden.
+    const ajeno = aplicarPilotoComercial(deps, OTRO);
+    assert.notEqual(ajeno, deps);
+    assert.deepEqual(ajeno.config.tools, antes.tools);
+    assert.ok(!ajeno.config.tools.some(esHerramientaComercial));
+    // Y el prompt: el del piloto lleva las reglas comerciales; el de los demás es BYTE A BYTE el de antes del script 05.
+    const facts: TurnFacts = { channel: "retail", channelSource: "number_config", customerName: null, activeOrder: null, handoffActive: false };
+    const prompt = (c: typeof config) => buildSystemInstruction(c, emptyConversationState(), facts);
+    assert.ok(prompt(config).includes("=== INFORMACIÓN COMERCIAL (herramientas del sistema) ==="));
+    assert.ok(!prompt(ajeno.config).includes("=== INFORMACIÓN COMERCIAL"));
+    assert.equal(prompt(ajeno.config), prompt(antes));
   });
 });
 
 describe("05_habilitar_herramientas_comerciales.reversa.sql", () => {
-  it("quita SOLO las cuatro (ARIA vuelve a ser la de antes) y es repetible", async () => {
+  it("quita SOLO las cuatro y el piloto (ARIA vuelve a ser la de antes, para todos) y es repetible; sirve en piloto y con las herramientas ya abiertas a todos", async () => {
+    for (const abierta of [false, true]) {
+      const b = await delacour();
+      const antes = await aria(b);
+      if (abierta) await hastaHerramientas(b);
+      else await hastaPiloto(b);
+      await b.aplicarSql(scriptReversaHabilitarHerramientas());
+      assert.deepEqual((await aria(b)).herramientas, antes.herramientas, `abierta=${abierta}`);
+      assert.deepEqual((await aria(b)).negocio, antes.negocio, `abierta=${abierta}`);
+      const marca = JSON.stringify(await aria(b));
+      await b.aplicarSql(scriptReversaHabilitarHerramientas());
+      assert.equal(JSON.stringify(await aria(b)), marca, "repetirla no cambia nada (ni la fecha de actualización)");
+    }
+  });
+
+  it("si las herramientas ya no estaban pero quedó el piloto, también lo limpia; y no toca otros negocios", async () => {
     const b = await delacour();
     const antes = await aria(b);
-    await hastaHerramientas(b);
+    await sembrarAjena(b, '{"comercial_piloto":["573001112233"]}');
+    const otra = await ajena(b);
+    await hastaPiloto(b);
+    await b.aplicarSql(`update public.dulabs_agente_runtime_config set herramientas = array(select h from unnest(herramientas) as h where h <> all (array[${HERRAMIENTAS_COMERCIALES.map((h) => `'${h}'`).join(", ")}]::text[])) where id_tenant = '${TENANT_A}'`);
+    assert.ok((await aria(b)).negocio.comercial_piloto, "quedó el piloto sin herramientas");
     await b.aplicarSql(scriptReversaHabilitarHerramientas());
-    assert.deepEqual((await aria(b)).herramientas, antes.herramientas);
     assert.deepEqual((await aria(b)).negocio, antes.negocio);
-    await b.aplicarSql(scriptReversaHabilitarHerramientas());
-    assert.deepEqual((await aria(b)).herramientas, antes.herramientas);
+    assert.deepEqual(await ajena(b), otra);
   });
 
   it("se NIEGA si un tema crítico ya se retiró del prompt (solo vive en el CMS); con la confirmación explícita sí", async () => {
@@ -416,6 +564,72 @@ describe("05_habilitar_herramientas_comerciales.reversa.sql", () => {
 });
 
 // ===========================================================================
+// 05b — abrir a todos los clientes
+// ===========================================================================
+
+describe("05b_abrir_herramientas_comerciales_a_todos.sql", () => {
+  it("se NIEGA si las herramientas no están habilitadas (primero el 05) y fuera de orden (sin módulo, sin configuración), y no deja nada", async () => {
+    const b = await delacour();
+    await b.aplicarSql(scriptMigrarTextos());
+    await publicarTodos(b);
+    const marca = JSON.stringify(await aria(b));
+    await assert.rejects(abrirATodos(b), /las herramientas comerciales de ARIA no están habilitadas/);
+    assert.equal(JSON.stringify(await aria(b)), marca);
+    await assert.rejects(abrirATodos(await delacour({ modulo: false })), /el módulo cms_comercial no está habilitado/);
+    await assert.rejects(abrirATodos(await delacour({ aria: { filas: 0 } })), /exactamente UNA configuración de ARIA/);
+  });
+
+  it("quita SOLO el piloto: las herramientas y el resto de la configuración quedan igual, la configuración sigue siendo válida y TODOS los clientes reciben las herramientas", async () => {
+    const b = await delacour();
+    await hastaPiloto(b);
+    const antes = await aria(b);
+    await abrirATodos(b);
+    const despues = await aria(b);
+    const sinPiloto = Object.fromEntries(Object.entries(antes.negocio).filter(([k]) => k !== "comercial_piloto"));
+    assert.deepEqual(despues.negocio, sinPiloto);
+    assert.deepEqual(despues.herramientas, antes.herramientas);
+    const config = await cargarConfig(b);
+    assert.equal(config.business.comercial_piloto, undefined);
+    const deps = { config };
+    for (const waId of [PILOTO, OTRO, "5491155556666"]) assert.equal(aplicarPilotoComercial(deps, waId), deps, waId);
+  });
+
+  it("es repetible: ya abiertas a todos no cambia nada (ni la fecha de actualización)", async () => {
+    const b = await delacour();
+    await hastaHerramientas(b);
+    const marca = JSON.stringify(await aria(b));
+    await abrirATodos(b);
+    assert.equal(JSON.stringify(await aria(b)), marca);
+  });
+
+  it("se NIEGA si un tema crítico quedó sin publicar (nombra cuál; con la confirmación explícita pasa) y si ya no hay ningún texto publicado (ni con la confirmación)", async () => {
+    const b = await delacour();
+    await hastaPiloto(b);
+    const e = await una(b, "envios");
+    await b.sql("select public.dulabs_cms_pausar($1::uuid, $2::uuid, null::uuid, 'Ana')", [TENANT_A, e.id]);
+    const marca = JSON.stringify(await aria(b));
+    await assert.rejects(abrirATodos(b), /siguen sin publicar: envios/);
+    assert.equal(JSON.stringify(await aria(b)), marca, "siguen en piloto");
+    await abrirATodos(b, { "dulabs.permitir_temas_sin_publicar": "si" });
+    assert.equal((await aria(b)).negocio.comercial_piloto, undefined);
+    // Sin ningún texto publicado no se abre a nadie.
+    const c = await delacour();
+    await hastaPiloto(c);
+    for (const x of await contenidos(c)) await c.sql("select public.dulabs_cms_pausar($1::uuid, $2::uuid, null::uuid, 'Ana')", [TENANT_A, x.id]);
+    await assert.rejects(abrirATodos(c, { "dulabs.permitir_temas_sin_publicar": "si" }), /no hay ningún texto comercial publicado/);
+    assert.ok(Array.isArray((await aria(c)).negocio.comercial_piloto), "siguen en piloto");
+  });
+
+  it("solo toca el negocio de la tienda: la configuración de otro negocio (aunque tenga su propio piloto) queda igual", async () => {
+    const b = await delacour();
+    await sembrarAjena(b, '{"comercial_piloto":["573001112233"]}');
+    const antes = await ajena(b);
+    await hastaHerramientas(b);
+    assert.deepEqual(await ajena(b), antes);
+  });
+});
+
+// ===========================================================================
 // 06 — retirar del prompt
 // ===========================================================================
 
@@ -425,7 +639,9 @@ describe("06_retirar_textos_del_prompt.sql", () => {
     await b.aplicarSql(scriptMigrarTextos());
     await publicarTodos(b);
     await assert.rejects(retirar(b, "envios"), /las herramientas comerciales de ARIA no están habilitadas/);
-    await b.aplicarSql(scriptHabilitarHerramientas());
+    await piloto(b);
+    await assert.rejects(retirar(b, "envios"), /están en PILOTO/);
+    await abrirATodos(b);
     await assert.rejects(b.aplicarSql(scriptRetirarDelPrompt()), /indica los temas a retirar/);
     await assert.rejects(retirar(b, "   "), /indica los temas a retirar/);
     await assert.rejects(retirar(b, "envios,inventado"), /«inventado» no es un tema de la tabla/);
@@ -443,8 +659,10 @@ describe("06_retirar_textos_del_prompt.sql", () => {
     const b = await delacour();
     await b.aplicarSql(scriptMigrarTextos());
     await publicarTodos(b, ["horario"]);
-    // «Horario» es crítico y quedó sin publicar: se habilitan las herramientas con la confirmación explícita para poder probar el 06.
-    await conAjuste(b, "dulabs.permitir_temas_sin_publicar", "si", scriptHabilitarHerramientas());
+    // «Horario» es crítico y quedó sin publicar: se habilitan (y se abren a todos) las herramientas con la confirmación explícita para poder probar el 06.
+    const confirmar = { "dulabs.permitir_temas_sin_publicar": "si" };
+    await piloto(b, PILOTO, confirmar);
+    await abrirATodos(b, confirmar);
     await assert.rejects(retirar(b, "envios,horario"), /el tema «horario» no está publicado/);
     assert.equal((await temasDelPrompt(b)).length, 24, "envios tampoco se retiró");
     assert.ok((await temasDelPrompt(b)).includes("Horario"));
@@ -455,6 +673,17 @@ describe("06_retirar_textos_del_prompt.sql", () => {
     await hastaHerramientas(b);
     assert.equal((await contenidos(b)).some((e) => e.clave === "servicios"), false);
     await assert.rejects(retirar(b, "servicios"), /el tema «servicios» no está publicado en el CMS/);
+  });
+
+  it("se NIEGA mientras las herramientas estén en PILOTO (los demás clientes se quedarían sin ese texto) y no cambia nada; al abrirlas a todos, sí retira", async () => {
+    const b = await delacour();
+    await hastaPiloto(b);
+    const marca = JSON.stringify(await aria(b));
+    await assert.rejects(retirar(b, "envios"), /están en PILOTO.*05b_abrir_herramientas_comerciales_a_todos\.sql/);
+    assert.equal(JSON.stringify(await aria(b)), marca);
+    await abrirATodos(b);
+    await retirar(b, "envios");
+    assert.ok(!(await temasDelPrompt(b)).includes("Envíos"));
   });
 
   it("retira SOLO los temas indicados y publicados: el resto del prompt queda igual y en el mismo orden; las demás claves del negocio no cambian y sigue siendo válido para ARIA", async () => {
@@ -639,12 +868,13 @@ describe("06_retirar_textos_del_prompt.reversa.sql", () => {
 // ===========================================================================
 
 describe("07_estado_migracion_textos_solo_lectura.sql", () => {
-  it("muestra, tema por tema, dónde vive cada texto en cada etapa: prompt → borrador → publicado en ambos → solo en el CMS", async () => {
+  it("muestra, tema por tema, dónde vive cada texto en cada etapa: prompt → borrador → publicado en ambos (piloto, luego abierto a todos) → solo en el CMS", async () => {
     const b = await delacour();
     let s = await estadoPorTema(b);
-    assert.equal(Object.keys(s).length, 22 + 2 + 1);
+    assert.equal(Object.keys(s).length, 22 + 2 + 2);
     assert.deepEqual([s["Envíos"].en_el_prompt, s["Envíos"].en_el_cms, s["Envíos"].fuente], [true, "no migrado", "prompt"]);
     assert.equal(s["herramientas comerciales"].en_el_cms, "0 de 4 habilitadas");
+    assert.equal(s["piloto de las herramientas"].en_el_cms, "no aplica (sin herramientas)");
     assert.deepEqual([s["Despedida"].en_el_cms, s["Datos del pedido"].en_el_cms], ["se queda en el perfil", "se queda en el perfil"]);
 
     await b.aplicarSql(scriptMigrarTextos());
@@ -652,10 +882,15 @@ describe("07_estado_migracion_textos_solo_lectura.sql", () => {
     assert.deepEqual([s["Envíos"].en_el_cms, s["Envíos"].fuente], ["borrador", "prompt"]);
 
     await publicarTodos(b);
-    await b.aplicarSql(scriptHabilitarHerramientas());
+    await piloto(b, `${OTRO},${PILOTO}`);
     s = await estadoPorTema(b);
     assert.deepEqual([s["Envíos"].en_el_cms, s["Envíos"].fuente], ["publicada", "prompt+cms"]);
     assert.equal(s["herramientas comerciales"].en_el_cms, "4 de 4 habilitadas");
+    assert.equal(s["piloto de las herramientas"].en_el_cms, "solo 2 número(s): …2233, …8877");
+
+    await abrirATodos(b);
+    s = await estadoPorTema(b);
+    assert.equal(s["piloto de las herramientas"].en_el_cms, "abiertas a TODOS los clientes");
 
     await retirar(b, "envios");
     s = await estadoPorTema(b);
@@ -665,7 +900,7 @@ describe("07_estado_migracion_textos_solo_lectura.sql", () => {
 
   it("no cambia NADA (solo lectura)", async () => {
     const b = await delacour();
-    await hastaHerramientas(b);
+    await hastaPiloto(b);
     const antes = JSON.stringify([await contenidos(b), await conteos(b), await aria(b)]);
     await b.sql(scriptEstadoMigracion());
     assert.equal(JSON.stringify([await contenidos(b), await conteos(b), await aria(b)]), antes);
