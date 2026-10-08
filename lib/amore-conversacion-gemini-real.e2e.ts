@@ -17,7 +17,11 @@
  * Qué se mide: cada conversación tiene verificaciones DURAS (lo que no puede fallar: el enlace en vez de reservar por chat, datos del catálogo sin inventar,
  * nada cancelado sin confirmar, ni fuga de instrucciones o de datos ajenos) y OBSERVACIONES (estilo: longitud, emojis, preguntas repetidas) que no fallan la
  * prueba pero quedan en el informe para revisión humana.
+ *
+ * MODO: evalúa el modo «completo» (la REVERSA del asistente: conversación con IA, AMORE_BOT_MODO=completo). El modo por defecto, «saludo único», no llama a la IA en la conversación.
  */
+process.env.AMORE_BOT_MODO = "completo";
+
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";

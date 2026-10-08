@@ -42,6 +42,11 @@ export const MENSAJE_TRANSFERENCIA_MENU_IGNORADO_CLIENTE =
   "💗 Veo que esto es un poco diferente a lo que puedo resolver por aquí. Te voy a comunicar con alguien de nuestro equipo para que te ayude mejor. Un momento 💗";
 
 export const MENSAJE_GEMINI_BIENVENIDA = "Claro 💗 Cuéntame, ¿qué te gustaría saber?";
+/**
+ * Opción 2 del menú («Quiero hacer una consulta») en el modo «saludo único» (lib/amore-bot-modo.ts): el asistente ya no conversa, así que avisa UNA sola vez que una persona
+ * del equipo responderá y se calla. Sin nombres ni promesas de hora. (Texto a aprobar por AMORE.)
+ */
+export const MENSAJE_CONSULTA_LA_ATIENDE_UNA_PERSONA = "Claro 💗 Escríbenos tu consulta por aquí y una persona de nuestro equipo te responderá en cuanto pueda.";
 export const MENSAJE_TRANSICION_AGENDA = "Perfecto 💗 Vamos a agendar tu cita.";
 export const MENSAJE_ERROR_GEMINI = "Disculpa, tuve un problema entendiendo tu mensaje 💗 ¿Puedes reformularlo?";
 /** Segundo fallo TÉCNICO seguido de Gemini: nunca un tercer "¿puedes reformularlo?" -- se pasa a una persona, diciendo la verdad. */

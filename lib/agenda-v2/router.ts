@@ -124,6 +124,8 @@ import { renderizarResumenCambio } from "@/lib/agenda-v2/confirmacion";
 // AMORE: las citas NUEVAS se reservan SOLO por el enlace; el chat conserva consultar / cancelar / reprogramar y ofrece el enlace personal «Mi cita».
 import { MENSAJE_RESERVA_POR_ENLACE, MENSAJE_SIN_CITAS_CON_ENLACE } from "@/lib/mi-cita/mensajes";
 import { sufijoEnlaceParaChat } from "@/lib/mi-cita/chat";
+// AMORE, modo «saludo único»: una sesión abandonada ya no contesta mensajes sueltos (se cierra en silencio). Ver lib/amore-bot-modo.ts.
+import { modoBotAmore, type ModoBotAmore } from "@/lib/amore-bot-modo";
 import { guardarNylasEventIdDeCita, obtenerNylasEventIdDeCita, borrarNylasEventIdDeCita } from "@/lib/agenda-v2/citas-nylas";
 // NUEVA FASE (autorizado, extracción de datos para RESERVAR_CITA) -- la IA
 // (lib/amore-entrada-gemini.ts) solo extrae texto crudo de lo que dijo la
@@ -202,6 +204,10 @@ export interface AgendaV2RouterDeps {
    * guiada (que sigue en el código porque la reprogramación reutiliza sus pasos). NUNCA se activa en producción.
    */
   permitirReservaPorChat?: boolean;
+  /** AMORE: interruptor «saludo único» / «completo» (lib/amore-bot-modo.ts). Inyectable para tests; en producción sale de AMORE_BOT_MODO. */
+  modoBot?: ModoBotAmore;
+  /** Reloj en milisegundos (inyectable para tests); default Date.now. Solo lo usa el cierre de sesiones abandonadas de AMORE. */
+  ahoraMs?: () => number;
   /** AMORE «Mi cita»: línea con el enlace personal de la cita que el bot está gestionando (default real: lib/mi-cita/chat.ts). Solo para AMORE. */
   sufijoEnlaceCita?: (supabase: SupabaseClient, idTenant: string, cita: { id: number; fin: string }) => Promise<string>;
   /** Respuesta conversacional (IA con los datos REALES del negocio) a una pregunta hecha a mitad de la reserva. `null` = no se pudo responder. Default real: solo AMORE (ver responderConsultaAmoreEnReserva). */
@@ -675,6 +681,17 @@ function esSesionDeReservaNueva(sesion: { citaObjetivoId?: number | null; step: 
   return !sesion.citaObjetivoId && !sesion.step.startsWith("SG_");
 }
 
+/**
+ * AMORE, modo «saludo único»: una gestión de cita (cancelar / reprogramar / consultar) es un trámite de un par de mensajes; si lleva más de esto sin movimiento se dio por
+ * abandonada y deja de contestar mensajes sueltos («gracias», «ok») que ya no son parte del trámite.
+ */
+export const VENTANA_SESION_GESTION_ABANDONADA_MS = 2 * 60 * 60 * 1000;
+
+function esSesionAbandonada(sesion: { updatedAt: string }, ahoraMs: number): boolean {
+  const ultimo = Date.parse(sesion.updatedAt);
+  return Number.isFinite(ultimo) && ahoraMs - ultimo > VENTANA_SESION_GESTION_ABANDONADA_MS;
+}
+
 /** AMORE «Mi cita»: la línea con el enlace personal de la cita (vacía para cualquier otro negocio o si no se pudo emitir). Nunca lanza. */
 async function sufijoEnlaceCitaAmore(supabase: SupabaseClient, idTenant: string, cita: { id: number; fin: string }, deps: AgendaV2RouterDeps): Promise<string> {
   if (idTenant !== AMORE_TENANT_ID) return "";
@@ -1101,8 +1118,22 @@ export async function procesarMensajeConAgendaV2(
       return { manejado: true };
     }
 
-    // AMORE: una sesión de reserva NUEVA que quedó abierta (p. ej. la clienta iba a mitad de la reserva cuando se dejó de reservar por el chat) ya no se continúa:
-    // se cierra y se le da el enlace. Las gestiones (cancelar / reprogramar / consultar) y las reprogramaciones en curso NO se tocan.
+    // AMORE, modo «saludo único» (lib/amore-bot-modo.ts): una sesión que quedó abierta y sin movimiento (la reserva por chat de antes del enlace, o una gestión de cita
+    // abandonada) ya no contesta mensajes sueltos ni manda el enlace «porque sí»: se cierra EN SILENCIO y el mensaje sigue su camino como si no hubiera sesión (enlace si pide
+    // una cita; si no, silencio). Una gestión reciente (menos de VENTANA_SESION_GESTION_ABANDONADA_MS) NO se toca: la clienta está en pleno trámite.
+    if (
+      sesion &&
+      params.idTenant === AMORE_TENANT_ID &&
+      !deps.permitirReservaPorChat &&
+      (deps.modoBot ?? modoBotAmore()) === "saludo_unico" &&
+      (esSesionDeReservaNueva(sesion) || esSesionAbandonada(sesion, (deps.ahoraMs ?? Date.now)()))
+    ) {
+      await cerrarSesion(params.supabase, sesion.id);
+      sesion = null;
+    }
+
+    // (Modo «completo», la reversa.) AMORE: una sesión de reserva NUEVA que quedó abierta (p. ej. la clienta iba a mitad de la reserva cuando se dejó de reservar por el chat) ya no
+    // se continúa: se cierra y se le da el enlace. Las gestiones (cancelar / reprogramar / consultar) y las reprogramaciones en curso NO se tocan.
     if (sesion && params.idTenant === AMORE_TENANT_ID && !deps.permitirReservaPorChat && esSesionDeReservaNueva(sesion)) {
       await cerrarSesion(params.supabase, sesion.id);
       await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_RESERVA_POR_ENLACE, origen: "automatico" });

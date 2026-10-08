@@ -198,6 +198,9 @@ lib/flow/executors/internal-action-executor-agendamiento-nylas.test.ts
 lib/cumpleanos/parse-cumpleanos-natural.test.ts
 lib/amore-entrada-gemini.test.ts
 lib/amore-entrada-router.test.ts
+lib/amore-saludo-unico.test.ts
+lib/amore-pide-cita.test.ts
+lib/amore-menu-bienvenida.test.ts
 lib/amore-recordatorio-citas.test.ts
 app/api/cron/recordatorios-citas/route.test.ts
 lib/comunicaciones/config.test.ts
