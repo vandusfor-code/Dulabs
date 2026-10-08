@@ -27,6 +27,8 @@ export interface ContextoTienda {
   variables: Array<{ id: VariableId; etiqueta: string; valor: string | null }>;
   minimoMayorista: number | null;
   categorias: Array<{ id: string; nombre: string }>;
+  /** Ruta pública de la tienda (`/catalogo/{tienda}`) si está publicada; null si no se pudo resolver. */
+  rutaTienda?: string | null;
   zona: string;
   ahora: string;
 }

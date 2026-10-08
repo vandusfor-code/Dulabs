@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { availabilityOf, isReference, type CatalogProduct } from "@/lib/catalogo/domain";
+import { retailPath } from "@/lib/catalogo/publicacion";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import type { ProductoVista, PuertoCatalogo, PuertoVariables, VariablesNegocio } from "@/lib/cms-comercial/puertos";
 import { formatearPesos, type ValoresVariables } from "@/lib/cms-comercial/variables";
@@ -43,6 +44,11 @@ export function crearPuertoCatalogoSupabase(supabase: SupabaseClient): PuertoCat
 
     async listarCategorias(tenantId) {
       return (await repo.listCategories(tenantId)).map((c) => ({ id: c.id, nombre: c.name }));
+    },
+
+    async rutaPublica(tenantId) {
+      const publicacion = await repo.getPublication(tenantId);
+      return publicacion?.published ? retailPath(publicacion.slug) : null;
     },
   };
 }

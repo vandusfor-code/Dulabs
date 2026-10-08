@@ -585,3 +585,16 @@ app/api/dashboard/tienda/rutas-editor.test.ts
 components/dashboard/tienda/borrador-formato.test.ts
 components/dashboard/tienda/tienda.dom.test.tsx
 components/dashboard/shell/nav-tienda.test.ts
+# Bloque 29 · PR 3 (la tienda lee del CMS): del contenido publicado a la vitrina (imágenes listas, destinos que existen, portada nunca a medias, secciones, campaña vigente), la carga con
+# respaldo (la tienda nunca se cae por el CMS), la ruta pública de imágenes, el inicio con lo que elige el CMS (destacados, categorías, campaña), el dibujo de las secciones, el HTML de hoy
+# guardado (no puede cambiar sin contenido del CMS), la siembra de la vitrina actual en Postgres embebido y su comparación byte a byte con la tienda de hoy.
+lib/cms-comercial/vitrina.test.ts
+lib/cms-comercial/vitrina-publica.test.ts
+lib/cms-comercial/imagen-publica.test.ts
+lib/cms-comercial/imagen-publica.pglite.test.ts
+lib/cms-comercial/siembra-vitrina.test.ts
+lib/cms-comercial/siembra-vitrina.pglite.test.ts
+lib/catalogo/inicio-cms.test.ts
+components/catalogo-publico/tienda/inicio-dorado.test.tsx
+components/catalogo-publico/tienda/inicio-cms.test.tsx
+components/catalogo-publico/tienda/inicio-siembra.pglite.test.tsx

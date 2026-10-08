@@ -469,6 +469,9 @@ export const FEATURED_LIMIT = 8;
 export const SELECTION_MAX = 60;
 /** Productos recientes con foto que se revisan para elegir la portada de cada categoría. */
 const COVER_POOL = 200;
+/** Máximo de destacados elegidos en el CMS (el esquema del CMS permite 24) y de productos de una campaña (12). */
+const FEATURED_CMS_LIMIT = 24;
+const CAMPANA_LIMIT = 12;
 
 /**
  * Política con la que se eligen los destacados. HOY no existe un campo
@@ -477,8 +480,11 @@ const COVER_POOL = 200;
  * ("recent"). Cuando exista `destacado = true/false` (marcado por un
  * administrador) solo cambia `featuredProducts`: la vista y el contrato
  * (`PublicHome`) no se tocan.
+ *
+ * "cms": los eligió la administradora en el CMS comercial (solo los ACTIVOS y en el orden elegido).
+ * Si ninguno de los elegidos sirve (retirados o desactivados), se vuelve a la política automática.
  */
-export type FeaturedPolicy = "recent-with-photo" | "recent";
+export type FeaturedPolicy = "recent-with-photo" | "recent" | "cms";
 
 /** Marco de la tienda: identidad pública + categorías + WhatsApp de pedidos (todo desde la BD). */
 export interface PublicStorefront {
@@ -493,8 +499,23 @@ export interface PublicStorefront {
 export interface PublicHome {
   featured: PublicCatalogProduct[];
   featuredPolicy: FeaturedPolicy;
-  /** Todas las categorías reales, con la miniatura de uno de sus productos cuando existe. */
+  /** Las categorías reales (todas, o las elegidas en el CMS y en su orden), con la miniatura de uno de sus productos cuando existe. */
   categories: Array<CatalogCategory & { coverUrl: string | null }>;
+  /** Productos ACTIVOS de la campaña vigente, en el orden elegido. Solo existe si se pidió una campaña (CMS). */
+  campana?: PublicCatalogProduct[];
+}
+
+/**
+ * Lo que el CMS comercial puede ELEGIR del inicio: solo referencias e ids. El servicio los resuelve contra el catálogo real
+ * (activos, existentes, de este negocio); nada de lo que llega aquí se toma como verdad.
+ */
+export interface OpcionesInicio {
+  /** Referencias de los destacados, en el orden elegido. Vacío o sin ninguno válido => la política automática. */
+  destacadas?: readonly string[];
+  /** Ids de las categorías mostradas, en el orden elegido. Vacío o sin ninguna existente => todas. */
+  categorias?: readonly string[];
+  /** Referencias de los productos de la campaña vigente. */
+  campana?: readonly string[];
 }
 
 /** Selección del carrito resuelta por el backend: la verdad sobre cada referencia. */
@@ -665,8 +686,21 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     return { context, items, unknown: references.filter((r) => !resueltas.has(r)), quote, products: activos };
   }
 
-  /** Destacados según la política vigente (ver FeaturedPolicy). */
-  async function featuredProducts(tenantId: string): Promise<{ items: CatalogProduct[]; policy: FeaturedPolicy }> {
+  /** Productos ACTIVOS de una lista de referencias, en el orden pedido (los inexistentes, ajenos al negocio o desactivados se omiten). */
+  async function activeInOrder(tenantId: string, raw: readonly string[], limit: number): Promise<CatalogProduct[]> {
+    const references = normalizeReferences(raw).slice(0, limit);
+    if (references.length === 0) return [];
+    const found = await repo.getProductsByReferences(tenantId, references);
+    const byReference = new Map(found.filter((p) => p.status === "ACTIVE").map((p) => [p.reference, p]));
+    return references.flatMap((r) => byReference.get(r) ?? []);
+  }
+
+  /** Destacados según la política vigente (ver FeaturedPolicy): primero los elegidos en el CMS; si ninguno sirve, los más recientes. */
+  async function featuredProducts(tenantId: string, chosen?: readonly string[]): Promise<{ items: CatalogProduct[]; policy: FeaturedPolicy }> {
+    if (chosen && chosen.length > 0) {
+      const items = await activeInOrder(tenantId, chosen, FEATURED_CMS_LIMIT);
+      if (items.length > 0) return { items, policy: "cms" };
+    }
     const conFoto = await repo.listProducts(tenantId, { status: "ACTIVE", withImage: true, offset: 0, limit: FEATURED_LIMIT });
     if (conFoto.items.length > 0) return { items: conFoto.items, policy: "recent-with-photo" };
     const recientes = await repo.listProducts(tenantId, { status: "ACTIVE", offset: 0, limit: FEATURED_LIMIT });
@@ -780,29 +814,52 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       };
     },
 
-    /** Inicio de la tienda (detal): destacados + categorías con portada. Consultas acotadas, nunca el catálogo completo. */
-    async getHome(slug: string): Promise<PublicHome | null> {
+    /**
+     * Negocio de una tienda publicada y visible (null = 404). SOLO para componer en el servidor (por ejemplo, leer el CMS de esa tienda):
+     * el id del negocio jamás sale hacia el navegador.
+     */
+    async tenantOf(slug: string): Promise<string | null> {
+      return (await openPublication(slug))?.tenantId ?? null;
+    },
+
+    /**
+     * Inicio de la tienda (detal): destacados + categorías con portada (+ productos de la campaña vigente). Consultas acotadas, nunca el catálogo completo.
+     * `opciones` (CMS comercial): destacados, categorías y campaña elegidos; se resuelven contra el catálogo real y, si no sirven, todo sigue como siempre.
+     */
+    async getHome(slug: string, opciones: OpcionesInicio = {}): Promise<PublicHome | null> {
       const pub = await openPublication(slug);
       if (!pub) return null;
-      const [featured, pool, categories] = await Promise.all([
-        featuredProducts(pub.tenantId),
+      const wantsCampana = (opciones.campana?.length ?? 0) > 0;
+      const [featured, pool, categories, campaignItems] = await Promise.all([
+        featuredProducts(pub.tenantId, opciones.destacadas),
         repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, offset: 0, limit: COVER_POOL }),
         repo.listCategories(pub.tenantId),
+        wantsCampana ? activeInOrder(pub.tenantId, opciones.campana ?? [], CAMPANA_LIMIT) : Promise.resolve<CatalogProduct[] | null>(null),
       ]);
       const coverProduct = new Map<string, CatalogProduct>();
       for (const p of pool.items) if (p.categoryId && !coverProduct.has(p.categoryId)) coverProduct.set(p.categoryId, p);
 
-      const covers = [...coverProduct.values()].filter((p) => !featured.items.some((f) => f.id === p.id));
-      const projected = await project(pub, [...featured.items, ...covers], "retail");
+      // Una sola proyección (una consulta de media) para destacados, campaña y portadas de categoría, sin repetir productos.
+      const covers = [...coverProduct.values()];
+      const unique = new Map<string, CatalogProduct>();
+      for (const p of [...featured.items, ...(campaignItems ?? []), ...covers]) if (!unique.has(p.id)) unique.set(p.id, p);
+      const projected = await project(pub, [...unique.values()], "retail");
       const byReference = new Map(projected.map((p) => [p.reference, p]));
+      const pick = (items: CatalogProduct[]) => items.flatMap((p) => byReference.get(p.reference) ?? []);
+
+      // Categorías: las elegidas (las que existan, en su orden); si ninguna existe, todas.
+      const byId = new Map(categories.map((c) => [c.id, c]));
+      const chosen = [...new Set(opciones.categorias ?? [])].flatMap((id) => byId.get(id) ?? []);
+      const shown = chosen.length > 0 ? chosen : categories;
 
       return {
-        featured: projected.slice(0, featured.items.length),
+        featured: pick(featured.items),
         featuredPolicy: featured.policy,
-        categories: categories.map((c) => {
+        categories: shown.map((c) => {
           const cover = coverProduct.get(c.id);
           return { ...c, coverUrl: (cover && byReference.get(cover.reference)?.thumbUrl) ?? null };
         }),
+        ...(campaignItems ? { campana: pick(campaignItems) } : {}),
       };
     },
 

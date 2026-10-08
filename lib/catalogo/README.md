@@ -89,12 +89,23 @@ resolución es por referencia exacta, nunca por nombre ni aproximación.
   webhook, el agente o la asesora; `tenantId` lo aporta el backend autenticado.
   Devuelve ambos precios, inventario, disponibilidad, imagen y estado. Sin
   endpoint público.
-- **Destacados** — política explícita `FeaturedPolicy` en el servicio (hoy
-  "activos recientes con foto"). Cuando exista `destacado = true/false` solo
-  cambia `featuredProducts`; la vista y el contrato `PublicHome` no.
+- **Destacados** — política explícita `FeaturedPolicy` en el servicio: los que
+  elige la administradora en el CMS comercial (`"cms"`, solo activos y en su
+  orden; si ninguno sirve, vuelve a la automática) y, sin ellos, "activos
+  recientes con foto". La vista y el contrato `PublicHome` no cambian.
 - **Vitrina** — `vitrina.ts`: contrato `CatalogStorefrontConfig` (misma forma que
-  tendrá `catalog_config` en la BD). Fuente temporal: registro en código por
-  slug. Siguiente paso: leerlo de `dulabs_catalogo_publicacion`.
+  tendrá `catalog_config` en la BD). Fuente base: registro en código por slug.
+  **CMS comercial (Bloque 29, PR 3):** cuando el negocio tiene una página
+  principal PUBLICADA en el CMS, `lib/cms-comercial/vitrina.ts` rellena ese mismo
+  contrato (portada, banner, secciones y su orden, destacados, categorías y
+  campaña vigente) y el inicio sale de ahí; sin nada publicado, con el módulo
+  apagado o ante cualquier error, la tienda usa el registro de siempre (HTML
+  idéntico, fijado en `components/catalogo-publico/tienda/__dorados__/`).
+  `getHome(slug, opciones)` resuelve lo que el CMS elige (referencias e ids)
+  contra el catálogo real: activos y del negocio. `tenantOf(slug)` entrega el
+  negocio de una tienda publicada SOLO para componer en el servidor. Las
+  imágenes del CMS salen por `/catalogo/{slug}/vitrina/{id}.webp`. Ver
+  `lib/cms-comercial/README.md`.
 
 ## Stock, pedido estructurado y WhatsApp (Fase 3)
 

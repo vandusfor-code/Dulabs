@@ -11,7 +11,10 @@ antes de publicar, esquemas, ciclo de publicación (permisos, conflictos, restau
 inmutabilidad, auditoría), autorización y rutas HTTP.
 PR 2 (administración de tienda en el Dashboard): verificación y re-codificación de imágenes en el servidor, el servicio de imágenes (permisos, rutas por negocio, límites),
 las rutas de productos y contexto, el cliente del navegador, los ayudantes puros del editor (borrador, resumen de cambios, vista previa) y las protecciones de la pantalla
-(guardar antes de revisar, publicar exactamente la revisión validada, cambios sin guardar, diálogos accesibles)."""
+(guardar antes de revisar, publicar exactamente la revisión validada, cambios sin guardar, diálogos accesibles).
+PR 3 (la tienda lee del CMS): el paso de lo publicado a la vitrina (imágenes listas, destinos que existen y están activos, portada nunca a medias, secciones, campaña vigente),
+la carga con respaldo (la tienda nunca se cae por el CMS), la ruta pública de imágenes (solo lo listo, publicado y del propio negocio), el inicio con lo que elige el CMS,
+el dibujo de las secciones, la siembra de la vitrina actual (SQL real en Postgres embebido) y los avisos y el enlace del editor."""
 import atexit
 import os
 import subprocess
@@ -47,6 +50,21 @@ T_CLIENTE = ["lib/cms-comercial-client.test.ts"]
 T_BORR = [UI + "borrador-formato.test.ts"]
 T_PREVIA = [C + "previa.test.ts"]
 T_DOM = [UI + "tienda.dom.test.tsx"]
+
+# PR 3
+VIT, VITPUB, IMGPUB, SIEMBRA = C + "vitrina.ts", C + "vitrina-publica.ts", C + "imagen-publica.ts", C + "siembra-vitrina.ts"
+SERVICE = "lib/catalogo/service.ts"
+INICIO = "components/catalogo-publico/tienda/TiendaInicio.tsx"
+TIENDA_APP = UI + "TiendaApp.tsx"
+SQL_SIEMBRA = "supabase/provisioning/delacour/03_sembrar_vitrina_actual.sql"
+SQL_REVERSA = "supabase/provisioning/delacour/03_sembrar_vitrina_actual.reversa.sql"
+T_VIT = [C + "vitrina.test.ts"]
+T_VITPUB = [C + "vitrina-publica.test.ts"]
+T_IMGPUB = [C + "imagen-publica.test.ts"]
+T_HOME = ["lib/catalogo/inicio-cms.test.ts"]
+T_INICIO = ["components/catalogo-publico/tienda/inicio-cms.test.tsx", "components/catalogo-publico/tienda/inicio-dorado.test.tsx"]
+T_SIEMBRA = [C + "siembra-vitrina.pglite.test.ts"]
+T_SIEMBRA_GEN = [C + "siembra-vitrina.test.ts"]
 
 # (id, descripción, archivo, buscar, reemplazar, pruebas)
 M = [
@@ -227,6 +245,87 @@ M = [
     ("M157", "un contenido nuevo se crea sin su título", LISTA, '{ ...borradorInicial(tipo), [tipo === "contenido" ? "titulo" : "nombre"]: nombre }', "{ ...borradorInicial(tipo), nombre }", T_DOM),
     ("M158", "restaurar pide siempre la versión 1 en vez de la elegida", PANELES, "client.restaurar(id, aRestaurar.version, nota.trim() || null)", "client.restaurar(id, 1, nota.trim() || null)", T_DOM),
     ("M159", "las versiones se listan de la más vieja a la más nueva", PANELES, "setVersiones([...r.data.versiones].sort((a, b) => b.version - a.version));", "setVersiones([...r.data.versiones].sort((a, b) => a.version - b.version));", T_DOM),
+    # --- PR 3 · de lo publicado a la vitrina ---------------------------------------------------------------------------------------------------
+    ("M160", "la tienda de tecnología deja de ser intocable para el CMS", VIT, 'if (registro.tema === "tecnologia" || snap.home === null) return registro;', "if (snap.home === null) return registro;", T_VIT),
+    ("M161", "sin página principal publicada se arma una vitrina vacía en vez de devolver el registro", VIT, 'if (registro.tema === "tecnologia" || snap.home === null) return registro;', 'if (registro.tema === "tecnologia") return registro;', T_VIT),
+    ("M162", "una imagen del CMS sin medidas válidas se muestra", VIT, "if (!asset || !(asset.ancho > 0) || !(asset.alto > 0)) return null;", "if (!asset) return null;", T_VIT),
+    ("M163", "una imagen del CMS que no está lista se muestra", VIT, "if (!asset || !(asset.ancho > 0) || !(asset.alto > 0)) return null;", "if (false) return null;", T_VIT),
+    ("M164", "la imagen del CMS sale con la dirección de Storage", VIT, "src: rutaImagenCms(slug, asset.id),", "src: asset.storagePath,", T_VIT),
+    ("M165", "la imagen toma las medidas del contenido en vez de las del archivo", VIT, "width: asset.ancho, height: asset.alto,", "width: 1600, height: 900,", T_VIT),
+    ("M166", "un botón a una categoría borrada se muestra", VIT, "ctx.categorias.has(destino.categoria_id) ?", "true ?", T_VIT),
+    ("M167", "la búsqueda del botón no se codifica", VIT, "encodeURIComponent(destino.consulta.trim())", "destino.consulta.trim()", T_VIT),
+    ("M168", "una búsqueda vacía lleva a un enlace", VIT, 'destino.consulta.trim() === "" ? null :', "false ? null :", T_VIT),
+    ("M169", "un número de WhatsApp demasiado corto se usa", VIT, "digitos.length >= 8 && digitos.length <= 15", "digitos.length >= 1 && digitos.length <= 15", T_VIT),
+    ("M170", "un número de WhatsApp absurdamente largo se usa", VIT, "digitos.length >= 8 && digitos.length <= 15", "digitos.length >= 8 && digitos.length <= 99", T_VIT),
+    ("M171", "un botón a ofertas lleva a una sección que la tienda no dibuja", VIT, 'dibujadas.includes("ofertas") && ofertasActivas(ev)', "ofertasActivas(ev)", T_VIT),
+    ("M172", "un botón a una oferta inexistente lleva a la sección", VIT, ".some((o) => o.clave === destino.clave)", ".some(() => true)", T_VIT),
+    ("M173", "un botón a un combo inexistente lleva a la sección", VIT, "combosActivos(ev).some((c) => c.clave === destino.clave)", "combosActivos(ev).some(() => true)", T_VIT),
+    ("M174", "un botón a una campaña inexistente lleva a la sección", VIT, "campanasActivas(ev).some((c) => c.clave === destino.clave)", "campanasActivas(ev).some(() => true)", T_VIT),
+    ("M175", "la portada oculta (visible: false) se muestra", VIT, 'h.portada.visible && se("portada") ?', 'se("portada") ?', T_VIT),
+    ("M176", "la portada con su sección apagada se muestra", VIT, 'h.portada.visible && se("portada") ?', "h.portada.visible ?", T_VIT),
+    ("M177", "un botón cuyo destino desapareció sigue mostrando su texto", VIT, 'config.heroCta = h.portada.boton && href ? h.portada.boton.texto : "";', 'config.heroCta = h.portada.boton ? h.portada.boton.texto : "";', T_VIT),
+    ("M178", "un banner oculto se muestra", VIT, 'h.banner && h.banner.visible && se("banner")', 'h.banner && se("banner")', T_VIT),
+    ("M179", "se piden secciones que la tienda no sabe dibujar", VIT, "visibles.filter((s) => dibujadas.includes(s))", "visibles", T_VIT),
+    ("M180", "los destacados elegidos pasan aunque su sección esté apagada", VIT, 'if (secciones.includes("destacados") && h.productos_destacados.length > 0)', "if (h.productos_destacados.length > 0)", T_VIT),
+    ("M181", "las categorías elegidas pasan aunque su sección esté apagada", VIT, 'if (secciones.includes("categorias") && h.categorias_destacadas.length > 0)', "if (h.categorias_destacadas.length > 0)", T_VIT),
+    ("M182", "la campaña se elige para el canal mayorista", VIT, 'const ev: ContextoEvaluacion = { snap, canal: "retail", ahora: ctx.ahora };', 'const ev: ContextoEvaluacion = { snap, canal: "wholesale", ahora: ctx.ahora };', T_VIT),
+    ("M183", "una campaña sin portada ni productos ocupa el lugar de otra con contenido", VIT, "if (!p && productos.length === 0) continue;", "", T_VIT),
+    ("M184", "la portada de la campaña ignora la imagen de la campaña", VIT, "p.imagen ?? c.contenido.imagen", "p.imagen", T_VIT),
+    ("M185", "la imagen de la portada de una campaña no figura entre las publicadas", VIT, "    ver(c.contenido.portada?.imagen);\n", "", T_VIT + T_IMGPUB),
+    ("M186", "la imagen del banner no figura entre las publicadas", VIT, "    ver(snap.home.contenido.banner?.imagen);\n", "", T_VIT + T_IMGPUB),
+    # --- PR 3 · carga con respaldo -------------------------------------------------------------------------------------------------------------
+    ("M187", "la tienda de tecnología consulta el CMS", VITPUB, 'if (registro.tema === "tecnologia") return deSiempre(registro);', "", T_VITPUB),
+    ("M188", "se lee el CMS de «ningún negocio»", VITPUB, "return tenantId ? deps.cargar(tenantId) : null;", 'return deps.cargar(tenantId ?? "");', T_VITPUB),
+    ("M189", "un CMS apagado se trata como una falla", VITPUB, "    if (!snap) return deSiempre(registro);\n", "", T_VITPUB),
+    ("M190", "la vitrina del respaldo dice venir del CMS", VITPUB, 'origen: "cms" };', 'origen: "registro" };', T_VITPUB),
+    ("M191", "una lectura lenta deja la tienda esperando el plazo largo", VITPUB, "deps.plazoMs ?? PLAZO_VITRINA_MS,", "PLAZO_VITRINA_MS,", T_VITPUB),
+    ("M192", "un aviso que falla rompe la tienda", VITPUB, "    } catch {\n      /* el aviso nunca puede romper la tienda */\n    }\n", "    } finally {\n    }\n", T_VITPUB),
+    ("M193", "una lista vacía de destacados se pide al catálogo", VITPUB, "config.destacados && config.destacados.length > 0 ?", "config.destacados ?", T_VITPUB),
+    # --- PR 3 · imagen pública ------------------------------------------------------------------------------------------------------------------
+    ("M194", "la ruta de imágenes acepta nombres con algo después de .webp", IMGPUB, r"\.webp$/;", r"\.webp/;", T_IMGPUB),
+    ("M195", "la ruta de imágenes acepta nombres con algo antes del id", IMGPUB, "const ARCHIVO = /^(", "const ARCHIVO = /(", T_IMGPUB),
+    ("M196", "una instantánea de otro negocio se sirve", IMGPUB, "if (!snap || snap.tenantId !== tenantId) return noEncontrada();", "if (!snap) return noEncontrada();", T_IMGPUB),
+    ("M197", "una imagen subida pero no publicada (borrador) se sirve", IMGPUB, "if (!asset || asset.id !== id || !assetsReferenciados(snap).has(id)) return noEncontrada();", "if (!asset || asset.id !== id) return noEncontrada();", T_IMGPUB),
+    ("M198", "una imagen guardada en la carpeta de otro negocio se sirve", IMGPUB, "!asset.storagePath.startsWith(`${tenantId}/cms/`) || ", "", T_IMGPUB),
+    ("M199", "una ruta con «..» se sirve", IMGPUB, ' || asset.storagePath.includes("..")', "", T_IMGPUB),
+    ("M200", "un objeto que no está en Storage rompe la ruta", IMGPUB, "    if (!imagen) return noEncontrada();\n", "", T_IMGPUB),
+    ("M201", "una falla interna de imagen se cachea", IMGPUB, 'headers: { "Cache-Control": "no-store" } }', 'headers: { "Cache-Control": "public, max-age=60" } }', T_IMGPUB),
+    # --- PR 3 · el inicio con lo que elige el CMS --------------------------------------------------------------------------------------------------
+    ("M202", "un destacado desactivado aparece en el inicio", SERVICE, '    const found = await repo.getProductsByReferences(tenantId, references);\n    const byReference = new Map(found.filter((p) => p.status === "ACTIVE")', "    const found = await repo.getProductsByReferences(tenantId, references);\n    const byReference = new Map(found", T_HOME),
+    ("M203", "destacados elegidos que no sirven dejan el inicio sin productos", SERVICE, 'if (items.length > 0) return { items, policy: "cms" };', 'return { items, policy: "cms" };', T_HOME),
+    ("M204", "los destacados elegidos no tienen tope", SERVICE, "normalizeReferences(raw).slice(0, limit)", "normalizeReferences(raw)", T_HOME),
+    ("M205", "sin categorías válidas el inicio queda sin categorías", SERVICE, "chosen.length > 0 ? chosen : categories", "chosen", T_HOME),
+    ("M206", "una categoría repetida sale dos veces", SERVICE, "[...new Set(opciones.categorias ?? [])]", "(opciones.categorias ?? [])", T_HOME),
+    ("M207", "el inicio trae una campaña aunque nadie la pidió", SERVICE, "...(campaignItems ? { campana: pick(campaignItems) } : {}),", "campana: pick(campaignItems ?? []),", T_HOME),
+    ("M208", "una lista vacía de campaña cuenta como campaña pedida", SERVICE, "(opciones.campana?.length ?? 0) > 0", "opciones.campana !== undefined", T_HOME),
+    ("M209", "el negocio de una tienda sin publicar se entrega", SERVICE, "return (await openPublication(slug))?.tenantId ?? null;", "return (await repo.getPublicationBySlug(slug))?.tenantId ?? null;", T_HOME),
+    # --- PR 3 · el dibujo de las secciones -----------------------------------------------------------------------------------------------------------
+    ("M210", "una portada sin botón dibuja igual el botón", INICIO, 'hero.cta !== "" && (', "true && (", T_INICIO),
+    ("M211", "el botón de la portada ignora su destino", INICIO, "hero.href ?? listPath", "listPath", T_INICIO),
+    ("M212", "los enlaces externos (WhatsApp) no abren en pestaña nueva", INICIO, 'if (href.startsWith("https://")) {', "if (false) {", T_INICIO),
+    ("M213", "los enlaces externos dejan el control a la otra página", INICIO, 'rel="noopener noreferrer"', 'rel="opener"', T_INICIO),
+    ("M214", "sin lista de secciones se usa otro orden que el de siempre", INICIO, "config.secciones ?? ORDEN_INICIO_CLASICO", 'config.secciones ?? ["portada", "destacados"]', T_INICIO),
+    ("M215", "una campaña sin portada ni productos dibuja un bloque vacío", INICIO, "if (!portada && productos.length === 0) return null;", "", T_INICIO),
+    ("M216", "con la portada apagada la página se queda sin título principal", INICIO, '!hero || !secciones.includes("portada") ?', "!hero ?", T_INICIO),
+    ("M217", "el banner con destino no es un enlace", INICIO, "{config.bannerHref ? (", "{false ? (", T_INICIO),
+    # --- PR 3 · la siembra de la vitrina actual (SQL real) -------------------------------------------------------------------------------------------
+    ("M218", "la siembra corre aunque la tienda esté duplicada o no exista", SQL_SIEMBRA, "  if v_tienda <> 1 then\n", "  if false then\n", T_SIEMBRA),
+    ("M219", "la siembra corre con el módulo apagado", SQL_SIEMBRA, "  if not exists (select 1 from public.dulabs_tenant_modulos where id_tenant = v_tenant and modulo = 'cms_comercial' and habilitado) then\n", "  if false then\n", T_SIEMBRA),
+    ("M220", "la siembra pisa o duplica una página principal existente", SQL_SIEMBRA, "  if exists (select 1 from public.dulabs_cms_entidades where id_tenant = v_tenant and tipo = 'home') then\n", "  if false then\n", T_SIEMBRA),
+    ("M221", "la siembra se publica esperando una versión que no existe", SQL_SIEMBRA, "::integer, 0, '", "::integer, 1, '", T_SIEMBRA),
+    ("M222", "la reversa despublica aunque la administradora ya publicó cambios", SQL_REVERSA, "  if coalesce(v_e.version_activa, 0) > 1 and coalesce(current_setting('dulabs.confirmar_reversa_siembra', true), '') <> 'si' then\n", "  if false then\n", T_SIEMBRA),
+    ("M223", "la reversa intenta despublicar lo que no está publicado", SQL_REVERSA, "  if v_e.estado not in ('publicada', 'pausada') then\n", "  if false then\n", T_SIEMBRA),
+    ("M224", "la siembra de Delacour siembra un banner que no existe", SIEMBRA, "...(banner ? { banner: { visible: true, imagen: estatica(banner) } } : {}),", "banner: { visible: true, imagen: estatica(banner as StorefrontImage) },", T_SIEMBRA_GEN),
+    ("M225", "la siembra deja las secciones de ofertas, combos y campaña encendidas", SIEMBRA, 'const visibles = new Set<string>(["portada", "categorias", "destacados", ...(banner ? ["banner"] : [])]);', 'const visibles = new Set<string>(["portada", "categorias", "destacados", "ofertas", "combos", "campana", ...(banner ? ["banner"] : [])]);', T_SIEMBRA_GEN),
+    ("M226", "el script de siembra admite un slug con comillas", SIEMBRA, 'const nombre = slug.replace(/[^a-z0-9-]/g, "");\n  if (nombre !== slug || slug === "") throw new Error("Slug no válido para el script SQL.");\n  const titulo = slug.charAt(0).toUpperCase() + slug.slice(1);\n  return `-- CMS COMERCIAL (Bloque 29) — SEMBRAR', 'const titulo = slug.charAt(0).toUpperCase() + slug.slice(1);\n  return `-- CMS COMERCIAL (Bloque 29) — SEMBRAR', T_SIEMBRA_GEN),
+    # --- PR 3 · avisos y enlace del editor -----------------------------------------------------------------------------------------------------------
+    ("M227", "no avisa que la página no tiene ninguna sección visible", VALID, "if (!h.secciones.some((s) => s.visible)) adv(", "if (false) adv(", T_VALID),
+    ("M228", "no avisa que la portada visible tiene su sección apagada", VALID, 'h.portada.imagen && !visible("portada")', 'h.portada.imagen && visible("portada")', T_VALID),
+    ("M229", "no avisa que el banner visible tiene su sección apagada", VALID, 'h.banner?.visible && !visible("banner")', 'h.banner?.visible && visible("banner")', T_VALID),
+    ("M230", "no avisa que la sección del banner no tiene banner", VALID, 'visible("banner") && !h.banner', 'visible("banner") && h.banner', T_VALID),
+    ("M231", "«Ver mi tienda» lleva a una tienda sin publicar", ADAPT, "return publicacion?.published ? retailPath(publicacion.slug) : null;", "return publicacion ? retailPath(publicacion.slug) : null;", T_EDITOR),
+    ("M232", "una falla al buscar la tienda rompe el contexto del editor", RUTA_CTX, ".then((r) => r ?? null, () => null)", ".then((r) => r ?? null)", T_EDITOR),
+    ("M233", "«Ver mi tienda» deja el control a la otra página", TIENDA_APP, 'rel="noopener noreferrer" className={cn(actionBtn, "text-[13px]")}', 'className={cn(actionBtn, "text-[13px]")}', T_DOM),
 ]
 
 

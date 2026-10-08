@@ -23,7 +23,7 @@
  */
 
 export interface StorefrontImage {
-  /** Ruta pública dentro de /public (optimizada por next/image). */
+  /** Ruta pública dentro de /public o ruta de una imagen del CMS (/catalogo/{slug}/vitrina/{id}.webp); next/image la optimiza. */
   src: string;
   width: number;
   height: number;
@@ -43,6 +43,36 @@ export type IconoBeneficio = (typeof ICONOS_BENEFICIO)[number];
 /** Dibujos decorativos disponibles para los banners (no son fotos de productos: la foto real vive en el catálogo). */
 export const ARTES_BANNER = ["tablet", "smartwatch", "celular"] as const;
 export type ArteBanner = (typeof ARTES_BANNER)[number];
+
+/**
+ * Secciones que puede mostrar el INICIO clásico. Es la misma lista cerrada que usa el CMS (lib/cms-comercial/contrato.ts → SECCIONES_HOME): una prueba vigila
+ * que no se separen. Cada sección tiene su dibujo en TiendaInicio; el CMS solo decide cuáles se ven y en qué orden.
+ */
+export const SECCIONES_INICIO = ["portada", "categorias", "destacados", "banner", "ofertas", "combos", "campana"] as const;
+export type SeccionInicio = (typeof SECCIONES_INICIO)[number];
+
+/** El orden de siempre del inicio clásico (el de Delacour hoy): portada, categorías, destacados y banner. Sin contenido del CMS, esto es lo que se ve. */
+export const ORDEN_INICIO_CLASICO: readonly SeccionInicio[] = ["portada", "categorias", "destacados", "banner"];
+
+/** Las secciones que la tienda SABE dibujar hoy (una que el CMS pida y no esté aquí se omite, nunca se dibuja a medias). */
+export const SECCIONES_DIBUJADAS: readonly SeccionInicio[] = ["portada", "categorias", "destacados", "banner", "campana"];
+
+/** Bloque de la campaña activa (contenido del CMS). Los productos de la campaña se cargan del catálogo por referencia. */
+export interface CampanaVitrina {
+  /** Nombre de la campaña: el título del bloque cuando no tiene portada propia. */
+  nombre: string;
+  /** Portada propia de la campaña. Sin ella, el bloque es un encabezado sencillo con el nombre y sus productos. */
+  portada?: {
+    /** Frase pequeña sobre el título. */
+    etiqueta?: string;
+    titulo: string;
+    subtitulo?: string;
+    imagen?: StorefrontImage & { /** Punto focal al recortar (CSS object-position). */ focus?: string };
+    boton?: { texto: string; href: string };
+  };
+  /** Referencias de los productos destacados de la campaña, en el orden elegido. */
+  productos: readonly string[];
+}
 
 export interface BeneficioVitrina {
   icono: IconoBeneficio;
@@ -101,6 +131,18 @@ export interface CatalogStorefrontConfig {
   heroCta?: string;
   /** Banner editorial ya diseñado (la imagen lleva todo su contenido). */
   bannerImage?: StorefrontImage;
+  /** Hacia dónde lleva el botón de la portada. Sin él, el listado completo (como siempre). Un `heroCta` vacío significa «sin botón». */
+  heroHref?: string;
+  /** Si el banner es un enlace, a dónde lleva. Sin él, el banner es solo una imagen (como siempre). */
+  bannerHref?: string;
+  /** Secciones visibles y su orden (las decide el CMS). Sin él, `ORDEN_INICIO_CLASICO`. */
+  secciones?: readonly SeccionInicio[];
+  /** Campaña activa con bloque propio (CMS). */
+  campana?: CampanaVitrina;
+  /** Referencias de los productos destacados elegidos (CMS). Vacío o ausente => los más recientes con foto, como siempre. */
+  destacados?: readonly string[];
+  /** Categorías destacadas, por id (CMS). Vacío o ausente => todas. */
+  categoriasDestacadas?: readonly string[];
 }
 
 /** Hero completo solo si hay foto y título: nunca un hero a medias. */
@@ -112,6 +154,7 @@ export function heroOf(config: CatalogStorefrontConfig) {
     title: config.heroTitle,
     description: config.heroDescription,
     cta: config.heroCta ?? "Ver catálogo",
+    href: config.heroHref,
   };
 }
 
