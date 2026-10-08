@@ -6,7 +6,8 @@
  *   - los 12 casos obligatorios de la FASE 13 (crear, pausar, cambiar precio y vigencia, vencida, modalidad detal/mayorista, combos, campañas y otro negocio);
  *   - las 18 preguntas adversariales de la FASE 14: la respuesta HONESTA sale; la INVENTADA (porcentajes, precios, fechas, ofertas, combos o campañas que el
  *     sistema no respalda, o información mayorista para un cliente detal) nunca se envía: una corrección y, si el modelo insiste, una asesora con mensaje fijo;
- *   - regresión: sin herramientas comerciales en la lista del número el prompt, la guarda y la traza quedan exactamente como siempre.
+ *   - regresión: sin herramientas comerciales en la lista del número el prompt, la guarda y la traza quedan exactamente como siempre;
+ *   - el PILOTO por número (negocio.comercial_piloto): solo los contactos de la lista reciben las herramientas, el prompt comercial y la guarda; los demás, EXACTAMENTE lo de siempre.
  */
 import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
@@ -664,5 +665,90 @@ describe("regresión: sin herramientas comerciales en la lista del número, NADA
   it("ASLC conserva EXACTAMENTE sus herramientas: la lista cerrada creció pero la de ASLC no (ni una comercial)", () => {
     for (const n of HERRAMIENTAS_COMERCIALES) assert.ok(!HERRAMIENTAS_ASLC.includes(n), n);
     assert.equal(HERRAMIENTAS_ASLC.length, 16);
+  });
+});
+
+describe("el PILOTO por número: solo los contactos de negocio.comercial_piloto reciben lo nuevo", () => {
+  const PILOTO_WA = CLIENTE;
+  const OTRO_WA = "573001119999";
+  const COMERCIALES = HERRAMIENTAS_COMERCIALES as readonly string[];
+  const conPiloto = (numeros: string[]) => cfgDe(A, PN_A, { negocio: { ...(configRow(A, PN_A).negocio as Record<string, unknown>), comercial_piloto: numeros } });
+  const comerciales = (rq: { tools?: ReadonlyArray<{ name: string }> }) => (rq.tools ?? []).map((t) => t.name).filter((n) => COMERCIALES.includes(n));
+
+  it("el contacto del piloto recibe las cuatro herramientas y las reglas comerciales en el prompt, y consulta el CMS", async () => {
+    snaps[A.tenantId] = instantanea({ ofertas: [AMOR()] });
+    const r = await turno([call("consultar_ofertas"), { text: `Tenemos la oferta Amor y Amistad: 20% de descuento, ${VIGENCIA_TEXTO}.` }], "¿qué promociones tienen?", { config: conPiloto([PILOTO_WA]), wa: PILOTO_WA });
+    assert.equal(r.outcome, "replied");
+    assert.deepEqual(comerciales(r.provider.requests[0]), [...HERRAMIENTAS_COMERCIALES]);
+    assert.ok(r.provider.requests[0].system.includes("=== INFORMACIÓN COMERCIAL (herramientas del sistema) ==="));
+    assert.equal(toolOutputs(r.provider)[0].output.empty, false);
+    assert.deepEqual(r.trace.grounding.violations, []);
+  });
+
+  it("al contacto del piloto la guarda SÍ lo vigila: lo inventado (un 40% que el sistema no respalda) no sale", async () => {
+    snaps[A.tenantId] = instantanea({ ofertas: [AMOR()] });
+    const r = await turno([{ text: "Hoy hay 40% de descuento en todo." }, { text: "Sí, 40% de descuento en todo." }], "¿hay descuentos hoy?", { config: conPiloto([PILOTO_WA]), wa: PILOTO_WA });
+    assert.notEqual(r.outcome, "replied");
+    assert.ok(!sent.some((t) => t.includes("40%")));
+    assert.ok(r.trace.grounding.violations.includes("commercial"));
+  });
+
+  it("cualquier OTRO contacto conversa EXACTAMENTE como si el número no tuviera las herramientas: mismo prompt, mismas herramientas, sin sección comercial", async () => {
+    snaps[A.tenantId] = instantanea({ ofertas: [AMOR()] });
+    const ajeno = await turno([{ text: "Hola 😊" }], "hola", { config: conPiloto([PILOTO_WA]), wa: OTRO_WA });
+    const antes = await turno([{ text: "Hola 😊" }], "hola", { config: cfgDe(A, PN_A, { herramientas: SIN_COMERCIAL }), wa: "573001117777" });
+    assert.equal(ajeno.outcome, "replied");
+    const [rq] = ajeno.provider.requests;
+    const [rqAntes] = antes.provider.requests;
+    assert.deepEqual(comerciales(rq), []);
+    assert.ok(!rq.system.includes("INFORMACIÓN COMERCIAL") && !rq.system.includes("consultar_ofertas"));
+    assert.equal(rq.system, rqAntes.system, "el prompt es byte a byte el de antes");
+    assert.deepEqual(rq.tools?.map((t) => t.name), rqAntes.tools?.map((t) => t.name), "y las herramientas son las mismas, en el mismo orden");
+  });
+
+  it("a ese otro contacto la guarda comercial NO le actúa (como hoy) y la traza queda sin cambios", async () => {
+    const r = await turno([{ text: "Hoy hay 30% de descuento en todo 😊" }], "hola", { config: conPiloto([PILOTO_WA]), wa: OTRO_WA });
+    assert.equal(r.outcome, "replied");
+    assert.equal(sent.at(-1), "Hoy hay 30% de descuento en todo 😊");
+    assert.deepEqual(r.trace.grounding, { violations: [], corrected: false });
+  });
+
+  it("si el modelo pide una herramienta comercial a un contacto fuera del piloto: TOOL_NOT_ALLOWED, y ni siquiera se lee el CMS", async () => {
+    snaps[A.tenantId] = instantanea({ ofertas: [AMOR()] });
+    const r = await turno([call("consultar_ofertas"), { text: "Hola 😊" }], "¿qué promociones tienen?", { config: conPiloto([PILOTO_WA]), wa: OTRO_WA });
+    const [salida] = toolOutputs(r.provider);
+    assert.equal((salida.output as { error?: { code?: string } }).error?.code, "TOOL_NOT_ALLOWED");
+    assert.equal(JSON.stringify(salida.output).includes("Amor y Amistad"), false);
+    assert.deepEqual(lecturas, []);
+  });
+
+  it("el piloto puede tener varios números: todos los de la lista reciben las herramientas; los demás no", async () => {
+    const cfg = conPiloto([PILOTO_WA, "573001118888"]);
+    const uno = await turno([{ text: "Hola 😊" }], "hola", { config: cfg, wa: PILOTO_WA });
+    const dos = await turno([{ text: "Hola 😊" }], "hola", { config: cfg, wa: "573001118888" });
+    const fuera = await turno([{ text: "Hola 😊" }], "hola", { config: cfg, wa: OTRO_WA });
+    assert.deepEqual(comerciales(uno.provider.requests[0]), [...HERRAMIENTAS_COMERCIALES]);
+    assert.deepEqual(comerciales(dos.provider.requests[0]), [...HERRAMIENTAS_COMERCIALES]);
+    assert.deepEqual(comerciales(fuera.provider.requests[0]), []);
+  });
+
+  it("SIN piloto (abierto a todos) cualquier contacto recibe las herramientas y el prompt comercial", async () => {
+    const r = await turno([{ text: "Hola 😊" }], "hola", { config: cfgDe(A, PN_A), wa: OTRO_WA });
+    assert.deepEqual(comerciales(r.provider.requests[0]), [...HERRAMIENTAS_COMERCIALES]);
+    assert.ok(r.provider.requests[0].system.includes("=== INFORMACIÓN COMERCIAL (herramientas del sistema) ==="));
+  });
+
+  it("el piloto no inventa herramientas: en un número que NO tiene las comerciales no hace nada (ni al contacto del piloto)", async () => {
+    const cfg = cfgDe(A, PN_A, { herramientas: SIN_COMERCIAL, negocio: { ...(configRow(A, PN_A).negocio as Record<string, unknown>), comercial_piloto: [PILOTO_WA] } });
+    const r = await turno([{ text: "Hola 😊" }], "hola", { config: cfg, wa: PILOTO_WA });
+    assert.deepEqual(comerciales(r.provider.requests[0]), []);
+    assert.ok(!r.provider.requests[0].system.includes("INFORMACIÓN COMERCIAL"));
+  });
+
+  it("un piloto mal escrito en la base deja a ARIA fuera de servicio de forma segura (configuración inválida), nunca abierta a todos", () => {
+    for (const malo of [[], ["+573001112233"], ["57 300 111 2233"], [""], "573001112233", Array.from({ length: 21 }, (_, i) => `57300000${1000 + i}`)]) {
+      const r = parseAgentConfig(configRow(A, PN_A, { negocio: { ...(configRow(A, PN_A).negocio as Record<string, unknown>), comercial_piloto: malo } }), { tenantId: A.tenantId, phoneNumberId: PN_A });
+      assert.notEqual(r.kind, "ok", JSON.stringify(malo));
+    }
   });
 });

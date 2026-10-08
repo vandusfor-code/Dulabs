@@ -7,13 +7,17 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { AUDIENCIAS, TEMAS_CONTENIDO } from "@/lib/cms-comercial/contrato";
+import { businessConfigSchema } from "@/lib/agente/config";
 import { contenidoSchema } from "@/lib/cms-comercial/esquemas";
 import {
   CLAVES_CRITICAS,
+  MAX_PILOTOS,
+  REGEX_PILOTO,
   TEMAS_QUE_SE_QUEDAN_EN_EL_PERFIL,
   TEXTOS_MIGRABLES,
   archivosMigracionTextos,
   normalizarTema,
+  sqlAbrirHerramientasATodos,
   sqlEstadoMigracion,
   sqlHabilitarHerramientas,
   sqlMigrarTextos,
@@ -76,12 +80,13 @@ describe("la tabla de correspondencia", () => {
 describe("los scripts generados", () => {
   const archivos = archivosMigracionTextos("delacour");
 
-  it("hay siete, con los nombres que dice el README", () => {
+  it("hay ocho, con los nombres que dice el README", () => {
     assert.deepEqual(Object.keys(archivos), [
       "04_migrar_textos_a_borradores.sql",
       "04_migrar_textos_a_borradores.reversa.sql",
       "05_habilitar_herramientas_comerciales.sql",
       "05_habilitar_herramientas_comerciales.reversa.sql",
+      "05b_abrir_herramientas_comerciales_a_todos.sql",
       "06_retirar_textos_del_prompt.sql",
       "06_retirar_textos_del_prompt.reversa.sql",
       "07_estado_migracion_textos_solo_lectura.sql",
@@ -108,7 +113,7 @@ describe("los scripts generados", () => {
     });
   }
 
-  it("04, 05 y 06 son UNA sola sentencia atómica (un bloque DO); el 07 es solo lectura (un select)", () => {
+  it("04, 05, 05b y 06 son UNA sola sentencia atómica (un bloque DO); el 07 es solo lectura (un select)", () => {
     for (const [nombre, sql] of Object.entries(archivos)) {
       if (nombre.startsWith("07_")) {
         const codigo = sinComentarios(sql);
@@ -127,19 +132,21 @@ describe("los scripts generados", () => {
     assert.ok(!codigo.includes("dulabs_cms_publicar") && !/\bupdate\b/i.test(codigo) && !/\binsert\b/i.test(codigo));
   });
 
-  it("el 05 solo toca la lista de herramientas; el 06 solo el conocimiento del prompt; ninguno publica contenido", () => {
+  it("el 05 solo toca la lista de herramientas y el piloto; el 05b solo quita el piloto; el 06 solo el conocimiento del prompt; ninguno publica contenido", () => {
     const c05 = sinComentarios(sqlHabilitarHerramientas("delacour"));
-    assert.ok(/set herramientas = /.test(c05) && !/set negocio/.test(c05) && !c05.includes("dulabs_cms_publicar"));
+    assert.ok(/set herramientas = /.test(c05) && c05.includes("jsonb_set(negocio, '{comercial_piloto}'") && !c05.includes("'{conocimiento}'") && !c05.includes("dulabs_cms_publicar"));
+    const c05b = sinComentarios(sqlAbrirHerramientasATodos("delacour"));
+    assert.ok(c05b.includes("negocio = negocio - 'comercial_piloto'") && !/set herramientas/.test(c05b) && !c05b.includes("'{conocimiento}'") && !c05b.includes("dulabs_cms_publicar"));
     const c06 = sinComentarios(sqlRetirarDelPrompt("delacour"));
     assert.ok(/set negocio = jsonb_set\(negocio, '\{conocimiento\}'/.test(c06) && !/set herramientas/.test(c06) && !c06.includes("dulabs_cms_publicar"));
     const c06r = sinComentarios(sqlReversaRetirarDelPrompt("delacour"));
     assert.ok(/set negocio = jsonb_set\(negocio, '\{conocimiento\}'/.test(c06r) && !/set herramientas/.test(c06r));
     const c05r = sinComentarios(sqlReversaHabilitarHerramientas("delacour"));
-    assert.ok(/set herramientas = /.test(c05r) && !/set negocio/.test(c05r));
+    assert.ok(/set herramientas = /.test(c05r) && c05r.includes("negocio = negocio - 'comercial_piloto'") && !c05r.includes("'{conocimiento}'"));
   });
 
   it("las guardas están: migración aplicada, UNA tienda, módulo habilitado, UNA configuración de ARIA y el orden de los pasos", () => {
-    for (const sql of [sqlMigrarTextos("delacour"), sqlHabilitarHerramientas("delacour"), sqlRetirarDelPrompt("delacour")]) {
+    for (const sql of [sqlMigrarTextos("delacour"), sqlHabilitarHerramientas("delacour"), sqlAbrirHerramientasATodos("delacour"), sqlRetirarDelPrompt("delacour")]) {
       for (const trozo of ["falta aplicar la migración", "se esperaba exactamente UNA publicación", "el módulo cms_comercial no está habilitado", "se esperaba exactamente UNA configuración de ARIA"]) assert.ok(sql.includes(trozo), trozo);
     }
     assert.ok(sqlHabilitarHerramientas("delacour").includes("todavía no hay ningún texto comercial publicado"));
@@ -147,6 +154,31 @@ describe("los scripts generados", () => {
     assert.ok(sqlRetirarDelPrompt("delacour").includes("las herramientas comerciales de ARIA no están habilitadas"));
     assert.ok(sqlRetirarDelPrompt("delacour").includes("no está publicado en el CMS"));
     assert.ok(sqlReversaHabilitarHerramientas("delacour").includes("dulabs.confirmar_reversa_herramientas"));
+  });
+
+  it("el piloto: el 05 se niega sin números y nunca abre al público; el 05b es el único que quita el piloto; el 06 se niega mientras haya piloto", () => {
+    const c05 = sqlHabilitarHerramientas("delacour");
+    for (const trozo of ["indica el número (o los números) de piloto", "dulabs.piloto_comercial", "SIN el indicativo del país", "no es un número válido", "el piloto admite hasta 20 números", "SOLO para el piloto", "ya están ABIERTAS a todos los clientes", "05_habilitar_herramientas_comerciales.reversa.sql"]) assert.ok(c05.includes(trozo), trozo);
+    assert.ok(!sinComentarios(c05).includes("todos'"), "el 05 no acepta «todos»: abrir al público es SOLO del 05b");
+    const c05b = sqlAbrirHerramientasATodos("delacour");
+    for (const trozo of ["no están habilitadas", "ya están abiertas a todos los clientes", "no hay ningún texto comercial publicado", "siguen sin publicar"]) assert.ok(c05b.includes(trozo), trozo);
+    assert.ok(sqlRetirarDelPrompt("delacour").includes("están en PILOTO"));
+    assert.ok(sqlEstadoMigracion("delacour").includes("piloto de las herramientas"));
+  });
+
+  it("la expresión de los números de piloto del SQL es la MISMA que valida el esquema de la configuración (si no, una configuración válida para el script dejaría a ARIA fuera de servicio)", () => {
+    const re = new RegExp(REGEX_PILOTO);
+    for (const n of ["573009998877", "573001112233", "12345678", "123456789012345", "5730099988770"]) {
+      assert.equal(re.test(n), true, n);
+      assert.equal(businessConfigSchema.safeParse({ comercial_piloto: [n] }).success, n.length <= 15, n);
+    }
+    for (const n of ["0573009998877", "1234567", "1234567890123456", "+573009998877", "57 314 812 7388", "abc", ""]) {
+      assert.equal(re.test(n), false, n);
+      assert.equal(businessConfigSchema.safeParse({ comercial_piloto: [n] }).success, false, n);
+    }
+    assert.equal(businessConfigSchema.safeParse({ comercial_piloto: [] }).success, false, "vacío no (el piloto sin números abriría al público)");
+    assert.equal(businessConfigSchema.safeParse({ comercial_piloto: Array.from({ length: MAX_PILOTOS + 1 }, (_, i) => `57300000${String(1000 + i)}`) }).success, false);
+    assert.equal(businessConfigSchema.safeParse({ comercial_piloto: ["573009998877"] }).success, true);
   });
 
   it("el 05 agrega EXACTAMENTE las cuatro herramientas comerciales del código (una sola fuente de nombres)", () => {

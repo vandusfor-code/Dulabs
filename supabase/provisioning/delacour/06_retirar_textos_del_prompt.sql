@@ -4,10 +4,11 @@
 --       set dulabs.retirar_temas = 'promociones,envios';      -- las claves a retirar, separadas por coma (la lista completa está abajo)
 --       <este script>
 --
--- ORDEN: DESPUÉS de 05_habilitar_herramientas_comerciales.sql y de VERIFICAR con conversaciones reales que ARIA responde bien con las herramientas. Se retira de a pocos temas.
+-- ORDEN: DESPUÉS de 05_habilitar_herramientas_comerciales.sql, de VERIFICAR con conversaciones reales que ARIA responde bien con las herramientas y de ABRIRLAS a todos los clientes
+--   con 05b_abrir_herramientas_comerciales_a_todos.sql (mientras estén en piloto este script se niega). Se retira de a pocos temas.
 --
 -- QUÉ HACE: quita del prompt de ARIA (negocio.conocimiento) los textos de los temas indicados. Desde ese momento la ÚNICA fuente de esos textos es el CMS publicado.
--- GUARDAS (se niega si no se cumplen): sin temas indicados; una clave que no está en la tabla; las cuatro herramientas comerciales no están habilitadas; el tema no está PUBLICADO en
+-- GUARDAS (se niega si no se cumplen): sin temas indicados; una clave que no está en la tabla; las cuatro herramientas comerciales no están habilitadas o siguen en piloto; el tema no está PUBLICADO en
 --   el CMS (publicado y no archivado). No toca nada más del prompt (personalidad, tono, políticas, «Despedida», «Datos del pedido»…), ni la configuración, ni otros negocios.
 -- Se puede repetir sin efectos nuevos (un tema que ya no está, se salta).
 -- Claves: quienes-somos, ubicacion, horario, lineas-y-materiales, dorado-y-plateado, coleccion-vida-eterna, servicios, catalogo, precios-y-disponibilidad, regalos, hombre-y-mujer, venta-al-detal, venta-al-por-mayor, emprendimiento, separar-mercancia, envios, medios-de-pago, pago-no-identificado, garantias, cambios-y-devoluciones, promociones, reclamos.
@@ -61,6 +62,10 @@ begin
   -- Las herramientas comerciales deben estar habilitadas: si no, quitar el texto del prompt dejaría a ARIA sin esa información.
   if not (v_cfg.herramientas @> array['consultar_ofertas', 'consultar_combos', 'consultar_campanas', 'consultar_contenido_comercial']::text[]) then
     raise exception 'Delacour: las herramientas comerciales de ARIA no están habilitadas; corre primero 05_habilitar_herramientas_comerciales.sql';
+  end if;
+  -- Con el piloto solo algunos clientes tienen las herramientas: retirar los textos del prompt dejaría a los demás sin esa información.
+  if (v_cfg.negocio->'comercial_piloto') is not null then
+    raise exception 'Delacour: las herramientas comerciales están en PILOTO (solo algunos números): los demás clientes se quedarían sin esa información; ábrelas a todos con 05b_abrir_herramientas_comerciales_a_todos.sql antes de retirar textos del prompt';
   end if;
 
   v_lista := btrim(coalesce(current_setting('dulabs.retirar_temas', true), ''));

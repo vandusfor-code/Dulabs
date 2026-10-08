@@ -6,9 +6,11 @@
  *
  *   04  los textos se copian como BORRADORES del CMS (nunca publicados; el mínimo mayorista escrito a mano pasa a la variable {{minimo_mayorista}});
  *       la administradora los revisa y los publica uno a uno desde «Administración de tienda»;
- *   05  se habilitan las herramientas comerciales de ARIA (con los textos AÚN en el prompt, para verificar que ARIA responde bien con ambos);
- *   06  tema por tema, cuando ya está verificado, se retira el texto del prompt (solo si ese tema está publicado en el CMS y las herramientas están habilitadas);
- *   07  una consulta de SOLO LECTURA muestra, tema por tema, dónde está cada texto.
+ *   05  se habilitan las herramientas comerciales de ARIA SOLO PARA UN PILOTO de números (negocio.comercial_piloto: el resto de los clientes no cambia; los textos siguen también en
+ *       el prompt, para verificar que ARIA responde bien con ambos);
+ *   05b se abren a TODOS los clientes (termina el piloto), cuando ya se probó;
+ *   06  tema por tema, cuando ya está verificado, se retira el texto del prompt (solo si ese tema está publicado en el CMS y las herramientas están abiertas a todos);
+ *   07  una consulta de SOLO LECTURA muestra, tema por tema, dónde está cada texto, cuántas herramientas hay y si siguen en piloto.
  *
  * Los textos reales NO están en el repositorio (público): los scripts los leen de la base en el momento de correr. Aquí solo vive la tabla de correspondencia
  * (nombre del tema → clave, tema, audiencia y orden del CMS). Un tema del prompt que no esté en la tabla no se toca nunca.
@@ -69,6 +71,10 @@ export const TEMAS_QUE_SE_QUEDAN_EN_EL_PERFIL = ["Despedida", "Datos del pedido"
 export const CLAVES_CRITICAS = ["promociones", "venta-al-por-mayor", "envios", "medios-de-pago", "garantias", "cambios-y-devoluciones", "horario", "ubicacion"] as const;
 
 export const ETIQUETA_MIGRACION = "Migración del conocimiento de ARIA (DuLabs)";
+
+/** Un número de piloto es un wa_id: solo dígitos, con el indicativo del país y sin cero inicial (57XXXXXXXXXX). Coincide con el esquema de la configuración (negocio.comercial_piloto). */
+export const REGEX_PILOTO = "^[1-9][0-9]{7,14}$";
+export const MAX_PILOTOS = 20;
 
 const ACENTOS: Readonly<Record<string, string>> = { Á: "A", É: "E", Í: "I", Ó: "O", Ú: "U", Ü: "U", Ñ: "N", á: "a", é: "e", í: "i", ó: "o", ú: "u", ü: "u", ñ: "n" };
 
@@ -295,18 +301,26 @@ end $$;
 
 export function sqlHabilitarHerramientas(slug: string): string {
   const t = titulo(slug);
-  return `-- CMS COMERCIAL (Bloque 29) — HABILITAR las herramientas comerciales de ARIA (${t}).
--- Corre en el SQL Editor de Supabase como UNA sola sentencia (un bloque DO, atómico): si cualquier guarda falla, no queda nada.
+  return `-- CMS COMERCIAL (Bloque 29) — HABILITAR las herramientas comerciales de ARIA (${t}) SOLO PARA UN PILOTO de números.
+-- Corre en el SQL Editor de Supabase en DOS pasos de la misma sesión: primero indicas tu número de piloto, luego el bloque DO (atómico: si cualquier guarda falla, no queda nada).
 --
--- ORDEN: DESPUÉS de desplegar el código del PR 5, de 04_migrar_textos_a_borradores.sql y de que la administradora PUBLIQUE los textos. Antes, este script se niega.
+--       set dulabs.piloto_comercial = '57XXXXXXXXXX';      -- uno o varios números, separados por coma: SOLO dígitos con el indicativo del país (57 + el celular)
+--       <este script>
 --
--- QUÉ HACE: agrega a la lista de herramientas de ARIA las cuatro de lectura del CMS (${HERRAMIENTAS_COMERCIALES.join(", ")}). Con ellas, ARIA consulta lo
---   publicado (ofertas, combos, campañas y textos del negocio) y la GUARDA de ARIA deja de dejar pasar una promoción, un descuento, una vigencia, un combo o una política que
---   el sistema no respalde (una corrección y, si insiste, una asesora). Los textos siguen también en el prompt hasta que los retires con 06 (primero se verifica que ARIA
---   responde bien con ambos).
--- QUÉ NO HACE: no cambia el prompt, el modelo, el checkout ni las demás herramientas; no toca otros negocios.
--- GUARDAS (se niega si no se cumplen): el módulo está habilitado; hay al menos UN texto comercial publicado y vigente; ninguno de los temas críticos
---   (${CLAVES_CRITICAS.join(", ")}) está en el CMS sin publicar. Si un tema crítico quedó a propósito sin publicar, confírmalo en la misma sesión:
+-- ORDEN: DESPUÉS de fusionar y DESPLEGAR el código del piloto (PR 6, piloto por número): el código anterior no conoce el piloto y, si corres este script antes, la configuración de ARIA quedaría
+--   inválida para él (ARIA dejaría de responder hasta que corras la reversa). También DESPUÉS de 04_migrar_textos_a_borradores.sql y de que la administradora PUBLIQUE los textos (sin eso, este script se niega).
+--
+-- QUÉ HACE: agrega a la lista de herramientas de ARIA las cuatro de lectura del CMS (${HERRAMIENTAS_COMERCIALES.join(", ")}) y guarda el PILOTO en negocio.comercial_piloto:
+--   SOLO los números indicados reciben las herramientas, la guarda anti-invención y la sección «información comercial» del prompt; TODOS los demás clientes siguen conversando
+--   EXACTAMENTE como hoy (sin herramientas, sin guarda y con el prompt de siempre). Los textos siguen también en el prompt hasta que los retires con 06.
+--   Con las herramientas, ARIA consulta lo publicado (ofertas, combos, campañas y textos del negocio) y la guarda deja de dejar pasar una promoción, un descuento, una vigencia,
+--   un combo o una política que el sistema no respalde (una corrección y, si insiste, una asesora).
+-- PARA ABRIRLAS A TODOS los clientes, DESPUÉS de probar con tu número: 05b_abrir_herramientas_comerciales_a_todos.sql. Para CAMBIAR los números del piloto: corre este script otra vez con los números nuevos.
+--   Si ya las abriste a todos y quieres VOLVER al piloto: primero la reversa (05_habilitar_herramientas_comerciales.reversa.sql, que protege los temas ya retirados del prompt) y luego este script.
+-- QUÉ NO HACE: no abre al público por sí solo (sin números de piloto, se niega); no cambia el prompt, el modelo, el checkout ni las demás herramientas; no toca otros negocios.
+-- GUARDAS (se niega si no se cumplen): el módulo está habilitado; las herramientas no están ya abiertas a todos los clientes; cada número es válido (solo dígitos con el indicativo; hasta ${MAX_PILOTOS}); hay al menos UN texto comercial publicado
+--   y vigente; ninguno de los temas críticos (${CLAVES_CRITICAS.join(", ")}) está en el CMS sin publicar. Si un tema crítico quedó a propósito sin publicar, confírmalo en
+--   la misma sesión:
 --       set dulabs.permitir_temas_sin_publicar = 'si';
 --   (ARIA no podrá afirmar nada de ese tema: pasará a una asesora.)
 -- Se puede repetir sin efectos nuevos.
@@ -321,8 +335,35 @@ ${DECLARE_BASE}
   v_publicados integer;
   v_sin_publicar text;
   v_nuevas text[];
+  v_piloto_txt text;
+  v_numeros text[];
+  v_n text;
 begin
 ${guardas(slug, t)}
+
+  -- Ya abiertas a todos (herramientas sin piloto): volver a un piloto se hace desde la reversa, que protege los temas que ya se retiraron del prompt (si no, los demás clientes se quedarían sin ellos).
+  if v_cfg.herramientas @> ${ARREGLO_HERRAMIENTAS_SQL} and (v_cfg.negocio->'comercial_piloto') is null then
+    raise exception '${t}: las herramientas comerciales ya están ABIERTAS a todos los clientes; este script solo las deja en piloto. Para volver a un piloto, primero corre 05_habilitar_herramientas_comerciales.reversa.sql (que protege los temas ya retirados del prompt) y luego este script con tu número';
+  end if;
+
+  -- Piloto: SIN números no se habilita nada (este script nunca abre al público por sí solo).
+  v_piloto_txt := regexp_replace(coalesce(current_setting('dulabs.piloto_comercial', true), ''), '[\\s+()-]', '', 'g');
+  if v_piloto_txt = '' then
+    raise exception '${t}: indica el número (o los números) de piloto en la misma sesión, por ejemplo: set dulabs.piloto_comercial = ''57XXXXXXXXXX''; (las herramientas solo se habilitan para esos números; para abrirlas a todos, después de probar, está el script 05b)';
+  end if;
+  v_numeros := string_to_array(v_piloto_txt, ',');
+  foreach v_n in array v_numeros loop
+    if v_n ~ '^3[0-9]{9}$' then
+      raise exception '${t}: «%» parece un celular colombiano SIN el indicativo del país: escribe 57 + el número (por ejemplo 57XXXXXXXXXX)', v_n;
+    end if;
+    if v_n !~ '${REGEX_PILOTO}' then
+      raise exception '${t}: «%» no es un número válido: solo dígitos con el indicativo del país, sin ceros iniciales ni signos (por ejemplo 57XXXXXXXXXX)', v_n;
+    end if;
+  end loop;
+  select array_agg(distinct u.n order by u.n) into v_numeros from unnest(v_numeros) as u(n);
+  if cardinality(v_numeros) > ${MAX_PILOTOS} then
+    raise exception '${t}: el piloto admite hasta ${MAX_PILOTOS} números';
+  end if;
 
   select count(*) into v_publicados
     from public.dulabs_cms_entidades
@@ -342,19 +383,77 @@ ${guardas(slug, t)}
   select array_agg(h order by o) into v_nuevas
     from unnest(${ARREGLO_HERRAMIENTAS_SQL}) with ordinality as x(h, o)
    where not (h = any (v_cfg.herramientas));
-  if v_nuevas is null then
-    raise notice '${t}: las herramientas comerciales ya estaban habilitadas';
+  if v_nuevas is null and (v_cfg.negocio->'comercial_piloto') is not distinct from to_jsonb(v_numeros) then
+    raise notice '${t}: las herramientas comerciales ya estaban habilitadas para ese piloto';
     return;
   end if;
-  if cardinality(v_cfg.herramientas) + cardinality(v_nuevas) > 30 then
+  if v_nuevas is not null and cardinality(v_cfg.herramientas) + cardinality(v_nuevas) > 30 then
     raise exception '${t}: la lista de herramientas superaría el máximo permitido (30)';
   end if;
 
   update public.dulabs_agente_runtime_config
-     set herramientas = herramientas || v_nuevas, updated_at = now()
+     set herramientas = case when v_nuevas is null then herramientas else herramientas || v_nuevas end,
+         negocio = jsonb_set(negocio, '{comercial_piloto}', to_jsonb(v_numeros), true),
+         updated_at = now()
    where id = v_cfg.id;
 
-  raise notice '${t}: herramientas comerciales habilitadas (%)', array_to_string(v_nuevas, ', ');
+  raise notice '${t}: herramientas comerciales habilitadas SOLO para el piloto (% número(s)); los demás clientes no cambian', cardinality(v_numeros);
+end $$;
+`;
+}
+
+export function sqlAbrirHerramientasATodos(slug: string): string {
+  const t = titulo(slug);
+  return `-- CMS COMERCIAL (Bloque 29) — ABRIR a TODOS los clientes las herramientas comerciales de ARIA (${t}): termina el piloto.
+-- Corre en el SQL Editor de Supabase como UNA sola sentencia (un bloque DO, atómico: si cualquier guarda falla, no queda nada).
+--
+-- ORDEN: DESPUÉS de 05_habilitar_herramientas_comerciales.sql y de PROBAR con tu número de piloto que ARIA responde bien. Antes, este script se niega.
+--
+-- QUÉ HACE: quita negocio.comercial_piloto. Desde ese momento TODOS los clientes del número reciben las herramientas comerciales, la guarda anti-invención y la sección
+--   «información comercial» del prompt (hasta hoy, solo los números del piloto).
+-- GUARDAS (se niega si no se cumplen): las herramientas no están habilitadas (primero el 05); no hay ningún texto comercial publicado; algún tema crítico
+--   (${CLAVES_CRITICAS.join(", ")}) está en el CMS sin publicar (se puede confirmar con: set dulabs.permitir_temas_sin_publicar = 'si';). Si ya están abiertas a todos, no hace nada.
+-- QUÉ NO HACE: no cambia el prompt, las herramientas, el modelo ni otros negocios.
+--
+-- GENERADO por el código (lib/cms-comercial/migracion-textos.ts): una prueba lo regenera y lo compara con este archivo. No se edita a mano.
+--
+-- REVERSA (volver al piloto): corre 05_habilitar_herramientas_comerciales.reversa.sql (quita las herramientas y el piloto; se niega si ya retiraste temas críticos del prompt) y luego 05_habilitar_herramientas_comerciales.sql con tu número.
+
+do $$
+declare
+${DECLARE_BASE}
+  v_publicados integer;
+  v_sin_publicar text;
+begin
+${guardas(slug, t)}
+
+  if not (v_cfg.herramientas @> ${ARREGLO_HERRAMIENTAS_SQL}) then
+    raise exception '${t}: las herramientas comerciales de ARIA no están habilitadas; corre primero 05_habilitar_herramientas_comerciales.sql (piloto)';
+  end if;
+  if (v_cfg.negocio->'comercial_piloto') is null then
+    raise notice '${t}: las herramientas comerciales ya están abiertas a todos los clientes; no hay nada que hacer';
+    return;
+  end if;
+
+  select count(*) into v_publicados
+    from public.dulabs_cms_entidades
+   where id_tenant = v_tenant and tipo = 'contenido' and estado = 'publicada' and archivada_at is null;
+  if v_publicados = 0 then
+    raise exception '${t}: no hay ningún texto comercial publicado en el CMS; no se abren las herramientas a todos los clientes';
+  end if;
+
+  select string_agg(e.clave, ' · ' order by e.clave) into v_sin_publicar
+    from public.dulabs_cms_entidades e
+   where e.id_tenant = v_tenant and e.tipo = 'contenido' and e.archivada_at is null and e.estado <> 'publicada' and e.clave in (${LISTA_CRITICAS_SQL});
+  if v_sin_publicar is not null and coalesce(current_setting('dulabs.permitir_temas_sin_publicar', true), '') <> 'si' then
+    raise exception '${t}: estos temas críticos siguen sin publicar: %. Publícalos (o archívalos) antes de abrir las herramientas a todos; para seguir sin ellos: set dulabs.permitir_temas_sin_publicar = ''si'';', v_sin_publicar;
+  end if;
+
+  update public.dulabs_agente_runtime_config
+     set negocio = negocio - 'comercial_piloto', updated_at = now()
+   where id = v_cfg.id;
+
+  raise notice '${t}: herramientas comerciales ABIERTAS a todos los clientes (ya no hay piloto)';
 end $$;
 `;
 }
@@ -364,8 +463,8 @@ export function sqlReversaHabilitarHerramientas(slug: string): string {
   return `-- CMS COMERCIAL (Bloque 29) — REVERSA de 05_habilitar_herramientas_comerciales.sql para ${t}.
 -- Corre en el SQL Editor de Supabase como UNA sola sentencia (un bloque DO, atómico).
 --
--- QUÉ HACE: quita de la lista de herramientas de ARIA las cuatro del CMS (ARIA y su guarda vuelven a ser exactamente los de antes del script 05). Lo publicado en el CMS queda
---   guardado y sin efecto sobre ARIA.
+-- QUÉ HACE: quita de la lista de herramientas de ARIA las cuatro del CMS y el piloto (negocio.comercial_piloto): ARIA y su guarda vuelven a ser exactamente los de antes del script 05
+--   para TODOS los clientes. Lo publicado en el CMS queda guardado y sin efecto sobre ARIA.
 -- SE NIEGA si algún tema crítico (${CLAVES_CRITICAS.join(", ")}) ya se RETIRÓ del prompt (está publicado en el CMS pero ya no en el prompt): sin las herramientas, ARIA quedaría sin esa
 --   información. Primero restaura esos temas con 06_retirar_textos_del_prompt.reversa.sql; para apagar de todos modos, confirma en la misma sesión:
 --       set dulabs.confirmar_reversa_herramientas = 'si';
@@ -390,10 +489,12 @@ ${MAPA_SQL("legado_clave")}
   end if;
 
   update public.dulabs_agente_runtime_config
-     set herramientas = array(select h from unnest(herramientas) with ordinality as x(h, o) where not (h = any (${ARREGLO_HERRAMIENTAS_SQL})) order by o), updated_at = now()
-   where id = v_cfg.id and herramientas && ${ARREGLO_HERRAMIENTAS_SQL};
+     set herramientas = array(select h from unnest(herramientas) with ordinality as x(h, o) where not (h = any (${ARREGLO_HERRAMIENTAS_SQL})) order by o),
+         negocio = negocio - 'comercial_piloto',
+         updated_at = now()
+   where id = v_cfg.id and (herramientas && ${ARREGLO_HERRAMIENTAS_SQL} or (negocio->'comercial_piloto') is not null);
 
-  raise notice '${t}: herramientas comerciales retiradas de ARIA';
+  raise notice '${t}: herramientas comerciales (y piloto) retiradas de ARIA';
 end $$;
 `;
 }
@@ -410,10 +511,11 @@ export function sqlRetirarDelPrompt(slug: string): string {
 --       set dulabs.retirar_temas = 'promociones,envios';      -- las claves a retirar, separadas por coma (la lista completa está abajo)
 --       <este script>
 --
--- ORDEN: DESPUÉS de 05_habilitar_herramientas_comerciales.sql y de VERIFICAR con conversaciones reales que ARIA responde bien con las herramientas. Se retira de a pocos temas.
+-- ORDEN: DESPUÉS de 05_habilitar_herramientas_comerciales.sql, de VERIFICAR con conversaciones reales que ARIA responde bien con las herramientas y de ABRIRLAS a todos los clientes
+--   con 05b_abrir_herramientas_comerciales_a_todos.sql (mientras estén en piloto este script se niega). Se retira de a pocos temas.
 --
 -- QUÉ HACE: quita del prompt de ARIA (negocio.conocimiento) los textos de los temas indicados. Desde ese momento la ÚNICA fuente de esos textos es el CMS publicado.
--- GUARDAS (se niega si no se cumplen): sin temas indicados; una clave que no está en la tabla; las cuatro herramientas comerciales no están habilitadas; el tema no está PUBLICADO en
+-- GUARDAS (se niega si no se cumplen): sin temas indicados; una clave que no está en la tabla; las cuatro herramientas comerciales no están habilitadas o siguen en piloto; el tema no está PUBLICADO en
 --   el CMS (publicado y no archivado). No toca nada más del prompt (personalidad, tono, políticas, «Despedida», «Datos del pedido»…), ni la configuración, ni otros negocios.
 -- Se puede repetir sin efectos nuevos (un tema que ya no está, se salta).
 -- Claves: ${TEXTOS_MIGRABLES.map((x) => x.clave).join(", ")}.
@@ -439,6 +541,10 @@ ${guardas(slug, t)}
   -- Las herramientas comerciales deben estar habilitadas: si no, quitar el texto del prompt dejaría a ARIA sin esa información.
   if not (v_cfg.herramientas @> ${ARREGLO_HERRAMIENTAS_SQL}) then
     raise exception '${t}: las herramientas comerciales de ARIA no están habilitadas; corre primero 05_habilitar_herramientas_comerciales.sql';
+  end if;
+  -- Con el piloto solo algunos clientes tienen las herramientas: retirar los textos del prompt dejaría a los demás sin esa información.
+  if (v_cfg.negocio->'comercial_piloto') is not null then
+    raise exception '${t}: las herramientas comerciales están en PILOTO (solo algunos números): los demás clientes se quedarían sin esa información; ábrelas a todos con 05b_abrir_herramientas_comerciales_a_todos.sql antes de retirar textos del prompt';
   end if;
 
   v_lista := btrim(coalesce(current_setting('dulabs.retirar_temas', true), ''));
@@ -593,7 +699,8 @@ export function sqlEstadoMigracion(slug: string): string {
 --   en_el_cms     no migrado · borrador · publicada · pausada · archivada   (publicada = ARIA lo consulta con las herramientas)
 --   version       versión publicada (si hay)
 --   fuente        prompt (solo en el prompt) · prompt+cms (en ambos: la etapa de verificación) · cms (solo en el CMS publicado) · sin texto
--- La última fila (herramientas) dice cuántas de las 4 herramientas comerciales están habilitadas para ARIA.
+-- Las dos últimas filas dicen cuántas de las 4 herramientas comerciales están habilitadas para ARIA y si siguen en PILOTO (solo ciertos números, con sus últimos 4 dígitos) o ya están
+--   abiertas a TODOS los clientes.
 -- Si el CMS no está instalado, esta consulta falla con «relation does not exist»: es la respuesta.
 --
 -- GENERADO por el código (lib/cms-comercial/migracion-textos.ts): una prueba lo regenera y lo compara con este archivo. No se edita a mano.
@@ -640,6 +747,13 @@ select p.orden, p.legado, null, exists (select 1 from en_prompt e where e.n = ${
 union all
 select 2000, 'herramientas comerciales', null, null,
        (select count(*) from unnest(${ARREGLO_HERRAMIENTAS_SQL}) as h where h = any (coalesce((select herramientas from aria), array[]::text[])))::text || ' de ${HERRAMIENTAS_COMERCIALES.length} habilitadas', null, null
+union all
+select 2001, 'piloto de las herramientas', null, null,
+       case
+         when not coalesce((select herramientas @> ${ARREGLO_HERRAMIENTAS_SQL} from aria), false) then 'no aplica (sin herramientas)'
+         when (select negocio->'comercial_piloto' from aria) is null then 'abiertas a TODOS los clientes'
+         else 'solo ' || (select jsonb_array_length(negocio->'comercial_piloto') from aria)::text || ' número(s): ' || (select string_agg('…' || right(n, 4), ', ') from aria, jsonb_array_elements_text(aria.negocio->'comercial_piloto') as n)
+       end, null, null
 order by 1;
 `;
 }
@@ -651,6 +765,7 @@ export function archivosMigracionTextos(slug: string): Readonly<Record<string, s
     "04_migrar_textos_a_borradores.reversa.sql": sqlReversaMigrarTextos(slug),
     "05_habilitar_herramientas_comerciales.sql": sqlHabilitarHerramientas(slug),
     "05_habilitar_herramientas_comerciales.reversa.sql": sqlReversaHabilitarHerramientas(slug),
+    "05b_abrir_herramientas_comerciales_a_todos.sql": sqlAbrirHerramientasATodos(slug),
     "06_retirar_textos_del_prompt.sql": sqlRetirarDelPrompt(slug),
     "06_retirar_textos_del_prompt.reversa.sql": sqlReversaRetirarDelPrompt(slug),
     "07_estado_migracion_textos_solo_lectura.sql": sqlEstadoMigracion(slug),

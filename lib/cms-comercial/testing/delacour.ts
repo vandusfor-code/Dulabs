@@ -16,6 +16,7 @@ export const scriptMigrarTextos = () => leer("04_migrar_textos_a_borradores.sql"
 export const scriptReversaMigrarTextos = () => leer("04_migrar_textos_a_borradores.reversa.sql");
 export const scriptHabilitarHerramientas = () => leer("05_habilitar_herramientas_comerciales.sql");
 export const scriptReversaHabilitarHerramientas = () => leer("05_habilitar_herramientas_comerciales.reversa.sql");
+export const scriptAbrirHerramientasATodos = () => leer("05b_abrir_herramientas_comerciales_a_todos.sql");
 export const scriptRetirarDelPrompt = () => leer("06_retirar_textos_del_prompt.sql");
 export const scriptReversaRetirarDelPrompt = () => leer("06_retirar_textos_del_prompt.reversa.sql");
 export const scriptEstadoMigracion = () => leer("07_estado_migracion_textos_solo_lectura.sql");
