@@ -5,7 +5,12 @@
  * fakes en memoria -- ningún test toca Supabase/Gemini/WhatsApp reales, y
  * ninguno crea una reserva real (iniciarAgendaV2 es un fake que solo
  * registra la llamada, nunca ejecuta lib/agenda-v2/router.ts de verdad).
+ *
+ * MODO: estas pruebas cubren el modo «completo» (la REVERSA del asistente: conversación con IA durante toda la charla, AMORE_BOT_MODO=completo). El modo por defecto,
+ * «saludo único», se prueba en lib/amore-saludo-unico.test.ts.
  */
+process.env.AMORE_BOT_MODO = "completo";
+
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

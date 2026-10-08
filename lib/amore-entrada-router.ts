@@ -24,7 +24,11 @@ import { adquirirCandadoChat, liberarCandadoChat } from "@/lib/chat-lock";
 import { enviarMensajeWhatsApp } from "@/lib/whatsapp-worker-client";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 import { iniciarNuevaSesionAgendaV2, iniciarGestionCitasAgendaV2, type EntidadesExtraidasReserva } from "@/lib/agenda-v2/router";
-import type { AccionGestionCitasDetectada } from "@/lib/agenda-v2/entrada";
+import { detectarIntencionGestionCitas, type AccionGestionCitasDetectada } from "@/lib/agenda-v2/entrada";
+import { modoBotAmore, type ModoBotAmore } from "@/lib/amore-bot-modo";
+import { pideCitaNueva } from "@/lib/amore-pide-cita";
+import { opcionDelMenuBienvenida } from "@/lib/amore-menu-bienvenida";
+import { ultimoSalienteLoEscribioUnaPersona } from "@/lib/chats/ultimo-saliente";
 import { nombreConocido, recordarNombreCliente, clienteConocidoCompleto } from "@/lib/clientes-conocidos";
 import { parseDiaCumpleanos, parseMesCumpleanos, parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 import { obtenerHistorialRecienteChat } from "@/lib/chats/historial-reciente";
@@ -35,11 +39,13 @@ import {
   actualizarEntradaAmore,
   obtenerAtencionHumanaDesde,
   type EntradaAmore,
+  type ModoEntradaAmore,
 } from "@/lib/amore-entrada-sesiones";
 import {
   MENSAJE_BIENVENIDA_1,
   MENSAJE_BIENVENIDA_2,
   MENSAJE_GEMINI_BIENVENIDA,
+  MENSAJE_CONSULTA_LA_ATIENDE_UNA_PERSONA,
   MENSAJE_ATENCION_HUMANA_CLIENTE,
   NUMERO_JESSICA,
   MENSAJE_REGISTRO_NOMBRE,
@@ -104,6 +110,10 @@ export interface AmoreEntradaDeps {
   iniciarAgendaV2?: (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; entidades?: EntidadesExtraidasReserva }) => Promise<void>;
   /** NUEVA FASE (autorizado, reconocimiento semántico de CANCELAR_CITA/REPROGRAMAR_CITA) -- inyectable para tests, default real: iniciarGestionCitasAgendaV2 (lib/agenda-v2/router.ts), sin deps custom. */
   iniciarGestionCitasAgendaV2?: (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string; accion: AccionGestionCitasDetectada }) => Promise<void>;
+  /** Interruptor «saludo único» / «completo» (lib/amore-bot-modo.ts). Inyectable para tests; en producción sale de AMORE_BOT_MODO. */
+  modoBot?: ModoBotAmore;
+  /** Modo «saludo único»: ¿una persona del equipo fue la última en escribirle? Si sí, «1/2/3» ya no son opciones del menú. Default real: lib/chats/ultimo-saliente.ts. */
+  ultimoSalienteEsPersona?: typeof ultimoSalienteLoEscribioUnaPersona;
 }
 
 export type ResultadoEntradaAmore = { manejado: boolean };
@@ -130,6 +140,7 @@ export async function procesarEntradaAmore(
   const clasificar = deps.clasificarConGemini ?? clasificarMensajeConGemini;
   const iniciarAgendaV2 = deps.iniciarAgendaV2 ?? ((p) => iniciarNuevaSesionAgendaV2(p));
   const iniciarGestionCitas = deps.iniciarGestionCitasAgendaV2 ?? ((p) => iniciarGestionCitasAgendaV2(p));
+  const modo = deps.modoBot ?? modoBotAmore();
 
   const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
 
@@ -144,13 +155,29 @@ export async function procesarEntradaAmore(
       // producción, nunca debe romper el canal: se deja pasar al
       // comportamiento normal (Flow Engine + Gemini de siempre).
       console.error("[amore-entrada] error buscando estado -- se deja pasar al comportamiento normal", err);
-      return { manejado: false };
+      // Modo «saludo único»: el comportamiento normal de reserva sería conversar con IA (Flow Engine), justo lo que este modo evita -- ante un fallo de lectura el asistente se
+      // calla (el error queda en el log) en vez de improvisar una conversación.
+      return { manejado: modo === "saludo_unico" };
     }
 
     // Mismo wamid ya procesado -- nunca se reenvía nada ni se reprocesa
     // (sección IDEMPOTENCIA del pedido).
     if (fila && fila.ultimoWamidProcesado === params.wamid) {
       return { manejado: true };
+    }
+
+    // MODO «SALUDO ÚNICO» (por defecto; lib/amore-bot-modo.ts): sin IA y sin conversación. Todo lo de abajo es el modo «completo» (la reversa), intacto.
+    if (modo === "saludo_unico") {
+      return await atenderEnSaludoUnico(params, {
+        fila,
+        enviarMensaje,
+        crearEntrada,
+        actualizarEntrada,
+        iniciarAgendaV2,
+        iniciarGestionCitas,
+        buscarNombreConocidoDep: deps.buscarNombreConocido ?? nombreConocido,
+        ultimoSalienteEsPersona: deps.ultimoSalienteEsPersona ?? ultimoSalienteLoEscribioUnaPersona,
+      });
     }
 
     if (!fila) {
@@ -378,6 +405,157 @@ export async function procesarEntradaAmore(
     });
     await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: replyText, origen: "automatico" });
     return { manejado: true };
+  } finally {
+    await liberar(phoneNumberId, params.telefono, params.wamid);
+  }
+}
+
+/** Lo que necesita el modo «saludo único» para dar el saludo del primer contacto. */
+interface CtxSaludoPrimerContacto {
+  enviarMensaje: typeof enviarMensajeWhatsApp;
+  crearEntrada: typeof crearEntradaAmore;
+}
+
+/**
+ * MODO «SALUDO ÚNICO» (lib/amore-bot-modo.ts) -- primer contacto de un número (todavía sin fila en dulabs_amore_entrada): el saludo de siempre, UNA sola vez en la vida de esa
+ * conversación.
+ *   - Solo saluda, o trae cualquier otro contenido (una pregunta, «¿cuánto cuesta?»): bienvenida + menú 1/2/3 y la fila queda en «inicio» (el menú espera SU próxima
+ *     respuesta). El asistente NO contesta la pregunta: la atiende el equipo.
+ *   - Ya pide algo concreto que atiende otra capa (una cita nueva, o gestionar la que tiene): bienvenida y el mensaje SIGUE su camino (enlace de reserva / gestión de su
+ *     cita). La fila queda en «gemini» (en este modo significa «ya se la saludó»: no hay IA) con un wamid distinto del real, para que esa capa no lo dé por procesado.
+ * `atendido: true` = el mensaje de la clienta ya quedó resuelto aquí.
+ */
+async function darSaludoPrimerContacto(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; texto: string; wamid: string },
+  ctx: CtxSaludoPrimerContacto,
+): Promise<{ atendido: boolean; fila: EntradaAmore }> {
+  await ctx.enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_BIENVENIDA_1, origen: "automatico" });
+  if (pideCitaNueva(params.texto) || detectarIntencionGestionCitas(params.texto) !== null) {
+    const fila = await ctx.crearEntrada(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: `saludo:${params.wamid}`, modo: "gemini" });
+    return { atendido: false, fila };
+  }
+  await ctx.enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_BIENVENIDA_2, origen: "automatico" });
+  const fila = await ctx.crearEntrada(params.supabase, { tenantId: params.idTenant, telefonoCliente: params.telefono, wamid: params.wamid, modo: "inicio" });
+  return { atendido: true, fila };
+}
+
+/**
+ * MODO «SALUDO ÚNICO» -- la conversación DESPUÉS del saludo. El asistente solo habla en estos casos; en cualquier otro se CALLA (lo atiende el equipo) y NUNCA llama a la IA:
+ *   · menú recién enviado (modo «inicio»), su próxima respuesta (el número o lo que dice la opción: lib/amore-menu-bienvenida.ts): «1» -> enlace de reserva; «2» -> una respuesta fija («una persona te responde»); «3» o pedir una persona ->
+ *     avisa a Jessica (atención humana). Si una persona del equipo ya le escribió después del menú, el número es parte de SU conversación y el asistente no interviene.
+ *   · en cualquier momento: decir que quiere una cita (frases deterministas) -> enlace de reserva.
+ * Lo demás que el asistente sí atiende vive en las capas de ANTES (hablar con una persona, comprar desde la tienda, gestionar SU cita por frases claras) y no pasa por aquí.
+ * Siempre devuelve manejado:true: el mensaje NO cae al Flow Engine (que conversaría con IA).
+ */
+async function atenderEnSaludoUnico(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; texto: string; wamid: string },
+  ctx: {
+    fila: EntradaAmore | null;
+    enviarMensaje: typeof enviarMensajeWhatsApp;
+    crearEntrada: typeof crearEntradaAmore;
+    actualizarEntrada: typeof actualizarEntradaAmore;
+    iniciarAgendaV2: NonNullable<AmoreEntradaDeps["iniciarAgendaV2"]>;
+    iniciarGestionCitas: NonNullable<AmoreEntradaDeps["iniciarGestionCitasAgendaV2"]>;
+    buscarNombreConocidoDep: typeof nombreConocido;
+    ultimoSalienteEsPersona: typeof ultimoSalienteLoEscribioUnaPersona;
+  },
+): Promise<ResultadoEntradaAmore> {
+  const base = { supabase: params.supabase, idTenant: params.idTenant, telefono: params.telefono, wamid: params.wamid };
+  const texto = params.texto.trim();
+
+  const fila = ctx.fila;
+  if (!fila) {
+    // Normalmente la capa del primer contacto (saludarPrimerContactoAmore) ya saludó; esto cubre cuando esta función se invoca sin ella.
+    const saludo = await darSaludoPrimerContacto(params, ctx);
+    if (saludo.atendido) return { manejado: true };
+    // En su primer mensaje ya pedía algo concreto y ninguna capa previa lo atendió: se atiende aquí.
+    const gestion = detectarIntencionGestionCitas(texto);
+    await ctx.actualizarEntrada(params.supabase, saludo.fila.id, { ultimoWamidProcesado: params.wamid });
+    if (pideCitaNueva(texto)) await ctx.iniciarAgendaV2(base);
+    else if (gestion) await ctx.iniciarGestionCitas({ ...base, accion: gestion });
+    return { manejado: true };
+  }
+
+  const marcar = (cambios: { modo?: ModoEntradaAmore } = {}) => ctx.actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid, ...cambios });
+
+  if (fila.modo === "inicio") {
+    const numero = opcionDelMenuBienvenida(texto);
+    // Si una persona del equipo ya está conversando con ella, «1» o «2» son parte de ESA conversación (p. ej. «¿las 10 o las 11?»), no una opción del menú.
+    const opcionDelMenu = numero !== null && !(await ctx.ultimoSalienteEsPersona(params.supabase, { idTenant: params.idTenant, telefono: params.telefono })) ? numero : null;
+
+    if (opcionDelMenu === "1") {
+      await marcar({ modo: "gemini" });
+      await ctx.iniciarAgendaV2(base);
+      return { manejado: true };
+    }
+    if (opcionDelMenu === "2") {
+      await marcar({ modo: "gemini" });
+      await ctx.enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_CONSULTA_LA_ATIENDE_UNA_PERSONA, origen: "automatico" });
+      return { manejado: true };
+    }
+    if (opcionDelMenu === "3" || detectarSolicitudAtencionHumana(texto)) {
+      return await activarAtencionHumana(params, {
+        fila,
+        enviarMensaje: ctx.enviarMensaje,
+        crearEntrada: ctx.crearEntrada,
+        actualizarEntrada: ctx.actualizarEntrada,
+        buscarNombreConocidoDep: ctx.buscarNombreConocidoDep,
+      });
+    }
+    // Cualquier otra cosa: el menú ya cumplió su función (los números dejan de valer) y el asistente se calla; si pide una cita, sí recibe el enlace.
+    await marcar({ modo: "gemini" });
+    if (pideCitaNueva(texto)) await ctx.iniciarAgendaV2(base);
+    return { manejado: true };
+  }
+
+  await marcar();
+  if (pideCitaNueva(texto)) await ctx.iniciarAgendaV2(base);
+  return { manejado: true };
+}
+
+export interface SaludoInicialDeps {
+  adquirirCandadoChat?: typeof adquirirCandadoChat;
+  liberarCandadoChat?: typeof liberarCandadoChat;
+  buscarEntrada?: typeof buscarEntradaAmore;
+  crearEntrada?: typeof crearEntradaAmore;
+  enviarMensajeWhatsApp?: typeof enviarMensajeWhatsApp;
+  /** Interruptor «saludo único» / «completo» (lib/amore-bot-modo.ts). Inyectable para tests; en producción sale de AMORE_BOT_MODO. */
+  modoBot?: ModoBotAmore;
+}
+
+/**
+ * MODO «SALUDO ÚNICO» -- capa del PRIMER CONTACTO. Va en el pipeline DESPUÉS de atención humana / registro / compra y ANTES de Agenda V2 (lib/whatsapp-qr-pipeline.ts): todo
+ * número nuevo recibe el saludo, también el que abre con «quiero una cita» o «quiero cambiar mi cita» (Agenda V2 lo atendía antes de que existiera la fila y el saludo salía
+ * tarde, en respuesta a su SIGUIENTE mensaje). Con la fila ya creada no hace nada. Solo AMORE y solo en modo «saludo único»; en «completo» deja todo como estaba.
+ * `manejado:true` = el mensaje ya quedó resuelto (saludo + menú); `manejado:false` = ya se saludó y el mensaje sigue su camino por las demás capas.
+ */
+export async function saludarPrimerContactoAmore(
+  params: { supabase: SupabaseClient; idTenant: string; telefono: string; texto: string; wamid: string },
+  deps: SaludoInicialDeps = {},
+): Promise<ResultadoEntradaAmore> {
+  if (params.idTenant !== AMORE_TENANT_ID) return { manejado: false };
+  if ((deps.modoBot ?? modoBotAmore()) !== "saludo_unico") return { manejado: false };
+
+  const adquirir = deps.adquirirCandadoChat ?? adquirirCandadoChat;
+  const liberar = deps.liberarCandadoChat ?? liberarCandadoChat;
+  const buscarEntrada = deps.buscarEntrada ?? buscarEntradaAmore;
+  const crearEntrada = deps.crearEntrada ?? crearEntradaAmore;
+  const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
+  const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
+
+  await adquirir(phoneNumberId, params.telefono, params.wamid);
+  try {
+    let fila: EntradaAmore | null;
+    try {
+      fila = await buscarEntrada(params.supabase, params.idTenant, params.telefono);
+    } catch (err) {
+      // Mismo criterio defensivo que el resto del puente: sin poder leer el estado no se adivina un «primer contacto» (se saludaría dos veces); las capas siguientes deciden.
+      console.error("[amore-entrada] error buscando estado (saludo único) -- se deja pasar a las demás capas", err);
+      return { manejado: false };
+    }
+    if (fila) return { manejado: false };
+    const { atendido } = await darSaludoPrimerContacto(params, { enviarMensaje, crearEntrada });
+    return { manejado: atendido };
   } finally {
     await liberar(phoneNumberId, params.telefono, params.wamid);
   }

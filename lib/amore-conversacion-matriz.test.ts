@@ -7,7 +7,12 @@
  *   - el envío por WhatsApp (se capturan los mensajes),
  *   - el LLM: un clasificador determinista que responde SOLO con los datos del contexto que recibe (así se verifica que
  *     los datos reales llegan al modelo; la calidad de redacción de Gemini real no se puede medir sin su API key).
+ *
+ * MODO: esta matriz cubre el modo «completo» (la REVERSA del asistente: conversación con IA durante toda la charla, AMORE_BOT_MODO=completo). El modo por defecto,
+ * «saludo único» (saluda una vez, enlace si piden cita, silencio en lo demás), se prueba en lib/amore-saludo-unico.test.ts.
  */
+process.env.AMORE_BOT_MODO = "completo";
+
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { atenderMensajeWhatsAppQR, type DepsPipelineWhatsAppQR } from "@/lib/whatsapp-qr-pipeline";
@@ -34,9 +39,12 @@ const calendario = (id: number) => `cal-${PROFESIONALES.find((p) => p.id === id)
 
 const HOY = fechaColombiaDesdeIso(new Date().toISOString());
 const DIAS = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+// Un día de LUNES A VIERNES (jornada completa): el sábado la jornada simulada se recorta y varias pruebas esperan horas de la tarde (el jueves «hoy + 2» caía en sábado y fallaba
+// «después de las 5»); el domingo no se atiende.
 const DIA_OBJETIVO = (() => {
-  const d = sumarDias(HOY, 2);
-  return new Date(`${d}T12:00:00-05:00`).getDay() === 0 ? sumarDias(HOY, 3) : d;
+  let d = sumarDias(HOY, 2);
+  while ([0, 6].includes(new Date(`${d}T12:00:00-05:00`).getDay())) d = sumarDias(d, 1);
+  return d;
 })();
 const NOMBRE_DIA = DIAS[new Date(`${DIA_OBJETIVO}T12:00:00-05:00`).getDay()]!;
 const unix = (fecha: string, hhmm: string) => Math.floor(new Date(`${fecha}T${hhmm}:00-05:00`).getTime() / 1000);

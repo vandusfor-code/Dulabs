@@ -114,13 +114,15 @@ function escenario() {
   return { deps, enviados, citasCreadas, sesion: () => sesion };
 }
 
-// "Hoy" REAL (el motor de días también usa la fecha real) + un día objetivo laborable a 2-3 días (nunca domingo), para
-// que la conversación sea determinística sin importar qué día corra el test.
+// "Hoy" REAL (el motor de días también usa la fecha real) + un día objetivo de LUNES A VIERNES a 2-4 días (jornada completa), para
+// que la conversación sea determinística sin importar qué día corra el test: el sábado la jornada simulada se recorta (el jueves
+// «hoy + 2» caía en sábado y «después de las 5» no encontraba horas) y el domingo no se atiende.
 const HOY_REAL = fechaColombiaDesdeIso(new Date().toISOString());
 const DIAS_SEMANA = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
 const DIA_OBJETIVO = (() => {
-  const dosDias = sumarDias(HOY_REAL, 2);
-  return new Date(`${dosDias}T12:00:00-05:00`).getDay() === 0 ? sumarDias(HOY_REAL, 3) : dosDias;
+  let d = sumarDias(HOY_REAL, 2);
+  while ([0, 6].includes(new Date(`${d}T12:00:00-05:00`).getDay())) d = sumarDias(d, 1);
+  return d;
 })();
 const NOMBRE_DIA_OBJETIVO = DIAS_SEMANA[new Date(`${DIA_OBJETIVO}T12:00:00-05:00`).getDay()]!;
 

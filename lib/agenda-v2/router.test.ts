@@ -16,7 +16,12 @@
  * SOLO Uñas -- y "s-retoques-real" se deja deliberadamente SIN ningún
  * profesional elegible para poder probar el caso "sin profesionales" sin
  * inventar un servicio nuevo.
+ *
+ * MODO AMORE: los casos de AMORE de este archivo cubren el modo «completo» (la REVERSA del asistente, AMORE_BOT_MODO=completo). El cierre SILENCIOSO de sesiones abandonadas
+ * del modo por defecto, «saludo único», se prueba en lib/amore-saludo-unico.test.ts. Los demás negocios no leen ese interruptor.
  */
+process.env.AMORE_BOT_MODO = "completo";
+
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
