@@ -77,6 +77,13 @@ function matches(row: Row, col: string, op: string, raw: string): boolean {
     }
     case "is":
       return parseValue(raw) === null ? v === null || v === undefined : v === parseValue(raw);
+    case "like":
+    case "ilike": {
+      // like/ilike con % y _ como en PostgreSQL (el catálogo busca productos con ilike."%texto%").
+      const escapado = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const patron = new RegExp(`^${escapado.replace(/%/g, ".*").replace(/_/g, ".")}$`, op === "ilike" ? "is" : "s");
+      return typeof v === "string" && patron.test(v);
+    }
     default:
       throw new Error(`operador no soportado: ${op}`);
   }

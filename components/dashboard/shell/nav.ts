@@ -18,6 +18,7 @@ import {
   Inbox,
   ShoppingBag,
   ClipboardCheck,
+  Store,
   type LucideIcon,
 } from "lucide-react";
 import type { Rol } from "@/lib/team";
@@ -121,6 +122,9 @@ export const navSections: NavSection[] = [
       // todos los roles del tenant (lectura incluida); solo admin edita
       // (lo exige el backend, lib/catalogo/auth.ts).
       { label: "Catálogo", labelEn: "Catalog", href: "/dashboard/catalogo", icon: Package, modulo: "catalogo" },
+      // Bloque 29 -- administración de tienda (portada, ofertas, combos, campañas y contenido comercial): solo negocios con el módulo
+      // "cms_comercial". Visible para todos los roles (lectura incluida); solo admin modifica (lo exige el backend).
+      { label: "Tienda", labelEn: "Store", href: "/dashboard/tienda", icon: Store, modulo: "cms_comercial" },
       { label: "Plantillas", labelEn: "Templates", href: "/dashboard/plantillas", icon: LayoutTemplate },
       { label: "Campañas", labelEn: "Campaigns", href: "/dashboard/campanas", icon: Send },
       { label: "Encuestas", labelEn: "Surveys", href: "/dashboard/surveys", icon: ClipboardList },

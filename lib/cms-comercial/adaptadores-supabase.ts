@@ -3,10 +3,9 @@
  * Solo lectura; nada de aquí modifica el catálogo ni la configuración.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { availabilityOf, isReference } from "@/lib/catalogo/domain";
+import { availabilityOf, isReference, type CatalogProduct } from "@/lib/catalogo/domain";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
-import type { PuertoCatalogo, PuertoVariables, VariablesNegocio } from "@/lib/cms-comercial/puertos";
-import type { ProductoValidacion } from "@/lib/cms-comercial/validacion";
+import type { ProductoVista, PuertoCatalogo, PuertoVariables, VariablesNegocio } from "@/lib/cms-comercial/puertos";
 import { formatearPesos, type ValoresVariables } from "@/lib/cms-comercial/variables";
 
 /** Un precio de 0 o negativo equivale a «a consultar»: ninguna oferta puede apoyarse en él. */
@@ -14,27 +13,36 @@ const precioONulo = (v: number | null): number | null => (typeof v === "number" 
 
 export function crearPuertoCatalogoSupabase(supabase: SupabaseClient): PuertoCatalogo {
   const repo = createSupabaseCatalogRepository(supabase);
+  const vista = (p: CatalogProduct): ProductoVista => ({
+    referencia: p.reference,
+    nombre: p.name,
+    categoriaId: p.categoryId,
+    categoriaNombre: p.categoryName,
+    activo: p.status === "ACTIVE",
+    agotado: availabilityOf(p) === "sold_out",
+    precioDetal: precioONulo(p.pricing.retail),
+    precioMayor: precioONulo(p.pricing.wholesale),
+    miniatura: p.primaryImage?.thumbUrl ?? null,
+  });
   return {
     async productosPorReferencia(tenantId, referencias) {
       const validas = [...new Set(referencias)].filter(isReference).slice(0, 300);
       if (validas.length === 0) return [];
-      const productos = await repo.getProductsByReferences(tenantId, validas);
-      return productos.map(
-        (p): ProductoValidacion => ({
-          referencia: p.reference,
-          nombre: p.name,
-          categoriaId: p.categoryId,
-          activo: p.status === "ACTIVE",
-          agotado: availabilityOf(p) === "sold_out",
-          precioDetal: precioONulo(p.pricing.retail),
-          precioMayor: precioONulo(p.pricing.wholesale),
-        }),
-      );
+      return (await repo.getProductsByReferences(tenantId, validas)).map(vista);
+    },
+
+    async buscarProductos(tenantId, consulta, limite) {
+      const { items } = await repo.listProducts(tenantId, { search: consulta || undefined, status: "ACTIVE", offset: 0, limit: Math.max(1, Math.min(limite, 50)) });
+      return items.map(vista);
     },
 
     async categoriasPorId(tenantId, ids) {
       const buscadas = new Set(ids);
       return (await repo.listCategories(tenantId)).filter((c) => buscadas.has(c.id)).map((c) => ({ id: c.id, nombre: c.name }));
+    },
+
+    async listarCategorias(tenantId) {
+      return (await repo.listCategories(tenantId)).map((c) => ({ id: c.id, nombre: c.name }));
     },
   };
 }

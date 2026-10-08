@@ -50,6 +50,8 @@ export interface EntidadResumen {
   versionActiva: number | null;
   rev: number;
   modalidad: string | null;
+  /** Solo en el contenido comercial: de qué trata (horarios, envíos, mayoristas…). null en los demás tipos. */
+  tema: string | null;
   archivada: boolean;
   updatedAt: string;
   publishedAt: string | null;
@@ -117,6 +119,7 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
       versionActiva: e.versionActiva,
       rev: e.rev,
       modalidad: typeof modalidad === "string" ? (modalidad as Modalidad) : null,
+      tema: e.tipo === "contenido" && typeof mostrado.tema === "string" ? mostrado.tema : null,
       archivada: e.archivadaAt !== null,
       updatedAt: e.updatedAt,
       publishedAt: e.publishedAt,

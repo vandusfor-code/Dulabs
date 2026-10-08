@@ -154,6 +154,7 @@ const ETIQUETAS: Readonly<Record<string, string>> = {
   banner: "Banner",
   "banner.imagen": "Imagen del banner",
   "banner.visible": "Banner visible",
+  "banner.destino": "Destino del banner",
   secciones: "Secciones",
   categorias_destacadas: "Categorías destacadas",
   productos_destacados: "Productos destacados",

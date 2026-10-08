@@ -12,6 +12,13 @@
 export const VARIABLES = ["minimo_mayorista", "direccion_tienda", "nombre_negocio"] as const;
 export type VariableId = (typeof VARIABLES)[number];
 
+/** Cómo se llama cada variable para la administradora. */
+export const ETIQUETAS_VARIABLE: Readonly<Record<VariableId, string>> = {
+  minimo_mayorista: "Mínimo de la compra inicial mayorista",
+  direccion_tienda: "Dirección de la tienda",
+  nombre_negocio: "Nombre del negocio",
+};
+
 /** Valores ya formateados para mostrar (p. ej. «$750.000»). Una variable sin valor no está configurada. */
 export type ValoresVariables = Partial<Record<VariableId, string>>;
 
