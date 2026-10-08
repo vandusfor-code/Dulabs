@@ -12,7 +12,7 @@ import { atenderCancelarMiCita, atenderHorariosMiCita, atenderReprogramarMiCita,
 import { generarToken, hashDeToken, obtenerOCrearEnlace, GRACIA_TRAS_LA_CITA_MS } from "@/lib/mi-cita/enlaces";
 import { mensajeCitaCancelada } from "@/lib/mi-cita/mensajes";
 import { reservarPorPortalAmore } from "@/lib/mi-cita/reserva-portal";
-import { T, TELEFONO_CLIENTA, crearMundoAmore, diaLaborable } from "@/lib/mi-cita/testing/mundo-amore";
+import { T, TELEFONO_CLIENTA, ahoraFijo, crearMundoAmore, diaLaborable, type MundoAmore } from "@/lib/mi-cita/testing/mundo-amore";
 
 const sinLog = () => {};
 const unix = (d: Date) => Math.floor(d.getTime() / 1000);
@@ -24,15 +24,20 @@ function diaHabil(desde: Date, minimo: number): string {
   return dia;
 }
 
+/** Deja la cita en el pasado: avanza el reloj hasta un día DESPUÉS de que empezó (no «N días» fijos: según el día y la hora de partida, la cita de las 10:00 aún no habría pasado). */
+const dejarPasarLaCita = (x: { mundo: MundoAmore; inicio: Date }) => x.mundo.avanzarReloj(x.inicio.getTime() - x.mundo.ahora().getTime() + 86_400_000);
+
 async function armar(opciones: Parameters<typeof crearMundoAmore>[0] = {}, cita: { estado?: string; diasAdelante?: number; hora?: string } = {}) {
-  const mundo = crearMundoAmore(opciones);
+  // Reloj FIJO, nunca el del sistema: «ya pasó», «dentro de N días» y los días hábiles no pueden depender del día ni de la hora en que se corra la prueba.
+  const mundo = crearMundoAmore({ ...opciones, ahora: opciones.ahora ?? ahoraFijo() });
   const dia = diaHabil(mundo.ahora(), cita.diasAdelante ?? 3);
   const inicio = new Date(`${dia}T${cita.hora ?? "10:00"}:00-05:00`);
   const { citaId, eventoId } = mundo.sembrarCita({ id: 700, inicio, estado: cita.estado });
   const fin = new Date(inicio.getTime() + 7_200_000).toISOString();
   const enlace = (await obtenerOCrearEnlace(mundo.enlaces, { idTenant: T, citaId, citaFinISO: fin }, { ahora: mundo.ahora, log: sinLog }))!;
   const deps = mundo.depsMiCita();
-  const otroDia = diaHabil(mundo.ahora(), (cita.diasAdelante ?? 3) + 1);
+  // El siguiente día hábil DESPUÉS del de la cita, nunca el mismo (contando desde hoy, «+3» y «+4 días» podían caer ambos en el mismo lunes y la cita misma ocupaba el horario).
+  const otroDia = diaHabil(new Date(`${dia}T12:00:00-05:00`), 1);
   return { mundo, deps, token: enlace.token, citaId, eventoId, inicio, dia, otroDia };
 }
 
@@ -59,7 +64,7 @@ describe("1. Ver la cita", () => {
     const c = await verMiCita(cancelada.deps, cancelada.token);
     assert.ok(c.ok && !c.data.puedeCancelar && !c.data.puedeReprogramar && /ya fue cancelada/.test(c.data.aviso!));
     const pasada = await armar();
-    pasada.mundo.avanzarReloj(5 * 86_400_000);
+    dejarPasarLaCita(pasada);
     // El enlace sigue abriendo (14 días de gracia) pero la cita ya pasó.
     const pa = await verMiCita(pasada.mundo.depsMiCita(), pasada.token);
     assert.ok(pa.ok && !pa.data.puedeCancelar && !pa.data.puedeReprogramar && /ya pasó/.test(pa.data.aviso!));
@@ -194,7 +199,7 @@ describe("3. Cancelar", () => {
 
   it("una cita que ya pasó no se puede cancelar; una pendiente de aprobación sí", async () => {
     const pasada = await armar();
-    pasada.mundo.avanzarReloj(5 * 86_400_000);
+    dejarPasarLaCita(pasada);
     const r = await cancelarMiCita(pasada.mundo.depsMiCita(), pasada.token);
     assert.ok(!r.ok && r.codigo === "cita_no_gestionable");
     assert.equal(pasada.mundo.citas()[0]!.estado, "confirmada");
@@ -398,13 +403,13 @@ describe("5. Reprogramar", () => {
       assert.ok(!r.ok && r.codigo === "cita_no_gestionable", cfg.estado);
     }
     const pasada = await armar();
-    pasada.mundo.avanzarReloj(5 * 86_400_000);
+    dejarPasarLaCita(pasada);
     const r = await reprogramarMiCita(pasada.mundo.depsMiCita(), pasada.token, ENTRADA(pasada.otroDia, "15:00"));
     assert.ok(!r.ok && r.codigo === "cita_no_gestionable");
   });
 
   it("de punta a punta: reservar por el portal → abrir el enlace → reprogramar → cancelar; el calendario y la agenda quedan coherentes en cada paso", async () => {
-    const mundo = crearMundoAmore();
+    const mundo = crearMundoAmore({ ahora: ahoraFijo() });
     const dia = diaHabil(mundo.ahora(), 4);
     const otro = diaHabil(mundo.ahora(), 6);
     const nylas = { read: mundo.google.read, write: mundo.google.write, grantId: mundo.google.grantId };
