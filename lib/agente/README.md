@@ -53,6 +53,12 @@ Ninguna acepta tenant, negocio, canal, id de producto, precio, subtotal ni
 total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 `extractReferences`, `resolverReferencias`, el parser de WhatsApp.
 
+**Información comercial del CMS (Bloque 29 · PR 5)** — cuatro herramientas de LECTURA, solo en los números que las tengan en su lista (`dulabs_agente_runtime_config.herramientas`):
+`consultar_ofertas`, `consultar_combos`, `consultar_campanas` y `consultar_contenido_comercial`. Devuelven solo lo publicado, vigente y aplicable al canal del turno
+(`lib/cms-comercial/consulta.ts`); el modelo no pasa negocio, canal ni fecha. Sin el módulo o con una falla de lectura responden `UNAVAILABLE` (nunca un vacío falso).
+Detalle, contrato y activación: `lib/cms-comercial/README.md` («ARIA lee del CMS») y `supabase/provisioning/delacour/README.md`. El universo cerrado son 21 nombres; la lista de
+ASLC (16) no las incluye.
+
 ## Guardas deterministas
 
 - **Allowlist doble**: solo se declaran las permitidas y el runtime rechaza cualquier otro nombre (`TOOL_NOT_ALLOWED`).
@@ -61,6 +67,7 @@ total: un campo de más → `INVALID_INPUT`. Internas (no expuestas al modelo):
 - **Confirmación ligada**: `confirm_order` exige la propuesta vigente, mostrada con su total en un turno anterior (`CONFIRMATION_NOT_PRESENTED`); el motor revalida vencimiento, precio y stock.
 - **Canal**: el del número (`canal` de la config) o mayorista SOLO si la conversación trae una solicitud firmada del link mayorista.
 - **Anclaje**: los montos del cliente nunca respaldan un precio.
+- **Anclaje comercial** (`comercial-anclaje.ts`, solo con las herramientas del CMS en la lista del número): porcentajes, descuentos, ofertas, combos, campañas, vigencias, «no hay…», fuga mayorista y plazos de políticas solo salen si lo devuelto por las herramientas **en ese turno** los respalda (ni el cliente ni el prompt respaldan nada). Una corrección y, si el modelo insiste, mensaje fijo + asesora; la traza guarda solo los códigos (`trace.grounding.codes`). Corre también en las preguntas durante el checkout.
 - **Fallos**: mensaje fijo; dos fallos seguidos → asesora (pausa del chat). Seguridad del modelo → mensaje fijo.
 - **Asesora**: si tomó el chat mientras el agente pensaba, no se envía nada (ni texto ni fotos); si ya lo tiene, ni se llama al modelo. Tras `handoff_to_human` solo sale la despedida.
 - **Selección**: con varias opciones ya mostradas, al carrito solo entra la que el cliente señaló (respondió a su foto, dijo la posición, la referencia o un nombre inequívoco). "Quiero este" sin señal => `CHOICE_REQUIRED` y el agente pregunta.

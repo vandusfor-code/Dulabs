@@ -28,6 +28,7 @@
  */
 import { availabilityOf, isReference, maxOrderableUnits, normalizeSearch, type Availability, type CatalogProduct, type PriceContext, type ProductStatus } from "@/lib/catalogo/domain";
 import { normalizeText } from "@/lib/catalogo/import/analisis";
+import { precioQueRige, type OfertaDePrecio } from "@/lib/catalogo/precios";
 import { normalizeOrderItems, prepareOrder, type OrderItem, type PreparedOrder, type ResolvedOrderProduct } from "@/lib/catalogo/pedido";
 import type { CatalogRepository } from "@/lib/catalogo/repository";
 
@@ -39,8 +40,15 @@ export interface ProductoResuelto {
   categoryName: string | null;
   material: string | null;
   color: string | null;
-  /** Precios vigentes; null = no definido para ese canal (nunca un 0 inventado). */
+  /**
+   * Precios EFECTIVOS (los que se muestran y se cobran): el de lista o el de la oferta vigente que aplica, por canal; null = no definido para ese canal
+   * (nunca un 0 inventado). El motor de pedidos, la tienda y ARIA leen ESTE precio.
+   */
   prices: { retail: number | null; wholesale: number | null };
+  /** Solo cuando alguna oferta vigente fija el precio de algún canal: los precios de LISTA de los dos canales (antes de la oferta). */
+  listPrices?: { retail: number | null; wholesale: number | null };
+  /** Solo cuando alguna oferta vigente fija el precio de algún canal: la oferta de cada canal (null = en ese canal rige el precio de lista). */
+  offers?: { retail: OfertaDePrecio | null; wholesale: OfertaDePrecio | null };
   /** `units` solo existe si el negocio controla inventario de ese producto. */
   stock: { tracked: boolean; units: number | null };
   status: ProductStatus;
@@ -137,11 +145,14 @@ export function extractReferences(text: string): string[] {
 
 /** Verdad de un producto para un pedido del canal indicado (el precio del OTRO canal nunca entra). */
 export function toOrderProduct(p: ProductoResuelto & { productId?: string }, channel: PriceContext): ResolvedOrderProduct {
+  const oferta = p.offers?.[channel] ?? null;
+  const lista = p.listPrices?.[channel];
   return {
     reference: p.reference,
     ...(p.productId ? { productId: p.productId } : {}),
     name: p.name,
     price: channel === "wholesale" ? p.prices.wholesale : p.prices.retail,
+    ...(oferta && typeof lista === "number" ? { listPrice: lista, offer: { key: oferta.clave, name: oferta.nombre, version: oferta.version } } : {}),
     availability: p.availability,
     maxQuantity: p.maxQuantity,
   };
@@ -151,10 +162,15 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
   async function resolverProductos(tenantId: string, products: CatalogProduct[]): Promise<ProductoResuelto[]> {
     const primaries = await repo.listPrimaryMedia(tenantId, products.map((p) => p.id));
     const byProduct = new Map(primaries.map((m) => [m.productId, m]));
+    // Precio efectivo (ofertas vigentes del CMS). Sin puerto o con el módulo apagado: el de lista, como siempre. Si el negocio usa ofertas y no se pudieron
+    // verificar, LANZA (PreciosNoDisponibles): ni el motor de pedidos ni ARIA siguen con un precio sin verificar.
+    const evaluador = repo.precios ? await repo.precios.paraNegocio(tenantId) : null;
     return products.map((p) => {
       const media = byProduct.get(p.id);
       const legacy = p.primaryImage?.url ? repo.storagePathFromUrl(p.primaryImage.url) : null;
       const storagePath = media?.storagePath ?? (legacy && legacy.startsWith(`${tenantId}/`) && !legacy.includes("..") ? legacy : null);
+      const detal = precioQueRige(p, "retail", evaluador?.de(p, "retail"));
+      const mayor = precioQueRige(p, "wholesale", evaluador?.de(p, "wholesale"));
       return {
         reference: p.reference,
         name: p.name,
@@ -163,7 +179,10 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
         categoryName: p.categoryName,
         material: p.material,
         color: p.color,
-        prices: { retail: p.pricing.retail, wholesale: p.pricing.wholesale },
+        prices: { retail: detal.precio, wholesale: mayor.precio },
+        ...(detal.oferta || mayor.oferta
+          ? { listPrices: { retail: detal.precioLista, wholesale: mayor.precioLista }, offers: { retail: detal.oferta, wholesale: mayor.oferta } }
+          : {}),
         stock: { tracked: p.tracksStock, units: p.tracksStock ? p.stock : null },
         status: p.status,
         available: availabilityOf(p) !== "sold_out",

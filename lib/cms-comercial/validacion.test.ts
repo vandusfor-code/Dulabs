@@ -304,9 +304,42 @@ describe("página principal y campaña", () => {
   it("avisos que no bloquean: portada visible sin imagen y secciones vacías", () => {
     const sinImagen: Record<string, unknown> = { ...home().portada };
     delete sinImagen.imagen;
-    const r = validar("home", home({ portada: sinImagen, productos_destacados: [], secciones: [{ tipo: "destacados", visible: true }, { tipo: "categorias", visible: true }], categorias_destacadas: [] }), contexto());
+    const r = validar("home", home({ portada: sinImagen, productos_destacados: [], secciones: [{ tipo: "portada", visible: true }, { tipo: "destacados", visible: true }, { tipo: "categorias", visible: true }], categorias_destacadas: [] }), contexto());
     assert.equal(r.ok, true, JSON.stringify(r.errores));
     assert.deepEqual([...new Set(avisos(r))].sort(), ["portada_sin_imagen", "seccion_vacia"]);
+  });
+
+  it("avisos de lo que la tienda NO va a mostrar: portada o banner visibles con su sección apagada, banner sin configurar y ninguna sección visible", () => {
+    const imagen = { origen: "estatico" as const, src: "/catalogo/prueba/portada.png", ancho: 1600, alto: 900, alt: "Portada de prueba" };
+    const portadaVisible = { visible: true, titulo: "Historias que brillan", imagen };
+    const con = (over: Record<string, unknown>) => validar("home", home({ portada: portadaVisible, categorias_destacadas: [], productos_destacados: [], ...over }), contexto());
+    const aviso = (r: ReturnType<typeof con>, codigo: string, mensaje: RegExp) => {
+      assert.equal(r.ok, true, JSON.stringify(r.errores));
+      assert.ok(r.advertencias.some((a) => a.codigo === codigo && mensaje.test(a.mensaje)), JSON.stringify(r.advertencias));
+    };
+    aviso(con({ secciones: [{ tipo: "destacados", visible: true }] }), "seccion_apagada", /sección «portada» está desactivada/);
+    aviso(con({ secciones: [{ tipo: "portada", visible: false }, { tipo: "destacados", visible: true }] }), "seccion_apagada", /sección «portada» está desactivada/);
+    aviso(con({ secciones: [{ tipo: "portada", visible: true }, { tipo: "banner", visible: false }], banner: { visible: true, imagen } }), "seccion_apagada", /sección «banner» está desactivada/);
+    aviso(con({ secciones: [{ tipo: "portada", visible: true }, { tipo: "banner", visible: true }] }), "seccion_vacia", /no configuraste un banner/);
+    aviso(con({ secciones: [] }), "sin_secciones", /ninguna sección visible/);
+    aviso(con({ secciones: [{ tipo: "portada", visible: false }, { tipo: "destacados", visible: false }] }), "sin_secciones", /ninguna sección visible/);
+  });
+
+  it("una página completa y coherente (como la que se siembra) no tiene ningún aviso", () => {
+    const imagen = { origen: "estatico" as const, src: "/catalogo/prueba/portada.png", ancho: 1600, alto: 900, alt: "Portada de prueba" };
+    const r = validar(
+      "home",
+      home({
+        portada: { visible: true, titulo: "Historias que brillan", imagen },
+        banner: { visible: true, imagen },
+        secciones: [{ tipo: "portada", visible: true }, { tipo: "categorias", visible: true }, { tipo: "destacados", visible: true }, { tipo: "banner", visible: true }],
+        categorias_destacadas: [CAT_ARETES],
+        productos_destacados: ["DL-000001"],
+      }),
+      contexto(),
+    );
+    assert.equal(r.ok, true, JSON.stringify(r.errores));
+    assert.deepEqual(r.advertencias, []);
   });
 
   it("campaña: vigencia, destacados y destino de su portada", () => {

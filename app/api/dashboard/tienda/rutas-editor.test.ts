@@ -88,6 +88,7 @@ beforeEach(async () => {
   );
   db.table("dulabs_catalogo_categorias").push({ id: CAT_A, id_tenant: TA, nombre: "Aretes" }, { id: "c0000000-0000-4000-8000-0000000000a2", id_tenant: TA, nombre: "Dijes" }, { id: CAT_B, id_tenant: TB, nombre: "Solo B" });
   db.table("dulabs_agente_runtime_config").push({ id_tenant: TA, habilitado: true, created_at: "2026-09-01T00:00:00Z", negocio: { nombre_negocio: "Tienda A", pedido: { minimo_mayorista: 750000 } } });
+  db.table("dulabs_catalogo_publicacion").push({ id_tenant: TA, slug: "tienda-a", nombre_publico: "Tienda A", publicado: true, token_mayor: "f".repeat(64) });
 });
 
 afterEach(() => {
@@ -404,6 +405,37 @@ describe("GET /contexto — categorías y variables", () => {
     assert.deepEqual(r.json.data.variables.map((v: { valor: string | null }) => v.valor), [null, null, null]);
     assert.equal(r.json.data.minimoMayorista, null);
     assert.deepEqual(r.json.data.categorias.map((c: { nombre: string }) => c.nombre), ["Solo B"]);
+  });
+
+  it("la ruta pública de la tienda (para «Ver mi tienda») es SOLO la del negocio de la sesión y nunca lleva el enlace mayorista", async () => {
+    for (const token of ["t-admin-a", "t-agente-a", "t-lectura-a"]) {
+      const r = await pedir(token, "GET", "/contexto");
+      assert.equal(r.json.data.rutaTienda, "/catalogo/tienda-a", token);
+      assert.ok(!JSON.stringify(r.json).includes("f".repeat(64)), "el token mayorista nunca sale");
+      assert.ok(!JSON.stringify(r.json).includes("mayor/"));
+    }
+    assert.equal((await pedir("t-admin-b", "GET", "/contexto")).json.data.rutaTienda, null, "otro negocio sin tienda publicada: sin enlace (y nunca el de A)");
+  });
+
+  it("una tienda sin publicar no ofrece enlace", async () => {
+    db.table("dulabs_catalogo_publicacion")[0].publicado = false;
+    const r = await pedir("t-admin-a", "GET", "/contexto");
+    assert.equal(r.status, 200);
+    assert.equal(r.json.data.rutaTienda, null);
+  });
+
+  it("si no se puede consultar la publicación, el contexto responde igual (sin enlace): es solo una comodidad", async () => {
+    db.missing("dulabs_catalogo_publicacion");
+    const original = console.error;
+    console.error = () => {};
+    try {
+      const r = await pedir("t-admin-a", "GET", "/contexto");
+      assert.equal(r.status, 200);
+      assert.equal(r.json.data.rutaTienda, null);
+      assert.ok(r.json.data.categorias.length > 0, "lo demás sigue funcionando");
+    } finally {
+      console.error = original;
+    }
   });
 
   it("si la configuración no se puede leer, no se inventa nada", async () => {

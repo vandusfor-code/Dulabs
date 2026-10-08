@@ -5,6 +5,7 @@
  * Recibe el cliente de la API y el permiso de escritura (la página los saca de la sesión); así se puede probar sin red.
  */
 import { useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import type { CmsClient } from "@/lib/cms-comercial-client";
 import { PageHeader } from "@/components/dashboard/shell/ui";
@@ -13,7 +14,7 @@ import { TiendaProvider, useTienda } from "@/components/dashboard/tienda/context
 import { EditorEntidad } from "@/components/dashboard/tienda/editor";
 import { ListaEntidades, type TipoLista } from "@/components/dashboard/tienda/lista";
 import { PanelHistorial } from "@/components/dashboard/tienda/paneles";
-import { Aviso, BotonCargando, Cargando, cn, primaryBtn } from "@/components/dashboard/tienda/ui";
+import { actionBtn, Aviso, BotonCargando, Cargando, cn, primaryBtn } from "@/components/dashboard/tienda/ui";
 
 type Pestana = "home" | TipoLista | "historial";
 
@@ -104,6 +105,7 @@ function PestanaHome() {
 
 function Contenido() {
   const { t } = useI18n();
+  const { contexto } = useTienda();
   const [pestana, setPestana] = useState<Pestana>("home");
   const [editando, setEditando] = useState<string | null>(null);
 
@@ -127,7 +129,14 @@ function Contenido() {
           "Cambia la portada, las ofertas, los combos y la información de tu tienda sin depender de nadie. Lo que publiques aquí es lo que ven tus clientes y lo que ARIA les informa; nada se publica hasta que tú lo apruebas.",
           "Change your cover, offers, combos and store information without depending on anyone. What you publish here is what your customers see and what ARIA tells them; nothing is published until you approve it.",
         )}
-      />
+      >
+        {/* La tienda se abre en otra pestaña: se ve tal como la ven los clientes (lo publicado; los borradores no aparecen). */}
+        {contexto?.rutaTienda && (
+          <a href={contexto.rutaTienda} target="_blank" rel="noopener noreferrer" className={cn(actionBtn, "text-[13px]")}>
+            <ExternalLink className="size-4" aria-hidden /> {t("Ver mi tienda", "View my store")}
+          </a>
+        )}
+      </PageHeader>
 
       {!enEditorDeLista && (
         <div className="px-4 pt-5 md:px-8">

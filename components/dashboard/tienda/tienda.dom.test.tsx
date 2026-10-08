@@ -199,6 +199,21 @@ describe("administración de tienda · estructura y permisos", () => {
     assert.ok(boton("Crear la página principal"));
   });
 
+  it("«Ver mi tienda» abre la tienda PÚBLICA del negocio en otra pestaña (sin el enlace mayorista); sin tienda publicada no hay enlace", async () => {
+    db.table("dulabs_catalogo_publicacion").push({ id_tenant: TA, slug: "tienda-a", nombre_publico: "Tienda A", publicado: true, token_mayor: "f".repeat(64) });
+    montar();
+    const enlace = (await screen.findByRole("link", { name: /Ver mi tienda/ })) as HTMLAnchorElement;
+    assert.equal(enlace.getAttribute("href"), "/catalogo/tienda-a");
+    assert.equal(enlace.getAttribute("target"), "_blank");
+    assert.match(enlace.getAttribute("rel") ?? "", /noopener/);
+    assert.ok(!document.body.innerHTML.includes("f".repeat(64)), "el token mayorista no llega a la pantalla");
+
+    cleanup();
+    montar("t-admin-b");
+    assert.ok(await screen.findByText("Todavía no configuraste la página principal"));
+    assert.equal(screen.queryByRole("link", { name: /Ver mi tienda/ }), null, "otro negocio sin tienda publicada: sin enlace (y nunca el de A)");
+  });
+
   it("una asesora o una persona de solo lectura ve la sección pero NO puede crear nada", async () => {
     for (const token of ["t-agente-a", "t-lectura-a"]) {
       cleanup();

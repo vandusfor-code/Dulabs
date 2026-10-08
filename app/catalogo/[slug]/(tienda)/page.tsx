@@ -5,7 +5,7 @@ import { TarjetaProducto } from "@/components/catalogo-publico/tienda/TarjetaPro
 import { TiendaInicio } from "@/components/catalogo-publico/tienda/TiendaInicio";
 import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/TiendaInicioTecnologia";
 import { esListado } from "@/lib/catalogo/inicio";
-import { cargarCatalogoPublico, cargarInicio, cargarTienda, paginaDe, param } from "@/lib/catalogo/public-loader";
+import { cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
 import { storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
 
@@ -40,13 +40,26 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
   const listPath = `${basePath}?todo=1`;
 
   if (!listado) {
-    const home = await cargarInicio(slug);
-    if (!home) notFound();
-    const config = storefrontConfigFor(tienda.slug);
+    const registro = storefrontConfigFor(tienda.slug);
     // Vitrina con tema "tecnologia": su propio inicio (el header navy y la navegación inferior los pone el marco de la tienda).
-    const tecnologia = tecnologiaOf(config);
-    if (tecnologia) return <TiendaInicioTecnologia home={home} contenido={tecnologia} basePath={basePath} listPath={listPath} />;
-    return <TiendaInicio home={home} config={config} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
+    const tecnologia = tecnologiaOf(registro);
+    if (tecnologia) {
+      const home = await cargarInicio(slug);
+      if (!home) notFound();
+      return <TiendaInicioTecnologia home={home} contenido={tecnologia} basePath={basePath} listPath={listPath} />;
+    }
+    // Inicio clásico: lo publicado en el CMS comercial (portada, banner, secciones, destacados, campaña) o, sin nada publicado o ante
+    // cualquier problema, la vitrina de siempre. Los productos siguen saliendo del catálogo real: el CMS solo elige cuáles y en qué orden.
+    const vitrina = await cargarVitrinaInicio(registro, {
+      slug: tienda.slug,
+      basePath,
+      listPath,
+      whatsapp: tienda.whatsapp,
+      categorias: new Set(tienda.categories.map((c) => c.id)),
+    });
+    const home = await cargarInicioElegido(slug, vitrina.opciones);
+    if (!home) notFound();
+    return <TiendaInicio home={home} config={vitrina.config} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
   }
 
   const data = await cargarCatalogoPublico(slug, "retail", undefined, q, categoria, paginaDe(sp.pagina));

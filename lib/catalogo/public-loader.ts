@@ -1,8 +1,12 @@
 import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { PriceContext } from "@/lib/catalogo/domain";
-import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
-import { createPublicCatalogService } from "@/lib/catalogo/service";
+import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
+import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
+import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
+import { crearDepsPublicasCms } from "@/lib/cms-comercial/publico-supabase";
+import type { ContextoVitrina } from "@/lib/cms-comercial/vitrina";
+import { cargarVitrinaInicio as cargarVitrinaPublica } from "@/lib/cms-comercial/vitrina-publica";
 
 /**
  * Carga del catálogo público para las páginas /catalogo/* (Server Components).
@@ -10,7 +14,7 @@ import { createPublicCatalogService } from "@/lib/catalogo/service";
  * comparten una sola consulta. Lectura con service_role SOLO en el servidor;
  * la proyección pública no incluye ids internos ni el precio del otro contexto.
  */
-const servicio = () => createPublicCatalogService({ repo: createSupabaseCatalogRepository(supabaseAdmin()) });
+const servicio = () => createPublicCatalogService({ repo: repositorioConPrecios(supabaseAdmin()) });
 
 export const cargarCatalogoPublico = cache(
   (slug: string, context: PriceContext, token: string | undefined, q: string | undefined, categoria: string | undefined, pagina: number) =>
@@ -22,6 +26,15 @@ export const cargarTienda = cache((slug: string) => servicio().getStorefront(slu
 
 /** Inicio: destacados + categorías con portada. */
 export const cargarInicio = cache((slug: string) => servicio().getHome(slug));
+
+/**
+ * Vitrina del inicio clásico: la publicada en el CMS comercial (portada, banner, destacados, categorías, campaña) o, sin nada publicado, con el módulo
+ * apagado o ante cualquier problema, la de siempre. NUNCA lanza: la tienda no depende del CMS para verse. El negocio sale de la publicación (slug).
+ */
+export const cargarVitrinaInicio = (registro: CatalogStorefrontConfig, ctx: Omit<ContextoVitrina, "ahora">) => cargarVitrinaPublica(crearDepsPublicasCms(), registro, ctx);
+
+/** Inicio con lo que el CMS eligió (destacados, categorías, productos de la campaña). Sin opciones, igual que `cargarInicio`. */
+export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, opciones);
 
 /** Ficha pública de un producto (detal) por referencia. */
 export const cargarProducto = cache((slug: string, referencia: string) => servicio().getProduct({ slug, reference: referencia }));

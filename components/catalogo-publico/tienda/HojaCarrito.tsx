@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import { ImageOff, Loader2, MessageCircle, Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import { formatCop } from "@/lib/business-agent-quote";
 import {
+  cartSavings,
   cartTotal,
   currentRequest,
   lineSubtotal,
@@ -182,6 +183,7 @@ export function HojaCarrito() {
   };
 
   const { total, unpricedItems } = cartTotal(state);
+  const ahorro = cartSavings(state);
   const hayPedibles = orderableLines(state).length > 0;
   const solicitud = currentRequest(state);
   const whatsappValido = (whatsapp ?? "").replace(/\D/g, "").length >= 8;
@@ -293,6 +295,11 @@ export function HojaCarrito() {
                               <>
                                 <p className="text-[15px] font-semibold tabular-nums text-fg">{formatCop(subtotal)}</p>
                                 {l.quantity > 1 && <p className="text-[11px] tabular-nums text-mist">{formatCop(l.unitPrice as number)} c/u</p>}
+                                {l.listPrice !== undefined && (
+                                  <p className="text-[11px] tabular-nums text-[var(--tienda-oro)]">
+                                    {l.offerLabel ? `${l.offerLabel} · ` : ""}antes <s>{formatCop(l.listPrice)}</s> c/u
+                                  </p>
+                                )}
                               </>
                             )}
                           </div>
@@ -313,6 +320,12 @@ export function HojaCarrito() {
           </ul>
 
           <footer className="shrink-0 border-t border-edge bg-ink px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4">
+            {ahorro > 0 && (
+              <div className="mb-1 flex items-baseline justify-between">
+                <span className="text-sm text-[var(--tienda-oro)]">Ahorras con ofertas</span>
+                <span className="text-sm font-semibold tabular-nums text-[var(--tienda-oro)]">{formatCop(ahorro)}</span>
+              </div>
+            )}
             <div className="flex items-baseline justify-between">
               <span className="text-sm text-mist">Total de la selección</span>
               <span className="text-xl font-semibold tabular-nums text-fg">{formatCop(total)}</span>

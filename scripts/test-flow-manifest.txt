@@ -585,3 +585,40 @@ app/api/dashboard/tienda/rutas-editor.test.ts
 components/dashboard/tienda/borrador-formato.test.ts
 components/dashboard/tienda/tienda.dom.test.tsx
 components/dashboard/shell/nav-tienda.test.ts
+# Bloque 29 · PR 3 (la tienda lee del CMS): del contenido publicado a la vitrina (imágenes listas, destinos que existen, portada nunca a medias, secciones, campaña vigente), la carga con
+# respaldo (la tienda nunca se cae por el CMS), la ruta pública de imágenes, el inicio con lo que elige el CMS (destacados, categorías, campaña), el dibujo de las secciones, el HTML de hoy
+# guardado (no puede cambiar sin contenido del CMS), la siembra de la vitrina actual en Postgres embebido y su comparación byte a byte con la tienda de hoy.
+lib/cms-comercial/vitrina.test.ts
+lib/cms-comercial/vitrina-publica.test.ts
+lib/cms-comercial/imagen-publica.test.ts
+lib/cms-comercial/imagen-publica.pglite.test.ts
+lib/cms-comercial/siembra-vitrina.test.ts
+lib/cms-comercial/siembra-vitrina.pglite.test.ts
+lib/catalogo/inicio-cms.test.ts
+components/catalogo-publico/tienda/inicio-dorado.test.tsx
+components/catalogo-publico/tienda/inicio-cms.test.tsx
+components/catalogo-publico/tienda/inicio-siembra.pglite.test.tsx
+# Bloque 29 · PR 4 (el precio efectivo): una sola decisión de precio para lo que se muestra, lo que se firma y lo que se cobra (la oferta publicada baja el precio de verdad, nunca hay
+# discrepancia), con falla cerrada si no se puede verificar, el mínimo mayorista sobre el valor final, la evidencia en el pedido (precio de lista + oferta con su versión), las secciones de
+# ofertas y combos (Etapa 1: se consultan con una asesora, no se compran) y todo de punta a punta con el SQL real en Postgres embebido.
+lib/catalogo/precios.test.ts
+lib/cms-comercial/precios.test.ts
+lib/catalogo/precios-efectivos.test.ts
+lib/agente/agente-ofertas-precio-efectivo.test.ts
+lib/cms-comercial/precios.pglite.test.ts
+lib/catalogo/resolucion-ofertas.test.ts
+components/catalogo-publico/tienda/ofertas-ui.dom.test.tsx
+components/dashboard/catalogo/lineas-pedido-oferta.test.tsx
+lib/catalogo/pedidos/lineas-oferta-persistencia.test.ts
+lib/cms-comercial/tienda-real.pglite.test.ts
+lib/cms-comercial/lectura-publicada.test.ts
+# Bloque 29 · PR 5 (ARIA y el CMS): lo que ARIA puede saber de lo publicado (consultas puras), las cuatro herramientas comerciales y su contrato, la guarda de anclaje comercial (lo respaldado
+# sale, lo inventado no), el runtime real con un modelo guionizado (12 casos obligatorios, 18 preguntas adversariales, regresión sin las herramientas), las preguntas durante el checkout, el
+# cableado real de producción y los scripts de migración de los textos del prompt (04 a 07) ejecutados de verdad en Postgres embebido.
+lib/cms-comercial/consulta.test.ts
+lib/agente/comercial-anclaje.test.ts
+lib/agente/agente-comercial-aria.test.ts
+lib/agente/agente-comercial-checkout.test.ts
+lib/agente/agente-comercial-produccion.pglite.test.ts
+lib/cms-comercial/migracion-textos.test.ts
+lib/cms-comercial/migracion-textos.pglite.test.ts

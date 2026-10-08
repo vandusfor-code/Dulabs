@@ -17,8 +17,8 @@ import { orderSigningKey } from "@/lib/catalogo/pedido-firma";
 import { logOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
 import { productionOrderEngine } from "@/lib/catalogo/pedidos/produccion";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
-import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { OrderSigningUnavailable, SELECTION_MAX, createPublicCatalogService, type OrderDeps } from "@/lib/catalogo/service";
+import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
 import { limitadorPublicoReal, type DecisionLimite, type LimitadorPublico } from "@/lib/catalogo/limites-publicos";
 
 export interface Canal {
@@ -35,12 +35,21 @@ type Service = ReturnType<typeof createPublicCatalogService>;
 function servicioReal(): Service {
   const supabase = supabaseAdmin();
   const orders: OrderDeps = { key: orderSigningKey(), engine: productionOrderEngine(supabase) ?? undefined, events: logOrderEventSink };
-  return createPublicCatalogService({ repo: createSupabaseCatalogRepository(supabase), orders });
+  // Con los precios efectivos (ofertas vigentes): lo mostrado, lo firmado y lo cobrado salen del mismo cálculo.
+  return createPublicCatalogService({ repo: repositorioConPrecios(supabase), orders });
 }
 
 /** Proyección que el carrito sabe reconciliar (nada interno). */
 export function cartProductOf(p: PublicCatalogProduct): CartProduct {
-  return { reference: p.reference, name: p.name, price: p.price, imageUrl: p.thumbUrl ?? p.imageUrl, available: p.available, maxQuantity: p.maxQuantity };
+  return {
+    reference: p.reference,
+    name: p.name,
+    price: p.price,
+    ...(p.listPrice !== undefined && p.offer ? { listPrice: p.listPrice, offerLabel: p.offer.label } : {}),
+    imageUrl: p.thumbUrl ?? p.imageUrl,
+    available: p.available,
+    maxQuantity: p.maxQuantity,
+  };
 }
 
 /** Vista PÚBLICA del borrador: sin negocio ni ids internos de producto. */
@@ -67,15 +76,16 @@ function demasiadas(d: Extract<DecisionLimite, { permitido: false }>): Response 
 export async function responderSeleccion(request: Request, canal: Canal, servicio: () => Service = servicioReal, limitar: LimitadorPublico = limitadorPublicoReal): Promise<Response> {
   const limite = await limitar({ recurso: "seleccion", slug: canal.slug, request });
   if (!limite.permitido) return demasiadas(limite);
-  // El mayorista va detrás de un token en la URL: nunca se guarda en cachés compartidas.
-  const headers =
-    canal.context === "wholesale"
-      ? { "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow" }
-      : { "Cache-Control": "public, max-age=0, s-maxage=30, stale-while-revalidate=60", "X-Robots-Tag": "noindex, nofollow" };
   const references = new URL(request.url).searchParams.getAll("ref").slice(0, SELECTION_MAX * 2);
   try {
     const resolved = await servicio().resolveSelection({ slug: canal.slug, references, context: canal.context, token: canal.token });
     if (!resolved) return Response.json({ error: "not_found" }, { status: 404, headers: NO_STORE });
+    // El mayorista va detrás de un token en la URL: nunca se guarda en cachés compartidas. Con ofertas vigentes (módulo del CMS) los precios pueden cambiar al
+    // publicar o pausar: tampoco se guardan (nada de precios viejos después de publicar). Sin ofertas, la caché corta de siempre.
+    const headers =
+      canal.context === "wholesale" || resolved.dynamicPricing
+        ? { "Cache-Control": "private, no-store", "X-Robots-Tag": "noindex, nofollow" }
+        : { "Cache-Control": "public, max-age=0, s-maxage=30, stale-while-revalidate=60", "X-Robots-Tag": "noindex, nofollow" };
     return Response.json({ items: resolved.items.map(cartProductOf), unknown: resolved.unknown, quote: resolved.quote }, { headers });
   } catch (error) {
     console.error("[catalogo/seleccion] error resolviendo la selección:", error instanceof Error ? error.message : error);

@@ -42,6 +42,11 @@ import { AGENT_TOOL_NAMES, type AgentToolName } from "@/lib/agente/nombres-herra
 import { isExplicitConfirmation } from "@/lib/agente/etapa";
 import { resolverEnvio, type EnviosConfig } from "@/lib/agente/envios";
 import { HANDOFF_MOTIVES, type HandoffMotive } from "@/lib/agente/intencion";
+import { plano } from "@/lib/agente/lenguaje/normalizar";
+import { TEMAS_CONTENIDO } from "@/lib/cms-comercial/contrato";
+import { campanasVigentes, combosVigentes, contenidoComercial, ofertaDeProducto, ofertasVigentes, productoParaCombo, referenciasDeCombosVigentes, type ContextoConsulta } from "@/lib/cms-comercial/consulta";
+import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
+import type { ValoresVariables } from "@/lib/cms-comercial/variables";
 
 export type AgentToolErrorCode =
   | OrderErrorCode
@@ -115,9 +120,22 @@ export interface AgentTurnToolContext {
    * ESTE número (su propia configuración) y el reloj del backend (instante del turno, en ms). Sin reglas: null.
    */
   shipping?: { rules: EnviosConfig | null; nowMs: number };
+  /**
+   * Bloque 29 · PR 5 — lo único que las herramientas comerciales (consultar_ofertas, consultar_combos, consultar_campanas, consultar_contenido_comercial) usan del
+   * turno, y NADA de esto viene del modelo: los valores de las variables de los textos (salen de la configuración del negocio de ESTE número) y el reloj del
+   * backend (instante del turno, en ms). El negocio y el canal son los del contexto de arriba.
+   */
+  comercial?: { valores: ValoresVariables; nowMs: number };
+}
+
+/** Lo PUBLICADO de un negocio (lector del CMS). null = el negocio no usa el CMS (módulo apagado o sin migración). Lanza si no se pudo leer. */
+export interface PuertoComercial {
+  cargar(tenantId: string): Promise<InstantaneaCms | null>;
 }
 
 export interface AgentToolsDeps extends CatalogToolDeps {
+  /** Bloque 29 · PR 5: lo publicado en el CMS del negocio (solo lectura). Sin él, las herramientas comerciales responden «no disponible». */
+  comercial?: PuertoComercial;
   /** Nombre conocido del cliente (dulabs_clientes_conocidos); null si no hay. */
   customerName?: (input: { tenantId: string; phoneNumberId: string; waId: string }) => Promise<string | null>;
   /** Bloque 34: ¿el equipo lo marcó como cliente antiguo (ya compró fuera del bot)? Sin compra inicial mayorista. */
@@ -183,7 +201,21 @@ async function otherChannelOrder(ctx: AgentTurnToolContext, deps: AgentToolsDeps
   return fail("FORBIDDEN", "Ese pedido es de otra modalidad de compra (detal / por mayor) y el cliente está registrado en la suya. No lo valides ni lo confirmes: ofrece una asesora.", { reason: "channel_mismatch" });
 }
 
-type ProductView = { reference: string; name: string; description: string | null; category: string | null; material: string | null; color: string | null; unit_price: number | null; currency: string; availability: string; max_quantity: number | null };
+type ProductView = {
+  reference: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  material: string | null;
+  color: string | null;
+  unit_price: number | null;
+  /** Solo cuando `unit_price` es el de una oferta vigente del canal: el precio de lista y la oferta, redactados por el backend. */
+  list_price?: number;
+  offer?: { name: string; benefit: string; valid_until: string | null; conditions: string | null };
+  currency: string;
+  availability: string;
+  max_quantity: number | null;
+};
 
 /**
  * Lo que el modelo ve de un producto. La descripción llega COMPLETA (el catálogo la acota a CATALOG_LIMITS.description): antes se recortaba a 200
@@ -298,6 +330,27 @@ async function searchPage(ctx: AgentTurnToolContext, deps: AgentToolsDeps, curso
     ok: true,
     data: { status: "candidates", count: candidates.length, total: r.total, page_start: offset + 1, has_more: hasMore, relaxed: r.relaxed, candidates, note },
   };
+}
+
+/**
+ * Contexto común de las herramientas comerciales: el negocio y el canal son los del turno (backend), el reloj y los valores de las variables salen del contexto del
+ * turno, y lo publicado lo entrega el lector del CMS (siempre fresco: nadie memoiza lo que se le cuenta a un cliente). Cualquier falla => «no disponible» (nunca
+ * un `empty: true` falso: «no hay promociones» solo se puede decir con una lectura REAL que lo diga).
+ */
+async function contextoComercial(ctx: AgentTurnToolContext, deps: AgentToolsDeps): Promise<{ ok: true; c: ContextoConsulta } | { ok: false; out: AgentToolOutcome }> {
+  const noDisponible = (): { ok: false; out: AgentToolOutcome } => ({ ok: false, out: fail("UNAVAILABLE", "La información comercial no está disponible en este momento. No inventes ofertas, combos, campañas ni políticas: ofrece que una asesora lo confirme.") });
+  if (!deps.comercial || !ctx.comercial) return noDisponible();
+  // Defensa en profundidad (igual que las herramientas de catálogo): el número debe ser de este negocio.
+  if (!(await deps.ownsPhoneNumber(ctx.tenantId, ctx.phoneNumberId))) return { ok: false, out: fail("FORBIDDEN", "Esta conversación no pertenece a este negocio.") };
+  let snap: InstantaneaCms | null;
+  try {
+    snap = await deps.comercial.cargar(ctx.tenantId);
+  } catch (err) {
+    console.error("[agente/herramientas] lectura comercial falló:", err instanceof Error ? err.message : err);
+    return noDisponible();
+  }
+  if (snap === null || snap.tenantId !== ctx.tenantId) return noDisponible();
+  return { ok: true, c: { snap, canal: ctx.channel, ahora: ctx.comercial.nowMs, valores: ctx.comercial.valores } };
 }
 
 // ---------------------------------------------------------------------------
@@ -692,6 +745,90 @@ export const AGENT_TOOLS = {
       // Reglas y reloj salen del CONTEXTO del turno (el backend), nunca de los argumentos del modelo.
       const decision = resolverEnvio(ctx.shipping?.rules ?? null, { city: input.city, department: input.department }, ctx.shipping?.nowMs ?? 0);
       return { ok: true, data: decision as unknown as Record<string, unknown> };
+    },
+  }),
+
+  consultar_ofertas: spec({
+    description:
+      "Consulta al SISTEMA las ofertas, descuentos y promociones VIGENTES para el canal de esta conversación (solo lo que el negocio publicó y hoy vale). Úsala para CUALQUIER pregunta sobre promociones, descuentos u ofertas (\"¿qué promociones tienen?\", \"¿hay descuento?\", \"¿eso tiene descuento?\"). Con una referencia ya mostrada devuelve la ÚNICA oferta que le aplica a ese producto con su precio de lista y el que paga hoy; con una categoría, las ofertas que cubren toda esa categoría; sin nada, todas las vigentes. La respuesta es la ÚNICA fuente: cita beneficio, vigencia y condiciones tal cual; no calcules, redondees ni cambies porcentajes, precios ni fechas, y no menciones ninguna oferta que no esté ahí. Si empty es true, dilo con naturalidad (\"por ahora no tenemos promociones\") sin inventar alternativas. No recibe negocio, canal ni fechas: los pone el sistema.",
+    input: z
+      .object({
+        referencia: reference.optional(),
+        categoria: z.string().trim().min(1).max(60).optional(),
+      })
+      .strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const base = await contextoComercial(ctx, deps);
+      if (!base.ok) return base.out;
+      if (input.referencia) {
+        const blocked = checkProvenance(ctx, input.referencia, false);
+        if (blocked) return blocked;
+        const r = await createResolucionCatalogo({ repo: deps.catalog }).resolveByReference(ctx.tenantId, input.referencia);
+        if (r.status !== "found") return fail("REFERENCE_NOT_FOUND", `No encontramos la referencia ${input.referencia}.`);
+        if (r.product.status !== "ACTIVE") return fail("PRODUCT_UNAVAILABLE", `El producto ${r.product.reference} no está disponible.`);
+        // El precio de LISTA del canal (antes de cualquier oferta): la oferta se evalúa aquí, con lo mismo publicado que se le entrega al modelo.
+        const lista = r.product.listPrices?.[ctx.channel] ?? r.product.prices[ctx.channel];
+        return { ok: true, data: ofertaDeProducto(base.c, { referencia: r.product.reference, nombre: r.product.name, categoriaId: r.product.categoryId, precioLista: lista }) };
+      }
+      if (input.categoria) {
+        const categorias = await deps.catalog.listCategories(ctx.tenantId);
+        const buscada = plano(input.categoria);
+        const exacta = categorias.find((c) => plano(c.name) === buscada);
+        const parecidas = categorias.filter((c) => plano(c.name).includes(buscada) || buscada.includes(plano(c.name)));
+        const elegida = exacta ?? (parecidas.length === 1 ? parecidas[0] : null);
+        return { ok: true, data: ofertasVigentes(base.c, { categoria: { id: elegida?.id ?? null, nombre: (elegida?.name ?? input.categoria).slice(0, 60) } }) };
+      }
+      return { ok: true, data: ofertasVigentes(base.c) };
+    },
+  }),
+
+  consultar_combos: spec({
+    description:
+      "Consulta al SISTEMA los combos VIGENTES para el canal de esta conversación (solo lo publicado, con sus productos, cantidades, precio, ahorro, disponibilidad y vigencia, calculados con el inventario real). Úsala para CUALQUIER pregunta sobre combos o paquetes (\"¿tienen combos?\", \"¿qué incluye?\", \"¿cuánto cuesta el combo?\"). La respuesta es la ÚNICA fuente: no calcules precios ni ahorros, no cambies productos ni cantidades, no ofrezcas un combo con available=false y no menciones ningún combo que no esté ahí. Un combo NO se compra desde el carrito: si el cliente lo quiere, ofrécele pasar con una asesora. Si empty es true, dilo con naturalidad sin inventar combos. Con code consultas un solo combo (el code que devolvió antes esta herramienta). No recibe negocio, canal ni fechas.",
+    input: z
+      .object({
+        code: z
+          .string()
+          .trim()
+          .regex(/^[a-z0-9][a-z0-9-]{0,79}$/, { message: "Código de combo inválido." })
+          .optional(),
+      })
+      .strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const base = await contextoComercial(ctx, deps);
+      if (!base.ok) return base.out;
+      const filtro = input.code ? { code: input.code } : {};
+      const referencias = referenciasDeCombosVigentes(base.c, filtro);
+      // Los datos REALES de los componentes (precio efectivo del canal, disponibilidad): el backend decide si el combo está disponible, nunca el modelo.
+      const lote = referencias.length > 0 ? await createResolucionCatalogo({ repo: deps.catalog }).resolverReferencias(ctx.tenantId, referencias) : { items: [] };
+      const productos = new Map(lote.items.map((p) => [p.reference, productoParaCombo(p, ctx.channel)]));
+      return { ok: true, data: combosVigentes(base.c, productos, filtro) };
+    },
+  }),
+
+  consultar_campanas: spec({
+    description:
+      "Consulta al SISTEMA las campañas comerciales VIGENTES para el canal de esta conversación (Amor y Amistad, Navidad, etc.), con su vigencia y las ofertas y combos que incluyen. Úsala cuando el cliente pregunte por una temporada o campaña (\"¿qué tienen de Navidad?\", \"¿hay algo por Amor y Amistad?\"). La respuesta es la ÚNICA fuente: no inventes campañas, fechas ni lo que incluyen. Si empty es true, dilo con naturalidad. No recibe parámetros: el negocio, el canal y la fecha los pone el sistema.",
+    input: z.object({}).strict(),
+    kind: "read",
+    async run(ctx, _input, deps) {
+      const base = await contextoComercial(ctx, deps);
+      if (!base.ok) return base.out;
+      return { ok: true, data: campanasVigentes(base.c) };
+    },
+  }),
+
+  consultar_contenido_comercial: spec({
+    description:
+      "Consulta al SISTEMA la información OFICIAL publicada por el negocio sobre un tema: general, horarios, ubicacion, pagos, envios, garantias, cambios, devoluciones, mayoristas, materiales, promociones o faq (preguntas frecuentes). Úsala para CUALQUIER pregunta sobre horarios, dirección, medios de pago, envíos, garantías, cambios, devoluciones, compra mayorista o materiales. Cambios y devoluciones suelen ir en el mismo texto: si preguntan por devoluciones y ese tema está vacío, consulta también cambios. La respuesta es la ÚNICA fuente: cita el texto tal cual, con sus cifras, plazos y condiciones; no agregues ni cambies ningún dato. Si empty es true, di con naturalidad que no tienes ese dato confirmado y ofrece una asesora. No recibe negocio ni canal: los pone el sistema (un texto solo para mayoristas jamás se entrega a un cliente detal).",
+    input: z.object({ tema: z.enum(TEMAS_CONTENIDO) }).strict(),
+    kind: "read",
+    async run(ctx, input, deps) {
+      const base = await contextoComercial(ctx, deps);
+      if (!base.ok) return base.out;
+      return { ok: true, data: contenidoComercial(base.c, input.tema) };
     },
   }),
 
