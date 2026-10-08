@@ -11,6 +11,7 @@ import {
   MAX_LINES,
   MAX_QUANTITY,
   cartReducer,
+  cartSavings,
   cartStorageKey,
   cartTotal,
   canAddMore,
@@ -233,5 +234,122 @@ describe("selección confiable para el backend", () => {
     assert.deepEqual(snap, { version: 1, slug: "delacour", context: "retail", items: [{ reference: "DL-000184", quantity: 2 }] });
     assert.equal(JSON.stringify(snap).includes("35000"), false);
     assert.equal(JSON.stringify(snap).includes("Dije"), false);
+  });
+});
+
+describe("ofertas en el carrito (el precio efectivo manda; el de lista solo se muestra tachado)", () => {
+  const CON_OFERTA: CartProduct = { ...DIJE, price: 28_000, listPrice: 35_000, offerLabel: "-20%" };
+
+  it("una línea con oferta guarda el precio efectivo, el de lista y la etiqueta; sin oferta la línea queda IDÉNTICA a la de siempre", () => {
+    const s = con([CON_OFERTA, 2], [ARETES]);
+    assert.deepEqual(
+      s.lines.map((l) => [l.reference, l.unitPrice, l.listPrice, l.offerLabel]),
+      [
+        ["DL-000184", 28_000, 35_000, "-20%"],
+        ["DL-000185", 42_000, undefined, undefined],
+      ],
+    );
+    assert.ok(!("listPrice" in s.lines[1]) && !("offerLabel" in s.lines[1]), "sin oferta no existen ni las propiedades");
+    assert.deepEqual(cartTotal(s), { total: 2 * 28_000 + 42_000, unpricedItems: 0 }, "el total se calcula con el precio efectivo");
+  });
+
+  it("cartSavings = (lista − efectivo) por cantidad, solo de lo que entra al pedido; 0 sin ofertas", () => {
+    assert.equal(cartSavings(con([DIJE, 2], [ARETES])), 0);
+    assert.equal(cartSavings(con([CON_OFERTA, 3])), 3 * 7_000);
+    const agotada = reconcileCart(con([CON_OFERTA, 3], [ARETES]), [{ ...CON_OFERTA, available: false, maxQuantity: 0 }], []);
+    assert.equal(cartSavings(agotada), 0, "lo agotado no entra al pedido, así que tampoco cuenta como ahorro");
+    assert.equal(cartSavings(emptyCart("delacour", "retail")), 0);
+  });
+
+  it("cartSavings nunca inventa un ahorro: lista igual o menor que el efectivo, o sin precio, no suma", () => {
+    const base = con([DIJE]);
+    const raros: CartState = {
+      ...base,
+      lines: [
+        { ...base.lines[0], reference: "A", unitPrice: 10_000, listPrice: 10_000 },
+        { ...base.lines[0], reference: "B", unitPrice: 10_000, listPrice: 9_000 },
+        { ...base.lines[0], reference: "C", unitPrice: null, listPrice: 9_000 },
+        { ...base.lines[0], reference: "D", unitPrice: 8_000, listPrice: 10_000, quantity: 2 },
+      ],
+    };
+    assert.equal(cartSavings(raros), 4_000);
+  });
+
+  it("agregar de nuevo el producto refresca la oferta; si la oferta terminó, la línea pierde el precio tachado y la etiqueta", () => {
+    let s = con([CON_OFERTA]);
+    s = cartReducer(s, { type: "add", product: { ...DIJE, price: 30_000, listPrice: 35_000, offerLabel: "-14%" } });
+    assert.deepEqual([s.lines[0].unitPrice, s.lines[0].listPrice, s.lines[0].offerLabel, s.lines[0].quantity], [30_000, 35_000, "-14%", 2]);
+    s = cartReducer(s, { type: "add", product: DIJE });
+    assert.deepEqual([s.lines[0].unitPrice, s.lines[0].quantity], [35_000, 3]);
+    assert.ok(!("listPrice" in s.lines[0]) && !("offerLabel" in s.lines[0]), "la oferta ya no aplica: nada queda de ella");
+  });
+
+  it("un precio de lista que no es un número válido no se guarda", () => {
+    const s = con([{ ...DIJE, price: 28_000, listPrice: Number.NaN, offerLabel: "-20%" }]);
+    assert.ok(!("listPrice" in s.lines[0]) && !("offerLabel" in s.lines[0]));
+    const sinEtiqueta = con([{ ...DIJE, price: 28_000, listPrice: 35_000 }]);
+    assert.equal(sinEtiqueta.lines[0].listPrice, 35_000);
+    assert.ok(!("offerLabel" in sinEtiqueta.lines[0]));
+  });
+
+  it("al reconciliar con el catálogo la oferta se actualiza; si la administradora la pausó, el precio vuelve al de lista y el cliente lo VE", () => {
+    const s = con([CON_OFERTA, 2]);
+    const { state, changes } = reconcileWithChanges(s, [DIJE], []);
+    assert.deepEqual([state.lines[0].unitPrice, "listPrice" in state.lines[0], "offerLabel" in state.lines[0]], [35_000, false, false]);
+    assert.deepEqual(changes, [{ kind: "price_changed", reference: "DL-000184", name: "Dije corazón", from: 28_000, to: 35_000 }]);
+    assert.equal(cartSavings(state), 0);
+    // Y al revés: aparece una oferta que antes no había.
+    const r = reconcileWithChanges(state, [CON_OFERTA], []);
+    assert.deepEqual([r.state.lines[0].unitPrice, r.state.lines[0].listPrice, r.state.lines[0].offerLabel], [28_000, 35_000, "-20%"]);
+    assert.deepEqual(r.changes, [{ kind: "price_changed", reference: "DL-000184", name: "Dije corazón", from: 35_000, to: 28_000 }]);
+  });
+
+  it("si solo cambia la etiqueta o el precio de lista (el efectivo es el mismo) no se avisa de un cambio de precio", () => {
+    const s = con([CON_OFERTA]);
+    const r = reconcileWithChanges(s, [{ ...CON_OFERTA, listPrice: 36_000, offerLabel: "-22%" }], []);
+    assert.deepEqual(r.changes, []);
+    assert.deepEqual([r.state.lines[0].listPrice, r.state.lines[0].offerLabel], [36_000, "-22%"]);
+  });
+
+  it("la selección que viaja al backend NUNCA lleva precios ni ofertas: el backend los calcula de nuevo", () => {
+    const snap = selectionSnapshot(con([CON_OFERTA, 2]));
+    assert.deepEqual(snap, { version: 1, slug: "delacour", context: "retail", items: [{ reference: "DL-000184", quantity: 2 }] });
+    const texto = JSON.stringify(snap);
+    assert.ok(!texto.includes("28000") && !texto.includes("35000") && !texto.includes("-20%") && !texto.includes("listPrice"));
+  });
+
+  describe("persistencia (solo pistas para mostrar; el catálogo las corrige al volver a consultar)", () => {
+    const guardado = (lines: unknown[]) => JSON.stringify({ ...con([DIJE]), lines });
+    const linea = (extra: Record<string, unknown>) => ({ reference: "DL-000184", name: "Dije corazón", unitPrice: 28_000, imageUrl: null, quantity: 1, available: true, maxQuantity: null, ...extra });
+
+    it("se guardan y se leen de vuelta cuando son coherentes", () => {
+      const leido = parseStoredCart(JSON.stringify(con([CON_OFERTA, 2])), "delacour", "retail");
+      assert.deepEqual([leido.lines[0].unitPrice, leido.lines[0].listPrice, leido.lines[0].offerLabel], [28_000, 35_000, "-20%"]);
+    });
+
+    it("un carrito guardado antes de las ofertas (sin esas propiedades) sigue funcionando igual", () => {
+      const leido = parseStoredCart(guardado([linea({})]), "delacour", "retail");
+      assert.equal(leido.lines.length, 1);
+      assert.ok(!("listPrice" in leido.lines[0]) && !("offerLabel" in leido.lines[0]));
+    });
+
+    it("lo incoherente se descarta (no se muestra un tachado que no cuadra): lista menor o igual al efectivo, texto, sin precio efectivo", () => {
+      for (const listPrice of [28_000, 20_000, "35000", null, -5, Number.POSITIVE_INFINITY]) {
+        const leido = parseStoredCart(guardado([linea({ listPrice, offerLabel: "-20%" })]), "delacour", "retail");
+        assert.ok(!("listPrice" in leido.lines[0]) && !("offerLabel" in leido.lines[0]), `listPrice=${String(listPrice)}`);
+      }
+      const sinPrecio = parseStoredCart(guardado([linea({ unitPrice: null, listPrice: 35_000, offerLabel: "-20%" })]), "delacour", "retail");
+      assert.ok(!("listPrice" in sinPrecio.lines[0]));
+    });
+
+    it("la etiqueta solo se acepta si es texto corto y va con un precio de lista válido", () => {
+      const larga = parseStoredCart(guardado([linea({ listPrice: 35_000, offerLabel: "x".repeat(41) })]), "delacour", "retail");
+      assert.equal(larga.lines[0].listPrice, 35_000);
+      assert.ok(!("offerLabel" in larga.lines[0]), "una etiqueta de más de 40 caracteres se descarta");
+      const numerica = parseStoredCart(guardado([linea({ listPrice: 35_000, offerLabel: 20 })]), "delacour", "retail");
+      assert.ok(!("offerLabel" in numerica.lines[0]));
+      const huerfana = parseStoredCart(guardado([linea({ offerLabel: "-20%" })]), "delacour", "retail");
+      assert.ok(!("offerLabel" in huerfana.lines[0]), "una etiqueta sin precio de lista no se guarda");
+    });
   });
 });

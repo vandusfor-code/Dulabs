@@ -4,8 +4,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Home } from "@/lib/cms-comercial/esquemas";
+import type { ProductoParaCombo } from "@/lib/cms-comercial/evaluacion";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
-import { AHORA, CAT_ARETES, TENANT_A, TENANT_B, campana, home, instantanea, publicada } from "@/lib/cms-comercial/testing/fixtures";
+import { AHORA, CAT_ARETES, TENANT_A, TENANT_B, campana, combo, home, instantanea, publicada } from "@/lib/cms-comercial/testing/fixtures";
 import { cargarVitrinaInicio, opcionesDeInicio, type DepsVitrinaPublica } from "@/lib/cms-comercial/vitrina-publica";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
 
@@ -187,5 +188,79 @@ describe("opcionesDeInicio", () => {
       categorias: [CAT_ARETES],
       campana: ["DL-000002"],
     });
+  });
+});
+
+describe("cargarVitrinaInicio — combos (consulta de los datos reales de los componentes)", () => {
+  const HECHOS: ReadonlyMap<string, ProductoParaCombo> = new Map(
+    (
+      [
+        { referencia: "DL-000001", nombre: "Aretes dorados", activo: true, disponibilidad: "available", maxCantidad: 5, precioLista: 90_000 },
+        { referencia: "DL-000002", nombre: "Cadena fina", activo: true, disponibilidad: "available", maxCantidad: null, precioLista: 50_000 },
+      ] satisfies ProductoParaCombo[]
+    ).map((p) => [p.referencia, p]),
+  );
+  const conCombo = () =>
+    instantanea({
+      home: publicada("home", home({ secciones: [{ tipo: "portada", visible: true }, { tipo: "combos", visible: true }], categorias_destacadas: [], productos_destacados: [] })),
+      combos: [publicada("regalo", combo({ nombre: "Regalo completo", precio: { detal: 150_000, mayorista: 110_000 } })), publicada("mayor", combo({ modalidad: "mayorista", precio: { mayorista: 1_000 }, componentes: [{ referencia: "DL-000099", cantidad: 2 }] }))],
+    });
+  const llamadas: Array<{ tenantId: string; referencias: readonly string[] }> = [];
+  const depsCombos = (snap: InstantaneaCms, productosDeCombos?: DepsVitrinaPublica["productosDeCombos"]): { d: DepsVitrinaPublica; fallas: unknown[] } => {
+    const fallas: unknown[] = [];
+    llamadas.length = 0;
+    return {
+      fallas,
+      d: {
+        tenantDe: async () => TENANT_A,
+        cargar: async () => snap,
+        ahora: () => AHORA,
+        alFallar: (e) => void fallas.push(e),
+        ...(productosDeCombos ? { productosDeCombos } : {}),
+      },
+    };
+  };
+  const consultar: DepsVitrinaPublica["productosDeCombos"] = async (tenantId, referencias) => (llamadas.push({ tenantId, referencias }), HECHOS);
+
+  it("consulta SOLO los componentes de los combos vigentes para el detal, en el negocio de la tienda, y los combos salen armados", async () => {
+    const { d } = depsCombos(conCombo(), consultar);
+    const r = await cargarVitrinaInicio(d, REGISTRO, CTX);
+    assert.deepEqual(llamadas, [{ tenantId: TENANT_A, referencias: ["DL-000001", "DL-000002"] }], "el combo mayorista no se consulta");
+    assert.equal(r.origen, "cms");
+    assert.deepEqual(r.config.combos?.map((c) => [c.clave, c.disponible, c.precioNormal, c.ahorro]), [["regalo", true, 190_000, 40_000]]);
+  });
+
+  it("sin combos vigentes no se consulta nada", async () => {
+    const { d } = depsCombos(instantanea({ home: publicada("home", home({ secciones: [{ tipo: "portada", visible: true }, { tipo: "combos", visible: true }], categorias_destacadas: [], productos_destacados: [] })) }), consultar);
+    await cargarVitrinaInicio(d, REGISTRO, CTX);
+    assert.deepEqual(llamadas, []);
+  });
+
+  it("si la tienda no sabe consultar productos, los combos no se muestran y todo lo demás sale igual", async () => {
+    const { d } = depsCombos(conCombo());
+    const r = await cargarVitrinaInicio(d, REGISTRO, CTX);
+    assert.equal(r.config.combos, undefined);
+    assert.equal(r.origen, "cms");
+    assert.equal(r.config.heroTitle, "Historias que brillan contigo");
+  });
+
+  it("si la consulta de productos FALLA solo se omiten los combos (se avisa una vez); la portada y lo demás salen", async () => {
+    const { d, fallas } = depsCombos(conCombo(), async () => {
+      throw new Error("base de datos caída");
+    });
+    const r = await cargarVitrinaInicio(d, REGISTRO, CTX);
+    assert.equal(r.origen, "cms");
+    assert.equal(r.config.combos, undefined);
+    assert.equal(r.config.heroTitle, "Historias que brillan contigo");
+    assert.equal(fallas.length, 1);
+    assert.match(String((fallas[0] as Error).message), /base de datos caída/);
+  });
+
+  it("la consulta de productos también cuenta para el plazo: si no termina, se usa la vitrina de siempre", async () => {
+    const { d, fallas } = depsCombos(conCombo(), () => new Promise(() => undefined));
+    const r = await cargarVitrinaInicio({ ...d, plazoMs: 25 }, REGISTRO, CTX);
+    assert.equal(r.config, REGISTRO);
+    assert.equal(r.origen, "registro");
+    assert.equal(fallas.length, 1);
   });
 });

@@ -29,8 +29,11 @@ export const MAX_LINES = 60;
 export interface CartProduct {
   reference: string;
   name: string;
-  /** Precio del contexto del catálogo; null = "precio a consultar". */
+  /** Precio EFECTIVO del contexto del catálogo (el de lista o el de la oferta vigente); null = "precio a consultar". */
   price: number | null;
+  /** Precio de lista antes de la oferta y su etiqueta corta («-20%»): solo cuando `price` es el de una oferta vigente (el backend los corrige con `reconcile`). */
+  listPrice?: number;
+  offerLabel?: string;
   imageUrl: string | null;
   /** Decidido por el backend. Por defecto true. */
   available?: boolean;
@@ -41,7 +44,11 @@ export interface CartProduct {
 export interface CartLine {
   reference: string;
   name: string;
+  /** Precio EFECTIVO por unidad (con la oferta vigente, si aplica). */
   unitPrice: number | null;
+  /** Solo con oferta vigente: el precio de lista y la etiqueta corta, para mostrar el ahorro. Nunca entran al pedido: el backend vuelve a calcular. */
+  listPrice?: number;
+  offerLabel?: string;
   imageUrl: string | null;
   quantity: number;
   /** false = agotado según el backend: se muestra, pero no entra al pedido ni al total. */
@@ -98,6 +105,19 @@ function clamp(quantity: number, limit: number): number {
   return Math.min(limit, Math.max(1, Math.trunc(quantity)));
 }
 
+/** Los datos de oferta de una línea tal como vienen del catálogo: la propiedad solo existe cuando hay oferta (sin oferta, la línea queda idéntica a siempre). */
+function ofertaDeLinea(product: Pick<CartProduct, "listPrice" | "offerLabel">): { listPrice?: number; offerLabel?: string } {
+  return product.listPrice !== undefined && Number.isFinite(product.listPrice) ? { listPrice: product.listPrice, ...(product.offerLabel ? { offerLabel: product.offerLabel } : {}) } : {};
+}
+
+/** La línea sin sus datos de oferta (para reemplazarlos por los más recientes). */
+function sinOferta(l: CartLine): CartLine {
+  const copia = { ...l };
+  delete copia.listPrice;
+  delete copia.offerLabel;
+  return copia;
+}
+
 export function cartReducer(state: CartState, action: CartAction): CartState {
   switch (action.type) {
     case "add": {
@@ -115,7 +135,7 @@ export function cartReducer(state: CartState, action: CartAction): CartState {
           // Se refrescan nombre/precio/foto/límite con los datos más recientes del catálogo.
           lines: state.lines.map((l) =>
             l.reference === product.reference
-              ? { ...l, name: product.name, unitPrice: product.price, imageUrl: product.imageUrl, available, maxQuantity: product.maxQuantity ?? null, quantity }
+              ? { ...sinOferta(l), name: product.name, unitPrice: product.price, ...ofertaDeLinea(product), imageUrl: product.imageUrl, available, maxQuantity: product.maxQuantity ?? null, quantity }
               : l,
           ),
         };
@@ -125,7 +145,7 @@ export function cartReducer(state: CartState, action: CartAction): CartState {
         ...state,
         lines: [
           ...state.lines,
-          { reference: product.reference, name: product.name, unitPrice: product.price, imageUrl: product.imageUrl, available, maxQuantity: product.maxQuantity ?? null, quantity: extra },
+          { reference: product.reference, name: product.name, unitPrice: product.price, ...ofertaDeLinea(product), imageUrl: product.imageUrl, available, maxQuantity: product.maxQuantity ?? null, quantity: extra },
         ],
       };
     }
@@ -163,6 +183,11 @@ export function orderableLines(state: CartState): CartLine[] {
 
 export function lineSubtotal(line: CartLine): number | null {
   return line.unitPrice === null ? null : line.unitPrice * line.quantity;
+}
+
+/** Lo que el cliente ahorra por ofertas vigentes en las líneas pedibles (precio de lista − precio efectivo, por cantidad). 0 sin ofertas. Solo para mostrar. */
+export function cartSavings(state: CartState): number {
+  return orderableLines(state).reduce((sum, l) => sum + (l.listPrice !== undefined && l.unitPrice !== null && l.listPrice > l.unitPrice ? (l.listPrice - l.unitPrice) * l.quantity : 0), 0);
 }
 
 /** Total de lo que tiene precio + cuántas unidades quedan "a consultar" (nunca se inventa un 0). */
@@ -215,7 +240,7 @@ export function reconcileWithChanges(state: CartState, resolved: readonly CartPr
     }
     const available = fresh.available ?? true;
     const limit = quantityLimit(fresh);
-    const next: CartLine = { ...l, name: fresh.name, unitPrice: fresh.price, imageUrl: fresh.imageUrl, available, maxQuantity: fresh.maxQuantity ?? null };
+    const next: CartLine = { ...sinOferta(l), name: fresh.name, unitPrice: fresh.price, ...ofertaDeLinea(fresh), imageUrl: fresh.imageUrl, available, maxQuantity: fresh.maxQuantity ?? null };
     if (available && l.available && l.unitPrice !== fresh.price) changes.push({ kind: "price_changed", reference: l.reference, name: fresh.name, from: l.unitPrice, to: fresh.price });
     if (!available || limit < 1) {
       if (l.available) changes.push({ kind: "sold_out", reference: l.reference, name: fresh.name });
@@ -278,11 +303,15 @@ export function parseStoredCart(raw: string | null, slug: string, context: Price
     const unitPrice = typeof l.unitPrice === "number" && Number.isFinite(l.unitPrice) && l.unitPrice >= 0 ? l.unitPrice : null;
     const imageUrl = typeof l.imageUrl === "string" && l.imageUrl.startsWith("/") ? l.imageUrl : null;
     const maxQuantity = typeof l.maxQuantity === "number" && Number.isFinite(l.maxQuantity) && l.maxQuantity >= 0 ? Math.trunc(l.maxQuantity) : null;
+    // Pistas de oferta guardadas (solo para mostrar): se aceptan si son coherentes; el catálogo las corrige al reconciliar.
+    const listPrice = typeof l.listPrice === "number" && Number.isFinite(l.listPrice) && unitPrice !== null && l.listPrice > unitPrice ? l.listPrice : undefined;
+    const offerLabel = typeof l.offerLabel === "string" && l.offerLabel.length <= 40 ? l.offerLabel : undefined;
     seen.add(l.reference);
     lines.push({
       reference: l.reference,
       name: l.name.slice(0, 200),
       unitPrice,
+      ...(listPrice !== undefined ? { listPrice, ...(offerLabel ? { offerLabel } : {}) } : {}),
       imageUrl,
       quantity: clamp(l.quantity, MAX_QUANTITY),
       available: l.available !== false,

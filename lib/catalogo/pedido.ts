@@ -71,10 +71,21 @@ export interface ResolvedOrderProduct {
   /** Id interno (solo backend: nunca sale en respuestas públicas ni en el mensaje). */
   productId?: string;
   name: string;
+  /** Precio EFECTIVO del canal (el de lista o el de la oferta vigente que aplica); null = a consultar. */
   price: number | null;
+  /** Evidencia: precio de lista y oferta aplicada. Solo existen cuando `price` es el de una oferta vigente. */
+  listPrice?: number;
+  offer?: AppliedOffer;
   availability: Availability;
   /** Máximo pedible (stock); null = sin límite de inventario. */
   maxQuantity: number | null;
+}
+
+/** La oferta que fijó el precio de una línea (evidencia del pedido: se guarda con él). */
+export interface AppliedOffer {
+  key: string;
+  name: string;
+  version: number;
 }
 
 /**
@@ -98,8 +109,12 @@ export interface OrderLine {
   productId?: string;
   name: string;
   quantity: number;
+  /** Precio EFECTIVO por unidad (con la oferta vigente, si aplica). */
   unitPrice: number | null;
   subtotal: number | null;
+  /** Evidencia de la oferta: solo cuando `unitPrice` es el de una oferta vigente. */
+  listPrice?: number;
+  offer?: AppliedOffer;
 }
 
 export interface PreparedOrder {
@@ -111,6 +126,8 @@ export interface PreparedOrder {
   total: number;
   /** Unidades con precio a consultar (nunca se suma un 0 inventado). */
   unpricedUnits: number;
+  /** Lo que el cliente ahorra por ofertas vigentes (suma de (precio de lista − precio efectivo) × cantidad); 0 sin ofertas. */
+  savings: number;
 }
 
 /** Normaliza el pedido: referencias en mayúscula, duplicados sumados (con tope). */
@@ -161,12 +178,14 @@ export function prepareOrder(
       quantity,
       unitPrice: product.price,
       subtotal: product.price === null ? null : product.price * quantity,
+      ...(product.listPrice !== undefined && product.offer ? { listPrice: product.listPrice, offer: product.offer } : {}),
     });
   }
   const totalUnits = lines.reduce((sum, l) => sum + l.quantity, 0);
   const total = lines.reduce((sum, l) => sum + (l.subtotal ?? 0), 0);
   const unpricedUnits = lines.filter((l) => l.unitPrice === null).reduce((sum, l) => sum + l.quantity, 0);
-  return { lines, adjustments, totalUnits, total, unpricedUnits };
+  const savings = lines.reduce((sum, l) => sum + (l.listPrice !== undefined && l.unitPrice !== null && l.listPrice > l.unitPrice ? (l.listPrice - l.unitPrice) * l.quantity : 0), 0);
+  return { lines, adjustments, totalUnits, total, unpricedUnits, savings };
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +263,7 @@ export const ORDER_REQUEST_ID_PATTERN = /\bDL-ORD-[0-9A-HJKMNP-TV-Z]{6}\b/;
 export function orderWhatsappMessage(
   lines: readonly Pick<OrderLine, "reference" | "name" | "quantity">[],
   context: PriceContext,
-  extra?: { requestId?: string; total?: number; unpricedUnits?: number },
+  extra?: { requestId?: string; total?: number; unpricedUnits?: number; savings?: number },
 ): string {
   const intro = context === "wholesale" ? "Hola, me interesan estos productos (precio mayorista):" : "Hola, me interesan estos productos:";
   const detalle = lines.map((l) => `• ${l.reference} · ${l.name} — ${unidades(l.quantity)}`);
@@ -253,6 +272,8 @@ export function orderWhatsappMessage(
   if (extra?.total !== undefined && extra.total > 0) {
     const consultar = extra.unpricedUnits ? ` + ${extra.unpricedUnits === 1 ? "1 producto" : `${extra.unpricedUnits} productos`} con precio a consultar` : "";
     resumen.push(`Total estimado: ${pesos(extra.total)}${consultar}`);
+    // Solo el monto: ningún texto escrito por la administradora entra al mensaje (el webhook lee el id de solicitud de aquí).
+    if (extra.savings !== undefined && extra.savings > 0) resumen.push(`Incluye ofertas vigentes (ahorro: ${pesos(extra.savings)})`);
   }
   const cierre = extra?.requestId ? [`Solicitud: ${extra.requestId}`, "Quisiera información para realizar el pedido."] : ["Quisiera información para realizar el pedido."];
   return [intro, "", ...detalle, "", ...resumen, "", ...cierre].join("\n");

@@ -40,6 +40,8 @@ Un negocio sin el módulo `cms_comercial` no tiene nada de esto: ni API, ni men�
 | `../cms-comercial-client.ts` | Cliente del navegador de `/api/dashboard/tienda/*`: resultados tipados que nunca lanzan; la subida de imágenes en etapas (preparar → URL firmada → Storage → confirmar) |
 | `vitrina.ts` | **La tienda lee del CMS** (PR 3), PURO: `vitrinaDesdeCms` convierte lo publicado en la vitrina de la tienda; `hrefDeDestino` decide a dónde lleva un botón (solo si el destino existe y está activo hoy); `imagenDeVitrina` y `assetsReferenciados` (qué imágenes puede servir la ruta pública) |
 | `vitrina-publica.ts` · `publico-supabase.ts` | Carga de la vitrina CON RESPALDO (inyectable) y su cableado real (perezoso): ante cualquier problema la tienda usa la vitrina de siempre, sin error para el cliente |
+| `lectura-publicada.ts` | La lectura de lo publicado que comparte una página (`cache` de React): la vitrina, los combos y los precios de un mismo inicio leen el contenido UNA vez por render (antes eran 3 lecturas); fuera de un render del servidor (rutas, motor de pedidos, ARIA) no memoiza |
+| `precios.ts` · `precios-supabase.ts` | **El precio efectivo** (PR 4): implementa el puerto de precios del catálogo con lo PUBLICADO (`crearEvaluadorPrecios`, `crearPuertoPreciosCms`) y su cableado real (`repositorioConPrecios`) |
 | `imagen-publica.ts` | Ruta pública de imágenes `/catalogo/{tienda}/vitrina/{id}.webp`: solo imágenes LISTAS, usadas por contenido PUBLICADO y de la carpeta del propio negocio; todo lo demás, el mismo 404 |
 | `siembra-vitrina.ts` | Genera la página principal equivalente a la tienda de hoy y el SQL que la siembra (y su reversa) en `supabase/provisioning/<tienda>/` |
 | `testing/` | Fixtures, Postgres embebido (PGlite), el puente que lleva las llamadas `rpc/dulabs_cms_*` de las rutas al SQL real, un almacén de imágenes en memoria y `fetch-rutas.ts` (lleva el cliente del navegador a las rutas reales) |
@@ -95,15 +97,32 @@ Cada elemento se edita con el ciclo **borrador → revisar → vista previa → 
 
 ## La tienda pública lee del CMS (PR 3)
 
-El inicio de la tienda (`/catalogo/{tienda}`) usa lo PUBLICADO en la página principal del CMS. El catálogo sigue siendo la fuente de productos, precios y fotos: el CMS solo **elige** qué mostrar y en qué orden. Este PR **no cambia ningún precio** (el precio efectivo llega con el PR 4).
+El inicio de la tienda (`/catalogo/{tienda}`) usa lo PUBLICADO en la página principal del CMS. El catálogo sigue siendo la fuente de productos, precios y fotos: el CMS solo **elige** qué mostrar y en qué orden. Este PR **no cambia ningún precio** (el precio efectivo llega con el PR 4, más abajo).
 
 - **Respaldo total**: sin el módulo, sin migración, sin página principal publicada, con la tienda de tecnología (tiene su propio contenido), ante un error de la base o una lectura de más de 2,5 s, la tienda usa su vitrina de siempre. El HTML del inicio con la configuración de hoy queda guardado en `components/catalogo-publico/tienda/__dorados__/` y una prueba exige que sea idéntico byte a byte.
 - **Nunca a medias**: la portada solo sale con imagen LISTA y título; un botón o banner solo existe si su destino existe y está activo hoy (categoría borrada, oferta vencida, campaña de otra modalidad, número de WhatsApp inválido: no se muestra).
 - **Imágenes**: salen por `/catalogo/{tienda}/vitrina/{id}.webp` (nunca la dirección de Storage), con las medidas reales del archivo y solo si están usadas por contenido publicado.
-- **Secciones**: las visibles que la tienda sabe dibujar (portada, categorías, destacados, banner y campaña; ofertas y combos llegan con el PR 4), en el orden elegido. Si no hay lista, el orden de siempre.
+- **Secciones**: las visibles que la tienda sabe dibujar (portada, categorías, destacados, banner, campaña y —desde el PR 4— ofertas y combos), en el orden elegido. Si no hay lista, el orden de siempre.
 - **Destacados, categorías y productos de la campaña** se resuelven contra el catálogo real (activos y del negocio); si ninguno sirve, el criterio automático de siempre.
 - **Campaña**: una sola, la vigente de mayor prioridad que tenga portada o productos (modalidad detal, `[desde, hasta)` en hora de Bogotá).
 - **Siembra**: `supabase/provisioning/delacour/03_sembrar_vitrina_actual.sql` (generado por `siembra-vitrina.ts`) publica la portada y el banner de hoy como versión 1; la tienda leída del CMS es idéntica a la de hoy (prueba `inicio-siembra.pglite.test.tsx`).
+
+## El precio efectivo: ofertas y combos en la tienda, el carrito y el pedido (PR 4)
+
+**Una sola decisión de precio.** El precio que se *muestra* (tarjeta, ficha, carrito), el que se *firma* (cotización) y el que se *cobra* (pedido, motor de pedidos, herramientas de ARIA) sale del mismo cálculo: la oferta publicada baja el precio de verdad y no puede existir una diferencia entre lo mostrado y lo cobrado.
+
+- **Puerto** (`lib/catalogo/precios.ts`, sin dependencia del CMS): `precioQueRige(producto, canal, efectivo)` es la decisión única. La oferta solo rige si deja un precio entero, positivo y MENOR que el de lista del mismo producto y canal, y fue calculada sobre ese mismo precio de lista; en cualquier otro caso rige el precio de lista. El repositorio del catálogo puede traer un `PuertoPrecios` opcional (`conPrecios`); sin él —módulo apagado, sin migración— el precio es exactamente el de lista de siempre.
+- **CMS** (`precios.ts`): implementa el puerto preguntando a `evaluacion.ts` con lo PUBLICADO y el reloj inyectado. Una sola oferta por producto (mayor prioridad; empate: mejor precio para el cliente; luego la más antigua; luego el código). Con el módulo encendido siempre hay evaluador (aunque no haya ofertas): así la tienda sabe que sus precios pueden cambiar al publicar. `precios-supabase.ts` es el cableado real (`repositorioConPrecios`).
+- **Falla cerrada para quien cobra.** La cotización y el pedido verifican las ofertas de forma ESTRICTA: si el negocio usa ofertas y no se pudieron leer, el pedido no se prepara (`PreciosNoDisponibles`). Las vitrinas y listados NO se caen: muestran el precio de lista y dejan el aviso en el registro.
+- **Sin precios viejos**: con ofertas (o en el canal mayorista) la selección de la tienda responde `private, no-store`; sin el módulo queda la caché corta de siempre. Si una oferta se pausa o vence entre la cotización y el pedido, el pedido NO sale con el precio viejo: se ajusta (`price_changed`) y el cliente confirma de nuevo.
+- **Evidencia en el pedido**: la línea guarda el precio efectivo y, solo si una oferta fijó ese precio, `list_price` y `offer {key, name, version}` en el mismo JSON de las líneas (la función SQL solo lee referencia y cantidad: sin migración). Los eventos v2 del pedido NO cambian de contrato (precio efectivo y nada más). El panel y la vista de ARIA muestran el precio de lista y el nombre público de la oferta, nunca su código.
+- **Mensaje de WhatsApp**: solo suma «Incluye ofertas vigentes (ahorro: $X)» (un monto): ningún texto escrito por la administradora entra al mensaje que lee el webhook.
+- **Mínimo mayorista**: se calcula sobre `order.total`, que ya es el valor final con las ofertas aplicadas.
+- **Canal** siempre por backend: la oferta mayorista no toca el precio detal ni viceversa, y el cliente detal jamás recibe precios, ofertas ni combos mayoristas.
+- **Combos (Etapa 1)**: se muestran en el inicio con lo que incluyen, su precio, el «precio normal» (la suma de lo que se paga hoy por separado, ofertas incluidas) y su disponibilidad (la calcula el backend con el inventario real; nunca el stock exacto). No se compran desde el carrito: el único botón es «Pedir con una asesora» (WhatsApp) y solo aparece si el combo está disponible y el negocio tiene un número válido.
+- **Ofertas en la home**: la sección anuncia el beneficio, qué cubre, hasta cuándo y las condiciones; los botones y banners solo llevan a una sección que está en la página (o a la campaña que esa sección muestra), nunca a un ancla vacía.
+- **Una lectura por página**: la vitrina, los datos de los combos y los precios del inicio comparten una sola lectura de lo publicado (`lectura-publicada.ts`); las rutas de selección y pedido, el motor de pedidos y ARIA no memoizan: siempre leen lo vigente en ese momento. Cada visita a la tienda de un negocio SIN el módulo suma una consulta pequeña que responde «sin CMS» (si esto pesara, el siguiente paso sería recordar «sin CMS» unos segundos por negocio).
+- **Límite conocido**: el filtro de precio máximo de la búsqueda de ARIA (consulta SQL sobre el precio de lista) puede no incluir un producto con descuento cuyo precio de lista supere el máximo; nunca incluye de más.
 
 ## Pruebas
 
@@ -118,4 +137,5 @@ Mutación: `python3 scripts/mutacion/cms.py` (quita o invierte una protección a
 3. Se habilita el módulo `cms_comercial` del negocio (fila en `dulabs_tenant_modulos`).
 4. El PR 2 (Dashboard) no agrega migraciones: la entrada **Tienda** aparece sola donde el módulo esté habilitado.
 5. PR 3 (la tienda lee del CMS): sin cambios de esquema. Con el módulo habilitado y NADA publicado, la tienda sigue idéntica. Se corre `supabase/provisioning/delacour/03_sembrar_vitrina_actual.sql` (después del 02): publica la portada y el banner de hoy como contenido del CMS (la tienda se ve igual) y la administradora los encuentra listos para editar. Reversa: `03_sembrar_vitrina_actual.reversa.sql`.
-6. Los siguientes PRs conectan el precio efectivo (PR 4) y ARIA (PR 5).
+6. PR 4 (precio efectivo): sin cambios de esquema ni SQL nuevo. Con el módulo habilitado la tienda empieza a leer las ofertas y los combos que la administradora publique; mientras no publique nada, todo sigue idéntico (precio de lista). Para apagarlo basta deshabilitar el módulo del negocio: vuelve el precio de lista.
+7. El siguiente PR conecta ARIA (herramientas de consulta con contratos estrictos).

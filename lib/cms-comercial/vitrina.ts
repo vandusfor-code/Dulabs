@@ -6,13 +6,24 @@
  *   - nada publicado => se devuelve EXACTAMENTE el registro actual (la tienda se ve idéntica a hoy: módulo apagado, sin portada publicada o con un error al leer);
  *   - una imagen que no está lista, o un destino que ya no existe o no está activo, NO se muestra: nunca una portada rota ni un botón que no lleva a ningún lado;
  *   - la portada solo sale completa (imagen y título); nunca «a medias»;
- *   - lo vigente (campañas) lo decide evaluacion.ts, el ÚNICO lugar donde se evalúa;
+ *   - lo vigente (campañas, ofertas, combos) lo decide evaluacion.ts, el ÚNICO lugar donde se evalúa;
+ *   - un botón o un banner solo apunta a una sección que ESTÁ en la página (visible y dibujada) y al elemento que ESA sección muestra;
+ *   - los combos (Etapa 1) se muestran y se consultan con una asesora: nunca se compran desde el carrito, y jamás sale el stock exacto;
  *   - la tienda de tecnología (otro tema, con su propio contenido) no la maneja el CMS: se queda como está.
  */
 import type { Destino, Imagen } from "@/lib/cms-comercial/esquemas";
-import { campanasActivas, combosActivos, ofertasActivas, type ContextoEvaluacion } from "@/lib/cms-comercial/evaluacion";
+import { campanasActivas, combosActivos, ofertasActivas, vistaCombo, vistaOferta, type ContextoEvaluacion, type ProductoParaCombo, type VistaOferta } from "@/lib/cms-comercial/evaluacion";
 import type { AssetPublicoCms, InstantaneaCms } from "@/lib/cms-comercial/publicado";
-import { ORDEN_INICIO_CLASICO, SECCIONES_DIBUJADAS, type CampanaVitrina, type CatalogStorefrontConfig, type SeccionInicio, type StorefrontImage } from "@/lib/catalogo/vitrina";
+import {
+  ORDEN_INICIO_CLASICO,
+  SECCIONES_DIBUJADAS,
+  type CampanaVitrina,
+  type CatalogStorefrontConfig,
+  type ComboVitrina,
+  type OfertaVitrina,
+  type SeccionInicio,
+  type StorefrontImage,
+} from "@/lib/catalogo/vitrina";
 
 export interface ContextoVitrina {
   /** Slug público de la tienda (sale de la publicación; nunca el id del negocio). */
@@ -29,6 +40,11 @@ export interface ContextoVitrina {
   ahora: number;
   /** Secciones que la tienda sabe dibujar (por defecto, las de hoy). */
   dibujadas?: readonly SeccionInicio[];
+  /**
+   * Código de la campaña que el bloque «campaña» muestra (null = ninguna). Si se informa, un botón a una campaña solo existe si es ESA (el ancla lleva al bloque
+   * que se ve). Sin informar, basta que la campaña esté activa.
+   */
+  campanaMostrada?: string | null;
 }
 
 /** Ruta pública de una imagen del CMS: el servidor la resuelve (negocio, imagen lista y usada en contenido publicado) y la reenvía; nunca la URL de Storage. */
@@ -91,8 +107,10 @@ export function hrefDeDestino(destino: Destino | undefined, ctx: ContextoVitrina
       return dibujadas.includes("ofertas") && ofertasActivas(ev).some((o) => o.clave === destino.clave) ? `${ctx.basePath}#ofertas` : null;
     case "combo":
       return dibujadas.includes("combos") && combosActivos(ev).some((c) => c.clave === destino.clave) ? `${ctx.basePath}#combos` : null;
-    case "campana":
-      return dibujadas.includes("campana") && campanasActivas(ev).some((c) => c.clave === destino.clave) ? `${ctx.basePath}#campana` : null;
+    case "campana": {
+      const llevaAlBloque = ctx.campanaMostrada !== undefined ? ctx.campanaMostrada === destino.clave : campanasActivas(ev).some((c) => c.clave === destino.clave);
+      return dibujadas.includes("campana") && llevaAlBloque ? `${ctx.basePath}#campana` : null;
+    }
   }
 }
 
@@ -100,41 +118,126 @@ export function hrefDeDestino(destino: Destino | undefined, ctx: ContextoVitrina
  * El bloque de la campaña ACTIVA de mayor prioridad que tenga algo que mostrar (portada o productos destacados). Una sola: la home tiene una sección «campaña».
  * Su portada usa la imagen propia y, si no la tiene, la de la campaña; el botón solo sale si su destino existe y está disponible hoy.
  */
-function campanaParaInicio(snap: InstantaneaCms, ctx: ContextoVitrina, ev: ContextoEvaluacion): CampanaVitrina | undefined {
-  for (const c of campanasActivas(ev)) {
-    const p = c.contenido.portada;
-    const productos = c.contenido.productos_destacados;
-    if (!p && productos.length === 0) continue;
-    let portada: CampanaVitrina["portada"];
-    if (p) {
-      const imagen = imagenDeVitrina(p.imagen ?? c.contenido.imagen, snap.assets, ctx.slug);
-      const href = p.boton ? hrefDeDestino(p.boton.destino, ctx, ev) : null;
-      portada = {
-        ...(p.etiqueta ? { etiqueta: p.etiqueta } : {}),
-        titulo: p.titulo,
-        ...(p.subtitulo ? { subtitulo: p.subtitulo } : {}),
-        ...(imagen ? { imagen } : {}),
-        ...(p.boton && href ? { boton: { texto: p.boton.texto, href } } : {}),
-      };
-    }
-    return { nombre: c.contenido.nombre, ...(portada ? { portada } : {}), productos };
+function campanaElegida(ev: ContextoEvaluacion) {
+  return campanasActivas(ev).find((c) => c.contenido.portada || c.contenido.productos_destacados.length > 0);
+}
+
+function campanaParaInicio(snap: InstantaneaCms, ctx: ContextoVitrina, ev: ContextoEvaluacion, c: NonNullable<ReturnType<typeof campanaElegida>>): CampanaVitrina {
+  const p = c.contenido.portada;
+  const productos = c.contenido.productos_destacados;
+  let portada: CampanaVitrina["portada"];
+  if (p) {
+    const imagen = imagenDeVitrina(p.imagen ?? c.contenido.imagen, snap.assets, ctx.slug);
+    const href = p.boton ? hrefDeDestino(p.boton.destino, ctx, ev) : null;
+    portada = {
+      ...(p.etiqueta ? { etiqueta: p.etiqueta } : {}),
+      titulo: p.titulo,
+      ...(p.subtitulo ? { subtitulo: p.subtitulo } : {}),
+      ...(imagen ? { imagen } : {}),
+      ...(p.boton && href ? { boton: { texto: p.boton.texto, href } } : {}),
+    };
   }
-  return undefined;
+  return { nombre: c.contenido.nombre, ...(portada ? { portada } : {}), productos };
+}
+
+// ---------------------------------------------------------------------------
+// Ofertas y combos del inicio
+// ---------------------------------------------------------------------------
+
+const textoAlcance = (a: VistaOferta["alcance"]): string => {
+  if (a.todos) return "Toda la tienda";
+  const partes = [
+    ...(a.productos > 0 ? [`${a.productos} ${a.productos === 1 ? "producto seleccionado" : "productos seleccionados"}`] : []),
+    ...(a.categorias > 0 ? [`${a.categorias} ${a.categorias === 1 ? "categoría" : "categorías"}`] : []),
+  ];
+  return partes.join(" y ");
+};
+
+/** «Ver productos» de una oferta: la categoría si cubre UNA sola (y existe); si no, el listado completo (los precios ya reflejan la oferta). */
+function hrefDeOferta(alcance: { todos: boolean; referencias: readonly string[]; categorias: readonly string[] }, ctx: ContextoVitrina): string {
+  if (!alcance.todos && alcance.referencias.length === 0 && alcance.categorias.length === 1 && ctx.categorias.has(alcance.categorias[0])) {
+    return `${ctx.basePath}?categoria=${encodeURIComponent(alcance.categorias[0])}`;
+  }
+  return ctx.listPath;
+}
+
+/** Las ofertas ACTIVAS para el cliente detal (mayor prioridad primero), listas para anunciarse. Una oferta mayorista jamás sale aquí. */
+function ofertasParaInicio(snap: InstantaneaCms, ctx: ContextoVitrina, ev: ContextoEvaluacion): OfertaVitrina[] {
+  return ofertasActivas(ev).map((o) => {
+    const v = vistaOferta(ev, o);
+    const imagen = imagenDeVitrina(o.contenido.imagen, snap.assets, ctx.slug);
+    return {
+      clave: o.clave,
+      nombre: v.nombre,
+      ...(v.descripcion ? { descripcion: v.descripcion } : {}),
+      ...(imagen ? { imagen } : {}),
+      beneficio: v.textoBeneficio,
+      ...(v.textoVigencia ? { vigencia: v.textoVigencia } : {}),
+      ...(v.condiciones ? { condiciones: v.condiciones } : {}),
+      alcance: textoAlcance(v.alcance),
+      href: hrefDeOferta(o.contenido.alcance, ctx),
+    };
+  });
+}
+
+/** Referencias de los componentes de los combos ACTIVOS para el cliente detal: lo que hay que consultar al catálogo para poder armarlos. */
+export function referenciasDeCombos(snap: InstantaneaCms, ahora: number): string[] {
+  return [...new Set(combosActivos({ snap, canal: "retail", ahora }).flatMap((c) => c.contenido.componentes.map((x) => x.referencia)))];
+}
+
+/** Mensaje listo para pedir un combo a una asesora. Sin ningún dato del cliente; el nombre y el código son los del combo publicado. */
+function consultaDeCombo(whatsapp: string | null, nombre: string, clave: string): string | null {
+  const digitos = digitosWhatsapp(whatsapp);
+  return digitos ? `https://wa.me/${digitos}?text=${encodeURIComponent(`Hola, me interesa el combo «${nombre}» (código ${clave}).`)}` : null;
+}
+
+/**
+ * Los combos ACTIVOS para el cliente detal con su disponibilidad calculada por el backend (los disponibles primero). Etapa 1: no hay botón de compra; el enlace abre
+ * una conversación con una asesora y solo existe si el combo está disponible y el negocio tiene un número válido.
+ */
+function combosParaInicio(snap: InstantaneaCms, ctx: ContextoVitrina, ev: ContextoEvaluacion, productos: ReadonlyMap<string, ProductoParaCombo>): ComboVitrina[] {
+  const activos = combosActivos(ev);
+  const salida: ComboVitrina[] = [];
+  for (const combo of activos) {
+    const v = vistaCombo(ev, combo, productos, activos);
+    if (!v) continue;
+    const imagen = imagenDeVitrina(combo.contenido.imagen, snap.assets, ctx.slug);
+    salida.push({
+      clave: v.clave,
+      nombre: v.nombre,
+      ...(v.descripcion ? { descripcion: v.descripcion } : {}),
+      ...(imagen ? { imagen } : {}),
+      componentes: v.componentes.map((c) => ({ referencia: c.referencia, nombre: c.nombre ?? c.referencia, cantidad: c.cantidad, disponible: c.disponible })),
+      precioNormal: v.precioNormal,
+      precioCombo: v.precioCombo,
+      ...(v.ahorro !== null ? { ahorro: v.ahorro } : {}),
+      disponible: v.disponible,
+      ...(v.textoVigencia ? { vigencia: v.textoVigencia } : {}),
+      ...(v.condiciones ? { condiciones: v.condiciones } : {}),
+      consultaHref: v.disponible ? consultaDeCombo(ctx.whatsapp, v.nombre, v.clave) : null,
+    });
+  }
+  return [...salida.filter((c) => c.disponible), ...salida.filter((c) => !c.disponible)];
 }
 
 /**
  * La vitrina de la tienda a partir de lo PUBLICADO. Sin página principal publicada (o con la tienda de tecnología) devuelve el registro SIN TOCAR (la misma referencia).
  * Con ella, la marca y el tema siguen siendo los del registro (el CMS no los maneja) y todo lo editorial —portada, banner, destacados, secciones y campaña— sale del CMS.
  */
-export function vitrinaDesdeCms(snap: InstantaneaCms, registro: CatalogStorefrontConfig, ctx: ContextoVitrina): CatalogStorefrontConfig {
+export function vitrinaDesdeCms(snap: InstantaneaCms, registro: CatalogStorefrontConfig, ctxEntrada: ContextoVitrina, productos?: ReadonlyMap<string, ProductoParaCombo>): CatalogStorefrontConfig {
   if (registro.tema === "tecnologia" || snap.home === null) return registro;
 
   const h = snap.home.contenido;
-  const ev: ContextoEvaluacion = { snap, canal: "retail", ahora: ctx.ahora };
-  const dibujadas = ctx.dibujadas ?? SECCIONES_DIBUJADAS;
+  const ev: ContextoEvaluacion = { snap, canal: "retail", ahora: ctxEntrada.ahora };
+  const dibujadas = ctxEntrada.dibujadas ?? SECCIONES_DIBUJADAS;
   // Las secciones del CMS y las de la tienda son la misma lista cerrada (una prueba vigila que no se separen).
   const visibles: SeccionInicio[] = h.secciones.filter((s) => s.visible).map((s) => s.tipo);
   const se = (s: SeccionInicio) => visibles.includes(s);
+  // Secciones: las visibles que la tienda sabe dibujar, en el orden elegido (una sección repetida no existe: el esquema lo impide).
+  const secciones = visibles.filter((s) => dibujadas.includes(s));
+  const campana = secciones.includes("campana") ? campanaElegida(ev) : undefined;
+  // Un botón o banner solo lleva a una sección que ESTÁ en la página y al elemento que esa sección muestra (si no, sería un ancla a la nada).
+  const ctx: ContextoVitrina = { ...ctxEntrada, dibujadas: secciones, campanaMostrada: campana?.clave ?? null };
 
   const config: CatalogStorefrontConfig = { ...(registro.brand ? { brand: registro.brand } : {}), ...(registro.tema ? { tema: registro.tema } : {}) };
 
@@ -159,13 +262,17 @@ export function vitrinaDesdeCms(snap: InstantaneaCms, registro: CatalogStorefron
     if (href) config.bannerHref = href;
   }
 
-  // Secciones: las visibles que la tienda sabe dibujar, en el orden elegido (una sección repetida no existe: el esquema lo impide).
-  const secciones = visibles.filter((s) => dibujadas.includes(s));
   config.secciones = secciones;
 
-  if (secciones.includes("campana")) {
-    const campana = campanaParaInicio(snap, ctx, ev);
-    if (campana) config.campana = campana;
+  if (campana) config.campana = campanaParaInicio(snap, ctx, ev, campana);
+  if (secciones.includes("ofertas")) {
+    const ofertas = ofertasParaInicio(snap, ctx, ev);
+    if (ofertas.length > 0) config.ofertas = ofertas;
+  }
+  // Los combos necesitan los datos reales de sus componentes (disponibilidad y precios): sin ellos no se muestran (nunca «disponibles» por suposición).
+  if (secciones.includes("combos") && productos) {
+    const combos = combosParaInicio(snap, ctx, ev, productos);
+    if (combos.length > 0) config.combos = combos;
   }
   if (secciones.includes("destacados") && h.productos_destacados.length > 0) config.destacados = h.productos_destacados;
   if (secciones.includes("categorias") && h.categorias_destacadas.length > 0) config.categoriasDestacadas = h.categorias_destacadas;

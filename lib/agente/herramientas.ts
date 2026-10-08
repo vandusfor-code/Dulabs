@@ -183,7 +183,21 @@ async function otherChannelOrder(ctx: AgentTurnToolContext, deps: AgentToolsDeps
   return fail("FORBIDDEN", "Ese pedido es de otra modalidad de compra (detal / por mayor) y el cliente está registrado en la suya. No lo valides ni lo confirmes: ofrece una asesora.", { reason: "channel_mismatch" });
 }
 
-type ProductView = { reference: string; name: string; description: string | null; category: string | null; material: string | null; color: string | null; unit_price: number | null; currency: string; availability: string; max_quantity: number | null };
+type ProductView = {
+  reference: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  material: string | null;
+  color: string | null;
+  unit_price: number | null;
+  /** Solo cuando `unit_price` es el de una oferta vigente del canal: el precio de lista y la oferta, redactados por el backend. */
+  list_price?: number;
+  offer?: { name: string; benefit: string; valid_until: string | null; conditions: string | null };
+  currency: string;
+  availability: string;
+  max_quantity: number | null;
+};
 
 /**
  * Lo que el modelo ve de un producto. La descripción llega COMPLETA (el catálogo la acota a CATALOG_LIMITS.description): antes se recortaba a 200

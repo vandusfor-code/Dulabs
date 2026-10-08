@@ -178,3 +178,109 @@ describe("mensaje de WhatsApp (formato centralizado)", () => {
     assert.deepEqual(parseOrderMessage("Hola, quiero el dije corazón y el anillo DL-000186"), { context: null, items: [], requestId: null });
   });
 });
+
+describe("ofertas en el pedido (se cobra el precio efectivo; la oferta queda como evidencia)", () => {
+  const DIJE_OFERTA: ResolvedOrderProduct = { ...DIJE, price: 28_000, listPrice: 35_000, offer: { key: "amor", name: "Amor y Amistad", version: 3 } };
+  const conOferta = new Map([DIJE_OFERTA, ARETES, ANILLO].map((p) => [p.reference, p]));
+
+  it("la línea cobra el precio efectivo, conserva el de lista y la oferta con su versión, y el ahorro es (lista − efectivo) × cantidad", () => {
+    const r = prepareOrder([{ reference: "DL-000184", quantity: 3 }], conOferta);
+    assert.deepEqual(r.lines, [
+      { reference: "DL-000184", name: "Dije corazón", quantity: 3, unitPrice: 28_000, subtotal: 84_000, listPrice: 35_000, offer: { key: "amor", name: "Amor y Amistad", version: 3 } },
+    ]);
+    assert.equal(r.total, 84_000);
+    assert.equal(r.savings, 21_000);
+  });
+
+  it("sin ofertas las líneas quedan IDÉNTICAS a las de siempre (sin evidencia) y el ahorro es 0", () => {
+    const r = prepareOrder([{ reference: "DL-000185", quantity: 1 }], conOferta);
+    assert.deepEqual(r.lines, [{ reference: "DL-000185", name: "Aretes brillo", quantity: 1, unitPrice: 42_000, subtotal: 42_000 }]);
+    assert.ok(!("listPrice" in r.lines[0]) && !("offer" in r.lines[0]));
+    assert.equal(r.savings, 0);
+  });
+
+  it("en un pedido mixto solo la línea con oferta lleva evidencia y solo ella suma al ahorro; el total mezcla ambos precios", () => {
+    const r = prepareOrder(
+      [
+        { reference: "DL-000184", quantity: 1 },
+        { reference: "DL-000185", quantity: 2 },
+        { reference: "DL-000186", quantity: 1 },
+      ],
+      conOferta,
+    );
+    assert.deepEqual(r.lines.map((l) => [l.reference, l.unitPrice, l.listPrice]), [["DL-000184", 28_000, 35_000], ["DL-000185", 42_000, undefined], ["DL-000186", null, undefined]]);
+    assert.equal(r.total, 28_000 + 84_000);
+    assert.equal(r.savings, 7_000);
+    assert.equal(r.unpricedUnits, 1);
+  });
+
+  it("si el stock reduce la cantidad, el ahorro se calcula sobre lo concedido (no sobre lo pedido)", () => {
+    const limitado = new Map([{ ...DIJE_OFERTA, maxQuantity: 2 }].map((p) => [p.reference, p]));
+    const r = prepareOrder([{ reference: "DL-000184", quantity: 5 }], limitado);
+    assert.equal(r.lines[0].quantity, 2);
+    assert.equal(r.savings, 14_000);
+    assert.equal(r.total, 56_000);
+  });
+
+  it("nunca se inventa un ahorro: lista igual o menor que el efectivo, o precio a consultar, no suman", () => {
+    const raros = new Map(
+      [
+        { ...DIJE, reference: "DL-000001", price: 35_000, listPrice: 35_000, offer: { key: "a", name: "A", version: 1 } },
+        { ...DIJE, reference: "DL-000002", price: 36_000, listPrice: 35_000, offer: { key: "b", name: "B", version: 1 } },
+        { ...DIJE, reference: "DL-000003", price: null, listPrice: 35_000, offer: { key: "c", name: "C", version: 1 } },
+      ].map((p) => [p.reference, p]),
+    );
+    const r = prepareOrder(
+      [
+        { reference: "DL-000001", quantity: 1 },
+        { reference: "DL-000002", quantity: 1 },
+        { reference: "DL-000003", quantity: 1 },
+      ],
+      raros,
+    );
+    assert.equal(r.savings, 0);
+  });
+
+  it("una línea con lista pero sin oferta (o al revés) no lleva evidencia a medias", () => {
+    const solo = new Map([{ ...DIJE, listPrice: 35_000 }, { ...ARETES, offer: { key: "x", name: "X", version: 1 } }].map((p) => [p.reference, p]));
+    const r = prepareOrder(
+      [
+        { reference: "DL-000184", quantity: 1 },
+        { reference: "DL-000185", quantity: 1 },
+      ],
+      solo,
+    );
+    for (const l of r.lines) assert.ok(!("listPrice" in l) && !("offer" in l), l.reference);
+  });
+
+  describe("mensaje de WhatsApp", () => {
+    const lineas = [
+      { reference: "DL-000184", name: "Dije corazón", quantity: 2 },
+      { reference: "DL-000185", name: "Aretes brillo", quantity: 1 },
+    ];
+
+    it("con ahorro agrega UNA línea con el monto, justo después del total; sin ahorro el mensaje es el de siempre, byte a byte", () => {
+      const base = orderWhatsappMessage(lineas, "retail", { requestId: "DL-ORD-7F42KQ", total: 98_000, unpricedUnits: 0 });
+      const conAhorro = orderWhatsappMessage(lineas, "retail", { requestId: "DL-ORD-7F42KQ", total: 98_000, unpricedUnits: 0, savings: 14_000 });
+      assert.match(conAhorro, /Total estimado: \$98\.000\nIncluye ofertas vigentes \(ahorro: \$14\.000\)\n/);
+      assert.equal(conAhorro.replace("Incluye ofertas vigentes (ahorro: $14.000)\n", ""), base);
+      for (const savings of [0, undefined, -5]) assert.equal(orderWhatsappMessage(lineas, "retail", { requestId: "DL-ORD-7F42KQ", total: 98_000, unpricedUnits: 0, savings }), base);
+    });
+
+    it("sin total (nada con precio) no se menciona ningún ahorro", () => {
+      assert.doesNotMatch(orderWhatsappMessage(lineas, "retail", { total: 0, unpricedUnits: 2, savings: 9_000 }), /ahorro|ofertas/);
+    });
+
+    it("el webhook lee el mensaje con ahorro igual que el de siempre: mismas referencias, cantidades, canal y solicitud", () => {
+      const texto = orderWhatsappMessage(lineas, "wholesale", { requestId: "DL-ORD-7F42KQ", total: 98_000, savings: 14_000 });
+      assert.deepEqual(parseOrderMessage(texto), {
+        context: "wholesale",
+        items: [
+          { reference: "DL-000184", quantity: 2 },
+          { reference: "DL-000185", quantity: 1 },
+        ],
+        requestId: "DL-ORD-7F42KQ",
+      });
+    });
+  });
+});

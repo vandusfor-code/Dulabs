@@ -5,15 +5,26 @@
  * Perezoso a propósito: el cliente de base de datos se crea al primer uso, DENTRO de quien llama, para que cualquier falla (por ejemplo, una variable de
  * entorno ausente) caiga en su manejo de errores (la tienda usa su vitrina de siempre; la imagen responde 502) y no rompa la página al construir las dependencias.
  */
+import { createResolucionCatalogo, type ProductoResuelto } from "@/lib/catalogo/resolucion";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { createPublicCatalogService } from "@/lib/catalogo/service";
-import { crearLectorSupabase } from "@/lib/cms-comercial/lector";
+import type { ProductoParaCombo } from "@/lib/cms-comercial/evaluacion";
+import { leerPublicado } from "@/lib/cms-comercial/lectura-publicada";
+import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
 import { supabaseAdmin } from "@/lib/supabase";
+
+/**
+ * Lo que un combo necesita saber de un producto: si está activo, su disponibilidad (discreta: nunca el stock exacto), cuántas unidades se pueden pedir como máximo y el precio EFECTIVO detal
+ * (lo que el cliente pagaría hoy por separado: así «precio normal» y «ahorro» nunca prometen un descuento que ya no existe).
+ */
+export function productoParaCombo(p: ProductoResuelto): ProductoParaCombo {
+  return { referencia: p.reference, nombre: p.name, activo: p.status === "ACTIVE", disponibilidad: p.availability, maxCantidad: p.maxQuantity, precioLista: p.prices.retail };
+}
 
 function construir() {
   const supabase = supabaseAdmin();
   const repo = createSupabaseCatalogRepository(supabase);
-  return { repo, servicio: createPublicCatalogService({ repo }), lector: crearLectorSupabase(supabase) };
+  return { supabase, repo, servicio: createPublicCatalogService({ repo }), conPrecios: repositorioConPrecios(supabase) };
 }
 
 export function crearDepsPublicasCms() {
@@ -21,8 +32,17 @@ export function crearDepsPublicasCms() {
   const dep = () => (base ??= construir());
   return {
     tenantDe: (slug: string) => dep().servicio.tenantOf(slug),
-    cargar: (tenantId: string) => dep().lector.cargar(tenantId),
+    // Lo publicado se lee UNA vez por render: la vitrina, los combos y los precios de la misma página comparten la lectura (lectura-publicada.ts).
+    cargar: (tenantId: string) => leerPublicado(dep().supabase, tenantId),
     abrir: (path: string) => dep().repo.openImage(path),
+    /**
+     * Los datos reales de los productos de los combos, con el precio EFECTIVO detal (lo que el cliente pagaría hoy por separado: así «precio normal» y «ahorro»
+     * nunca prometen un descuento que ya no existe). Solo uso interno: el stock exacto no sale de aquí hacia el navegador.
+     */
+    productosDeCombos: async (tenantId: string, referencias: readonly string[]): Promise<ReadonlyMap<string, ProductoParaCombo>> => {
+      const lote = await createResolucionCatalogo({ repo: dep().conPrecios }).resolverReferencias(tenantId, referencias);
+      return new Map(lote.items.map((p) => [p.reference, productoParaCombo(p)]));
+    },
     ahora: () => Date.now(),
   };
 }

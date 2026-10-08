@@ -38,6 +38,10 @@ export function TarjetaProducto({ product, basePath, posicion }: { product: Publ
           </span>
         )}
         {product.thumbUrl && <MarcaReferencia reference={product.reference} />}
+        {/* Etiqueta de la oferta vigente (el detalle en palabras va debajo, para quien no ve la foto). */}
+        {product.offer && (
+          <span className="absolute left-2.5 top-2.5 rounded-full bg-[var(--tienda-oro)] px-2.5 py-1 text-[11px] font-semibold leading-none text-white shadow-sm">{product.offer.label}</span>
+        )}
       </EnlaceIntencion>
       <div className="flex flex-1 flex-col px-3.5 pb-3.5 pt-3">
         <h3 className="line-clamp-2 text-[14.5px] font-medium leading-snug text-fg">
@@ -47,9 +51,18 @@ export function TarjetaProducto({ product, basePath, posicion }: { product: Publ
         </h3>
         <p className="mt-0.5 font-mono text-[11px] tracking-tight text-mist">{product.reference}</p>
         {product.availability === "low" && <p className="mt-1 text-[11.5px] font-medium text-[var(--tienda-oro)]">Últimas unidades</p>}
+        {product.offer && <p className="mt-1 text-[11.5px] font-medium text-[var(--tienda-oro)]">{product.offer.benefit}</p>}
         <div className="mt-auto flex items-end justify-between gap-2 pt-3">
           {product.price === null ? (
             <span className="text-[13px] text-mist">Precio a consultar</span>
+          ) : product.listPrice !== undefined ? (
+            <span className="flex flex-col leading-tight">
+              <span className="text-base font-semibold tabular-nums text-fg">{formatCop(product.price)}</span>
+              <span className="text-[12px] tabular-nums text-mist">
+                <span className="sr-only">Precio normal: </span>
+                <s>{formatCop(product.listPrice)}</s>
+              </span>
+            </span>
           ) : (
             <span className="text-base font-semibold tabular-nums text-fg">{formatCop(product.price)}</span>
           )}

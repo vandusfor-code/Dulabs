@@ -308,7 +308,17 @@ export function createOrderEngine(deps: OrderEngineDeps) {
       }
       // Precio del canal del pedido; el del otro canal nunca entra.
       const unitPrice = channel === "wholesale" ? p.prices.wholesale : p.prices.retail;
-      lines.push({ reference: p.reference, productName: p.name, quantity: item.quantity, unitPrice, subtotal: unitPrice === null ? null : unitPrice * item.quantity });
+      // Evidencia: si una oferta vigente fijó este precio, se guarda con la línea (qué se mostró y se cobró, y con cuál oferta).
+      const oferta = p.offers?.[channel] ?? null;
+      const lista = p.listPrices?.[channel];
+      lines.push({
+        reference: p.reference,
+        productName: p.name,
+        quantity: item.quantity,
+        unitPrice,
+        subtotal: unitPrice === null ? null : unitPrice * item.quantity,
+        ...(oferta && typeof lista === "number" ? { listPrice: lista, offer: { key: oferta.clave, name: oferta.nombre, version: oferta.version } } : {}),
+      });
       if (p.status !== "ACTIVE") {
         issues.push({ code: "product_unavailable", reference: p.reference, message: `La referencia ${p.reference} ya no está disponible.` });
       } else if (p.availability === "sold_out") {
@@ -572,7 +582,14 @@ export function createOrderEngine(deps: OrderEngineDeps) {
       if (!(await deps.orders.available())) return null;
       return (
         await traced("record_catalog_request", { tenantId: input.tenantId }, async () => {
-          const lines = input.lines.map((l) => ({ reference: l.reference, productName: l.productName, quantity: l.quantity, unitPrice: l.unitPrice, subtotal: l.subtotal }));
+          const lines = input.lines.map((l) => ({
+            reference: l.reference,
+            productName: l.productName,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+            subtotal: l.subtotal,
+            ...(l.listPrice !== undefined && l.offer ? { listPrice: l.listPrice, offer: l.offer } : {}),
+          }));
           const result = await insert(
             {
               businessId: input.tenantId,

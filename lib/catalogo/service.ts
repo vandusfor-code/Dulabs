@@ -14,7 +14,6 @@ import {
   CATALOG_LIMITS,
   availabilityOf,
   maxOrderableUnits,
-  priceFor,
   detailPathOf,
   imageStoragePaths,
   normalizeSearch,
@@ -34,6 +33,7 @@ import {
   type PriceContext,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
+import { PreciosNoDisponibles, precioQueRige, type EvaluadorPrecios } from "@/lib/catalogo/precios";
 import type { CatalogRepository, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
   buildOrderDraft,
@@ -531,6 +531,11 @@ export interface ResolvedSelection {
    * tiene clave de firma configurada.
    */
   quote: string | null;
+  /**
+   * true = los precios dependen de ofertas vigentes del CMS (pueden cambiar en cualquier momento): la respuesta no debe quedar en cachés compartidas.
+   * Sin ofertas (módulo apagado) no existe y todo queda como siempre.
+   */
+  dynamicPricing?: boolean;
 }
 
 /**
@@ -659,14 +664,31 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     return context === "retail" || tokensMatch(token, pub.wholesaleToken);
   }
 
-  /** Única proyección pública de productos (lista, inicio, ficha, selección): una consulta de media por lote. */
-  async function project(pub: Publication, products: CatalogProduct[], context: PriceContext): Promise<PublicCatalogProduct[]> {
+  /**
+   * Precios efectivos del negocio (ofertas vigentes del CMS comercial) o null: sin puerto o con el módulo apagado rige el precio de lista, como siempre.
+   * `estricto` (cotización y pedido: lo que se cobra): si no se pudo verificar, NO se sigue con un precio sin verificar (PreciosNoDisponibles).
+   * No estricto (vitrinas y listados): la tienda no se cae por esto; se muestra el precio de lista y queda el aviso en el registro.
+   */
+  async function evaluadorDe(tenantId: string, estricto: boolean): Promise<EvaluadorPrecios | null> {
+    const puerto = repo.precios;
+    if (!puerto) return null;
+    try {
+      return await puerto.paraNegocio(tenantId);
+    } catch (error) {
+      if (estricto) throw new PreciosNoDisponibles(error);
+      console.error("[catalogo/precios] no se pudieron verificar las ofertas; se muestra el precio de lista:", error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
+
+  /** Única proyección pública de productos (lista, inicio, ficha, selección): una consulta de media por lote. El precio sale de `precioQueRige` (oferta vigente o lista). */
+  async function project(pub: Publication, products: CatalogProduct[], context: PriceContext, evaluador: EvaluadorPrecios | null = null): Promise<PublicCatalogProduct[]> {
     const primaries = await repo.listPrimaryMedia(pub.tenantId, products.map((p) => p.id));
     const byProduct = new Map(primaries.map((m) => [m.productId, m]));
     return products.map((p) => {
       const media = byProduct.get(p.id);
       const [src] = imageSources(repo, pub.tenantId, p, media ? [media] : []);
-      return toPublicProduct(p, context, src ? publicImages(pub.slug, p.reference, 1, src) : null);
+      return toPublicProduct(p, context, src ? publicImages(pub.slug, p.reference, 1, src) : null, evaluador?.de(p, context));
     });
   }
 
@@ -675,15 +697,22 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
    * dentro del tenant de la publicación, solo productos ACTIVOS, con la
    * proyección pública (precio del contexto, disponibilidad y máximo pedible).
    */
-  async function resolveFor(pub: Publication, rawReferences: readonly string[], context: PriceContext): Promise<ResolvedSelection & { products: CatalogProduct[] }> {
+  async function resolveFor(
+    pub: Publication,
+    rawReferences: readonly string[],
+    context: PriceContext,
+    estricto: boolean,
+  ): Promise<ResolvedSelection & { products: CatalogProduct[]; evaluador: EvaluadorPrecios | null }> {
     const references = normalizeReferences(rawReferences);
     const found = references.length > 0 ? await repo.getProductsByReferences(pub.tenantId, references) : [];
     const activos = found.filter((p) => p.status === "ACTIVE");
-    const items = await project(pub, activos, context);
+    // El mismo evaluador fija el precio que se MUESTRA (items), el que se FIRMA (cotización) y —en prepareOrder— el que se COBRA.
+    const evaluador = await evaluadorDe(pub.tenantId, estricto);
+    const items = await project(pub, activos, context, evaluador);
     const resueltas = new Set(items.map((p) => p.reference));
     const key = orders?.key ?? null;
     const quote = key ? signQuote(key, { businessId: pub.tenantId, channel: context }, new Map(items.map((p) => [p.reference, p.price]))) : null;
-    return { context, items, unknown: references.filter((r) => !resueltas.has(r)), quote, products: activos };
+    return { context, items, unknown: references.filter((r) => !resueltas.has(r)), quote, ...(evaluador ? { dynamicPricing: true } : {}), products: activos, evaluador };
   }
 
   /** Productos ACTIVOS de una lista de referencias, en el orden pedido (los inexistentes, ajenos al negocio o desactivados se omiten). */
@@ -795,16 +824,17 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
 
       const requested = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
       const categoryId = input.categoryId && UUID_PATTERN.test(input.categoryId) ? input.categoryId : undefined;
-      const [listing, categories, business] = await Promise.all([
+      const [listing, categories, business, evaluador] = await Promise.all([
         publicListing(pub.tenantId, input.context, normalizeSearch(input.q), categoryId, requested),
         repo.listCategories(pub.tenantId),
         repo.getBusinessProfile(pub.tenantId),
+        evaluadorDe(pub.tenantId, false),
       ]);
 
       return {
         business: { name: pub.publicName, whatsapp: business.whatsapp },
         context: input.context,
-        products: await project(pub, listing.items, input.context),
+        products: await project(pub, listing.items, input.context, evaluador),
         categories,
         total: listing.total,
         page: listing.page,
@@ -830,11 +860,12 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       const pub = await openPublication(slug);
       if (!pub) return null;
       const wantsCampana = (opciones.campana?.length ?? 0) > 0;
-      const [featured, pool, categories, campaignItems] = await Promise.all([
+      const [featured, pool, categories, campaignItems, evaluador] = await Promise.all([
         featuredProducts(pub.tenantId, opciones.destacadas),
         repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, offset: 0, limit: COVER_POOL }),
         repo.listCategories(pub.tenantId),
         wantsCampana ? activeInOrder(pub.tenantId, opciones.campana ?? [], CAMPANA_LIMIT) : Promise.resolve<CatalogProduct[] | null>(null),
+        evaluadorDe(pub.tenantId, false),
       ]);
       const coverProduct = new Map<string, CatalogProduct>();
       for (const p of pool.items) if (p.categoryId && !coverProduct.has(p.categoryId)) coverProduct.set(p.categoryId, p);
@@ -843,7 +874,7 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       const covers = [...coverProduct.values()];
       const unique = new Map<string, CatalogProduct>();
       for (const p of [...featured.items, ...(campaignItems ?? []), ...covers]) if (!unique.has(p.id)) unique.set(p.id, p);
-      const projected = await project(pub, [...unique.values()], "retail");
+      const projected = await project(pub, [...unique.values()], "retail", evaluador);
       const byReference = new Map(projected.map((p) => [p.reference, p]));
       const pick = (items: CatalogProduct[]) => items.flatMap((p) => byReference.get(p.reference) ?? []);
 
@@ -877,7 +908,8 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       if (!product || product.status !== "ACTIVE") return null;
       const media = await repo.listMedia(pub.tenantId, product.id);
       const gallery = imageSources(repo, pub.tenantId, product, media).map((src, i) => publicImages(pub.slug, product.reference, i + 1, src));
-      return { ...toPublicProduct(product, context, gallery[0] ?? null), categoryId: product.categoryId, gallery };
+      const evaluador = await evaluadorDe(pub.tenantId, false);
+      return { ...toPublicProduct(product, context, gallery[0] ?? null, evaluador?.de(product, context)), categoryId: product.categoryId, gallery };
     },
 
     /**
@@ -890,8 +922,8 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       const pub = await openPublication(input.slug);
       if (!pub || !contextAllowed(pub, context, input.token)) return null;
       // Solo la proyección pública: los productos internos (stock exacto, ids) nunca salen de aquí.
-      const resolved = await resolveFor(pub, input.references, context);
-      return { context: resolved.context, items: resolved.items, unknown: resolved.unknown, quote: resolved.quote };
+      const resolved = await resolveFor(pub, input.references, context, false);
+      return { context: resolved.context, items: resolved.items, unknown: resolved.unknown, quote: resolved.quote, ...(resolved.dynamicPricing ? { dynamicPricing: true } : {}) };
     },
 
     /**
@@ -923,14 +955,30 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       if (!key) throw new OrderSigningUnavailable("Falta la clave de firma de pedidos (CATALOG_ORDER_SECRET o SUPABASE_SERVICE_ROLE_KEY).");
 
       const items = normalizeOrderItems(input.items);
-      const { products, ...selection } = await resolveFor(
+      // ESTRICTO: lo que se cobra no puede salir de un precio sin verificar (si el negocio usa ofertas y no se pudieron leer, el pedido no se prepara).
+      const { products, evaluador, ...selection } = await resolveFor(
         pub,
         items.map((i) => i.reference),
         context,
+        true,
       );
-      // Verdad INTERNA (stock exacto, id interno): la del público es discreta.
+      // Verdad INTERNA (stock exacto, id interno): la del público es discreta. El precio es el MISMO que se mostró y se firmó (mismo evaluador).
       const verdad = new Map<string, ResolvedOrderProduct>(
-        products.map((p) => [p.reference, { reference: p.reference, productId: p.id, name: p.name, price: priceFor(p, context), availability: availabilityOf(p), maxQuantity: maxOrderableUnits(p) }]),
+        products.map((p) => {
+          const rige = precioQueRige(p, context, evaluador?.de(p, context));
+          return [
+            p.reference,
+            {
+              reference: p.reference,
+              productId: p.id,
+              name: p.name,
+              price: rige.precio,
+              ...(rige.oferta && rige.precioLista !== null ? { listPrice: rige.precioLista, offer: { key: rige.oferta.clave, name: rige.oferta.nombre, version: rige.oferta.version } } : {}),
+              availability: availabilityOf(p),
+              maxQuantity: maxOrderableUnits(p),
+            },
+          ];
+        }),
       );
       const scope = { businessId: pub.tenantId, channel: context };
       const quoted = readQuote(key, scope, input.quote);
@@ -951,7 +999,14 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       const now = (orders?.now ?? (() => new Date()))();
       // Clave de idempotencia del pedido: la misma identidad del intento (130 bits, ver pedido-firma.ts).
       const idempotencyKey = `catalog:${orderEventId(key, identity)}`;
-      const lines = order.lines.map((l) => ({ reference: l.reference, productName: l.name, quantity: l.quantity, unitPrice: l.unitPrice, subtotal: l.subtotal }));
+      const lines = order.lines.map((l) => ({
+        reference: l.reference,
+        productName: l.name,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        subtotal: l.subtotal,
+        ...(l.listPrice !== undefined && l.offer ? { listPrice: l.listPrice, offer: l.offer } : {}),
+      }));
 
       // Se guarda ANTES de armar el mensaje: el id que viaja por WhatsApp es el del pedido guardado.
       const persisted = orders?.engine
@@ -970,7 +1025,7 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
             })
         : null;
       const requestId = persisted?.orderId ?? orderRequestId(key, identity);
-      const message = orderWhatsappMessage(order.lines, context, { requestId, total: order.total, unpricedUnits: order.unpricedUnits });
+      const message = orderWhatsappMessage(order.lines, context, { requestId, total: order.total, unpricedUnits: order.unpricedUnits, savings: order.savings });
       const url = whatsappUrl(business.whatsapp, message) as string;
       const draft = buildOrderDraft({ requestId, businessId: pub.tenantId, publication: pub, channel: context, order, now });
 
