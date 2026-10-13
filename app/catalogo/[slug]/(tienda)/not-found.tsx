@@ -9,7 +9,7 @@ import { usePathname } from "next/navigation";
 export default function PiezaNoEncontrada() {
   const slug = usePathname().split("/")[2] ?? "";
   return (
-    <div className="mx-auto flex max-w-md flex-col items-center px-4 py-20 text-center">
+    <div className="joy-no-encontrada mx-auto flex max-w-md flex-col items-center px-4 py-20 text-center">
       <p className="text-[11px] font-medium uppercase tracking-[0.24em] text-mist">No disponible</p>
       <h1 className="font-serif-tienda mt-3 text-[32px] font-medium leading-tight text-fg">Esta pieza ya no está en el catálogo</h1>
       <p className="mt-3 text-[15px] text-mist">Puede que se haya agotado o retirado. Te invitamos a ver las piezas disponibles.</p>

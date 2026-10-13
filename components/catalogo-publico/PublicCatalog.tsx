@@ -14,7 +14,8 @@ function cn(...cls: Array<string | false | null | undefined>) {
   return cls.filter(Boolean).join(" ");
 }
 
-function href(basePath: string, params: { q?: string; categoria?: string; pagina?: number }): string {
+/** Dirección de una vista del listado (búsqueda, categoría y página en la URL). La comparte el listado del tema "joyeria" para no duplicar la regla. */
+export function href(basePath: string, params: { q?: string; categoria?: string; pagina?: number }): string {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
   if (params.categoria) qs.set("categoria", params.categoria);

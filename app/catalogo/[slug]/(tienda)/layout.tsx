@@ -6,11 +6,14 @@ import { HojaCarrito } from "@/components/catalogo-publico/tienda/HojaCarrito";
 import { NavInferior } from "@/components/catalogo-publico/tienda/NavInferior";
 import { TiendaProvider } from "@/components/catalogo-publico/tienda/TiendaContext";
 import { TiendaHeader } from "@/components/catalogo-publico/tienda/TiendaHeader";
+import { CromoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/CromoJoyeria";
+import { PieJoyeria } from "@/components/catalogo-publico/tienda/joyeria/PieJoyeria";
 import { HeaderTecnologia, HeaderTecnologiaEsqueleto } from "@/components/catalogo-publico/tienda/tecnologia/HeaderTecnologia";
 import { NavInferiorTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/NavInferiorTecnologia";
+import { anunciosVisibles, mayoristasVisible } from "@/lib/catalogo/joyeria";
 import { cargarTienda } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
-import { storefrontConfigFor, tecnologiaOf, temaDe } from "@/lib/catalogo/vitrina";
+import { joyeriaOf, storefrontConfigFor, tecnologiaOf, temaDe } from "@/lib/catalogo/vitrina";
 import { serifCatalogo } from "@/lib/fonts-catalogo";
 
 // Tienda pública (detal) de /catalogo/{slug}: marco COMPARTIDO por el inicio,
@@ -19,15 +22,18 @@ import { serifCatalogo } from "@/lib/fonts-catalogo";
 // El mayorista (/mayor/{token}) queda fuera de este grupo, con su propio tema.
 //
 // TEMA. Cada negocio elige su aspecto en lib/catalogo/vitrina.ts: "clasico" (por
-// defecto) o "tecnologia". Con "tecnologia" el INICIO móvil lleva su propio header
+// defecto), "tecnologia" o "joyeria". Con "tecnologia" el INICIO móvil lleva su propio header
 // navy y su navegación inferior (HeaderTecnologia / NavInferiorTecnologia, que solo
 // se dibujan allí); en el resto de pantallas siguen el header y la navegación de
-// siempre, ya con la paleta del tema. Los demás negocios no cambian.
+// siempre, ya con la paleta del tema. Con "joyeria" (Bloque 30) TODAS las pantallas llevan el
+// cromo editorial (barra de anuncios + cabecera transparente sobre la portada) y su propio pie;
+// el contenido es de ancho completo y cada página pone su propio contenedor. Los demás negocios no cambian.
 
 // viewport-fit=cover: habilita env(safe-area-inset-*) en iPhone. themeColor: barra del navegador del mismo tono que el header de la vitrina.
 export async function generateViewport({ params }: { params: Promise<{ slug: string }> }): Promise<Viewport> {
   const { slug } = await params;
-  return { themeColor: temaDe(storefrontConfigFor(slug)) === "tecnologia" ? "#061a35" : "#f7f3ee", viewportFit: "cover" };
+  const tema = temaDe(storefrontConfigFor(slug));
+  return { themeColor: tema === "tecnologia" ? "#061a35" : tema === "joyeria" ? "#faf7f2" : "#f7f3ee", viewportFit: "cover" };
 }
 
 export default async function TiendaLayout({ children, params }: { children: ReactNode; params: Promise<{ slug: string }> }) {
@@ -41,6 +47,29 @@ export default async function TiendaLayout({ children, params }: { children: Rea
   const tecnologia = tecnologiaOf(config);
   const marca = config.brand ?? { name: tienda.publicName };
   const categoriasHref = tienda.categories.length > 0 ? `${basePath}#categorias` : listPath;
+
+  // Tema "joyeria": marco propio (cromo, contenido de ancho completo y pie). Las demás vitrinas siguen con el marco de siempre, más abajo.
+  const joyeria = joyeriaOf(config);
+  if (joyeria) {
+    const anuncios = anunciosVisibles(joyeria, tienda.whatsapp);
+    const mayoristas = mayoristasVisible(joyeria, tienda.whatsapp);
+    return (
+      <div className={`catalogo-tienda tienda-joyeria ${anuncios.length > 0 ? "joy-con-anuncio " : ""}${serifCatalogo.variable} min-h-screen w-full flex-1 bg-ink font-sans text-fg`}>
+        <TiendaProvider slug={tienda.slug} context="retail" basePath={basePath} whatsapp={tienda.whatsapp} marcaReferencia={tienda.referenceMark}>
+          <MarcadorLlegada />
+          <Suspense fallback={null}>
+            <CromoJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} categoriasHref={categoriasHref} anuncios={anuncios} mayorista={Boolean(mayoristas)} />
+          </Suspense>
+          <main className="w-full">{children}</main>
+          <PieJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} whatsapp={tienda.whatsapp} descripcion={joyeria.descripcion} mayorista={Boolean(mayoristas)} />
+          <Suspense fallback={null}>
+            <NavInferior basePath={basePath} categoriasHref={categoriasHref} />
+          </Suspense>
+          <HojaCarrito />
+        </TiendaProvider>
+      </div>
+    );
+  }
 
   return (
     <div className={`catalogo-tienda ${tecnologia ? "tienda-tecnologia " : ""}${serifCatalogo.variable} min-h-screen w-full flex-1 bg-ink font-sans text-fg`}>

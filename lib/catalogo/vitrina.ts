@@ -16,9 +16,11 @@
  * configuración obtiene una vitrina correcta, sin hero ni banner.
  *
  * TEMAS. Cada negocio elige el aspecto de su vitrina: "clasico" (por defecto: claro
- * cálido, el de Delacour) o "tecnologia" (tienda de tecnología: azul eléctrico sobre
- * navy y blanco). El tema "tecnologia" tiene su propio contenido editorial
- * (`tecnologia`): textos del hero, beneficios y banners. Las categorías, los
+ * cálido), "tecnologia" (tienda de tecnología: azul eléctrico sobre navy y blanco) o
+ * "joyeria" (editorial de joyería: encabezado transparente sobre una portada a
+ * pantalla completa, barra de anuncios y pie propio; el de Delacour desde el Bloque 30).
+ * Los temas "tecnologia" y "joyeria" tienen su propio contenido editorial (`tecnologia`
+ * y `joyeria`): textos de acompañamiento, nunca datos comerciales. Las categorías, los
  * productos, los precios, las fotos y el carrito siguen saliendo del catálogo real.
  */
 
@@ -30,8 +32,8 @@ export interface StorefrontImage {
   alt: string;
 }
 
-/** Aspecto de la vitrina: "clasico" (por defecto) o "tecnologia". */
-export type TemaVitrina = "clasico" | "tecnologia";
+/** Aspecto de la vitrina: "clasico" (por defecto), "tecnologia" o "joyeria" (rediseño editorial de Delacour, Bloque 30). */
+export type TemaVitrina = "clasico" | "tecnologia" | "joyeria";
 
 /** Iconos de los accesos de categoría de la vitrina de tecnología (cerrado: el componente los traduce a dibujos). */
 export const ICONOS_CATEGORIA = ["celular", "tablet", "computador", "audio", "smartwatch", "gaming", "cocina", "general"] as const;
@@ -159,6 +161,36 @@ export interface ConfigTecnologia {
   banners: readonly BannerVitrina[];
 }
 
+/** Un mensaje de la barra de anuncios del tema "joyeria". */
+export interface AnuncioJoyeria {
+  texto: string;
+  /** "whatsapp": el mensaje abre el WhatsApp del negocio. Sin número válido el mensaje NO se muestra (nunca un anuncio que lleva a la nada). */
+  enlace?: "whatsapp";
+}
+
+/** Bloque para compradores mayoristas del tema "joyeria": una invitación a escribir por WhatsApp (sin precios ni condiciones: esas las da una asesora). */
+export interface MayoristasJoyeria {
+  etiqueta: string;
+  titulo: string;
+  texto: string;
+  boton: string;
+  /** Mensaje que llega escrito al WhatsApp del negocio. */
+  mensaje: string;
+}
+
+/**
+ * Contenido editorial del tema "joyeria" (solo textos de acompañamiento: la barra de anuncios, el bloque de mayoristas y la frase del pie). Los productos, precios,
+ * categorías, fotos y el contenido del CMS siguen saliendo del catálogo real; aquí NO hay datos comerciales.
+ */
+export interface ConfigJoyeria {
+  /** Mensajes que rotan en la barra superior. Sin mensajes (o sin WhatsApp válido para los que lo piden) no hay barra. */
+  anuncios: readonly AnuncioJoyeria[];
+  /** Bloque de compradores mayoristas del inicio (solo se dibuja si el negocio tiene un WhatsApp válido). */
+  mayoristas?: MayoristasJoyeria;
+  /** Frase breve bajo el nombre de la marca en el pie. */
+  descripcion?: string;
+}
+
 export interface CatalogStorefrontConfig {
   /** Lockup del header. Sin configurar => el nombre público del catálogo (BD). */
   brand?: { name: string; descriptor?: string };
@@ -166,6 +198,8 @@ export interface CatalogStorefrontConfig {
   tema?: TemaVitrina;
   /** Contenido editorial del tema "tecnologia" (solo se usa con ese tema). */
   tecnologia?: ConfigTecnologia;
+  /** Contenido editorial del tema "joyeria" (solo se usa con ese tema). */
+  joyeria?: ConfigJoyeria;
   /** Fotografía del hero: el texto NUNCA va dentro de la imagen, es HTML real. */
   heroImage?: StorefrontImage & { /** Punto focal al recortar (CSS object-position). */ focus?: string };
   heroEyebrow?: string;
@@ -205,14 +239,21 @@ export function heroOf(config: CatalogStorefrontConfig) {
   };
 }
 
-/** Tema efectivo de la vitrina: "tecnologia" SOLO si el negocio lo pide y trae su contenido; si no, el clásico (nunca una vitrina a medias). */
+/** Tema efectivo de la vitrina: "tecnologia" o "joyeria" SOLO si el negocio lo pide y trae su contenido; si no, el clásico (nunca una vitrina a medias). */
 export function temaDe(config: CatalogStorefrontConfig): TemaVitrina {
-  return config.tema === "tecnologia" && config.tecnologia ? "tecnologia" : "clasico";
+  if (config.tema === "tecnologia" && config.tecnologia) return "tecnologia";
+  if (config.tema === "joyeria" && config.joyeria) return "joyeria";
+  return "clasico";
 }
 
 /** Contenido del tema "tecnologia" (null si la vitrina es clásica). */
 export function tecnologiaOf(config: CatalogStorefrontConfig): ConfigTecnologia | null {
   return temaDe(config) === "tecnologia" ? (config.tecnologia ?? null) : null;
+}
+
+/** Contenido del tema "joyeria" (null si la vitrina no lo usa). */
+export function joyeriaOf(config: CatalogStorefrontConfig): ConfigJoyeria | null {
+  return temaDe(config) === "joyeria" ? (config.joyeria ?? null) : null;
 }
 
 /** Parte el nombre de la marca en dos líneas para el lockup del header ("Aquí Sí Lo Compras" => "AQUÍ SÍ" / "LO COMPRAS"). */
@@ -251,6 +292,22 @@ export function enlaceDeConsulta(basePath: string, consulta: string): string {
 const REGISTRO: Record<string, CatalogStorefrontConfig> = {
   delacour: {
     brand: { name: "Delacour & Orus", descriptor: "Joyería" },
+    // Bloque 30: rediseño editorial de la tienda (solo presentación). El inicio sigue dibujando lo que el CMS publique; estos textos solo acompañan.
+    tema: "joyeria",
+    joyeria: {
+      anuncios: [
+        { texto: "Te asesoramos por WhatsApp", enlace: "whatsapp" },
+        { texto: "Compras por mayor: escríbenos", enlace: "whatsapp" },
+      ],
+      mayoristas: {
+        etiqueta: "Compras por mayor",
+        titulo: "Compra al por mayor",
+        texto: "Escríbenos por WhatsApp y una asesora te atiende.",
+        boton: "Hablar con una asesora",
+        mensaje: "Hola, quiero información para comprar al por mayor.",
+      },
+      descripcion: "Diseños únicos para cada momento de tu vida.",
+    },
     heroImage: {
       src: "/catalogo/delacour/pantalla1mujer_principal.png",
       width: 1669,

@@ -13,6 +13,7 @@ export function Dialogo({
   className,
   labelledBy,
   label,
+  persistente = false,
   children,
 }: {
   open: boolean;
@@ -20,6 +21,8 @@ export function Dialogo({
   className?: string;
   labelledBy?: string;
   label?: string;
+  /** Mantiene el contenido montado mientras está cerrado: así una transición de salida (CSS) no deja ver un panel vacío. Por defecto, el contenido solo existe abierto. */
+  persistente?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -61,7 +64,7 @@ export function Dialogo({
       }}
       className={className}
     >
-      {open && children}
+      {(open || persistente) && children}
     </dialog>
   );
 }

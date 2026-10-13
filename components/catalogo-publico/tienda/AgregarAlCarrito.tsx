@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Plus, ShoppingCart } from "lucide-react";
+import { Check, Plus, ShoppingBag, ShoppingCart } from "lucide-react";
 import { canAddMore } from "@/lib/catalogo/carrito";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 import { productoCarrito, useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
@@ -10,9 +10,10 @@ import { productoCarrito, useCarrito, useTienda } from "@/components/catalogo-pu
  * "+" de las tarjetas (inicio, listado, búsqueda): agrega una unidad con el
  * motor único del carrito. Agotado => no se puede agregar. Con el stock
  * completo ya en la selección => lo dice, en vez de sumar una unidad imposible.
- * `variante`: "clasico" (el "+" cuadrado de siempre) o "circular" (carrito azul del tema "tecnologia"). El motor del carrito es el mismo.
+ * `variante`: "clasico" (el "+" cuadrado de siempre), "circular" (carrito azul del tema "tecnologia") o "cristal" (píldora de vidrio «Agregar al carrito» del tema "joyeria", que va
+ * sobre la foto). El motor del carrito es el mismo.
  */
-export function AgregarAlCarrito({ product, variante = "clasico" }: { product: PublicCatalogProduct; variante?: "clasico" | "circular" }) {
+export function AgregarAlCarrito({ product, variante = "clasico" }: { product: PublicCatalogProduct; variante?: "clasico" | "circular" | "cristal" }) {
   const circular = variante === "circular";
   const { state, dispatch } = useCarrito();
   const { avisarAgregado } = useTienda();
@@ -27,7 +28,35 @@ export function AgregarAlCarrito({ product, variante = "clasico" }: { product: P
   }, [agregado]);
 
   if (!product.available) {
-    return <span className="shrink-0 rounded-full bg-ink-2 px-2.5 py-1.5 text-[11px] font-medium text-mist">Agotado</span>;
+    return variante === "cristal" ? (
+      <span className="pointer-events-auto shrink-0 rounded-full bg-ink/90 px-3.5 py-2 text-xs font-medium tracking-wide text-mist shadow-sm">Agotado</span>
+    ) : (
+      <span className="shrink-0 rounded-full bg-ink-2 px-2.5 py-1.5 text-[11px] font-medium text-mist">Agotado</span>
+    );
+  }
+
+  if (variante === "cristal") {
+    return (
+      <button
+        type="button"
+        disabled={!puede && !agregado}
+        onClick={() => {
+          if (!puede) return;
+          dispatch({ type: "add", product: item });
+          setAgregado((n) => n + 1);
+          avisarAgregado(product.name);
+        }}
+        aria-label={puede ? `Agregar ${product.name} a tu selección` : `Ya tienes todas las unidades disponibles de ${product.name}`}
+        title={puede ? undefined : "Ya tienes todas las unidades disponibles"}
+        className="joy-cristal pointer-events-auto inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium tracking-wide transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100"
+      >
+        {agregado || !puede ? <Check key={agregado} className={agregado ? "tienda-bump size-3.5" : "size-3.5"} strokeWidth={2.2} aria-hidden /> : <ShoppingBag className="size-3.5" strokeWidth={1.8} aria-hidden />}
+        {agregado ? "Agregado" : puede ? "Agregar al carrito" : "En tu selección"}
+        <span className="sr-only" aria-live="polite">
+          {agregado ? `${product.name} agregado a tu selección` : ""}
+        </span>
+      </button>
+    );
   }
 
   return (

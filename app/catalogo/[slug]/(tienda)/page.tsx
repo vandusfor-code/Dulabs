@@ -3,11 +3,14 @@ import { notFound } from "next/navigation";
 import { PublicCatalog } from "@/components/catalogo-publico/PublicCatalog";
 import { TarjetaProducto } from "@/components/catalogo-publico/tienda/TarjetaProducto";
 import { TiendaInicio } from "@/components/catalogo-publico/tienda/TiendaInicio";
+import { ListadoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/ListadoJoyeria";
+import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
+import { TiendaInicioJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioJoyeria";
 import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/TiendaInicioTecnologia";
 import { esListado } from "@/lib/catalogo/inicio";
 import { cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
-import { storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
+import { joyeriaOf, storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
 
 // Catálogo público con precios al DETAL: /catalogo/{slug}. Sin parámetros
 // muestra el INICIO de la tienda; con búsqueda, categoría, página o ?todo=1,
@@ -59,6 +62,11 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
     });
     const home = await cargarInicioElegido(slug, vitrina.opciones);
     if (!home) notFound();
+    // Vitrina con tema "joyeria" (Bloque 30): las MISMAS secciones y datos, con el diseño editorial. El contenido sigue siendo el del CMS.
+    const joyeria = joyeriaOf(registro);
+    if (joyeria) {
+      return <TiendaInicioJoyeria home={home} config={vitrina.config} joyeria={joyeria} basePath={basePath} listPath={listPath} businessName={tienda.publicName} whatsapp={tienda.whatsapp} />;
+    }
     return <TiendaInicio home={home} config={vitrina.config} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
   }
 
@@ -66,6 +74,20 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
   if (!data) notFound();
   const categoriaActual = categoria ? data.categories.find((c) => c.id === categoria)?.name : undefined;
   const titulo = q ? `Resultados para «${q}»` : (categoriaActual ?? "Todo el catálogo");
+
+  if (joyeriaOf(storefrontConfigFor(tienda.slug))) {
+    return (
+      <ListadoJoyeria
+        data={data}
+        basePath={basePath}
+        q={q}
+        categoria={categoria}
+        listPath={listPath}
+        titulo={titulo}
+        tile={(p, i) => <TarjetaJoyeria product={p} basePath={basePath} posicion={i} />}
+      />
+    );
+  }
 
   return (
     <>
