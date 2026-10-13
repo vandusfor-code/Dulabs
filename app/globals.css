@@ -2948,6 +2948,12 @@ body {
   background: transparent;
   backdrop-filter: none;
 }
+/* Velo del menú lateral: 35 % del tono de la tienda y 8 px de desenfoque, como el de la referencia (medido: 0,35 y blur(8px)). */
+.tienda-joyeria dialog.joy-menu::backdrop {
+  background: rgb(30 25 20 / 0.35);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
 @media (prefers-reduced-motion: no-preference) {
   .tienda-joyeria dialog.joy-menu {
     translate: -100% 0;
@@ -2962,7 +2968,7 @@ body {
   .tienda-joyeria dialog.joy-menu::backdrop {
     opacity: 0;
     transition:
-      opacity 0.3s ease,
+      opacity 0.2s ease-out,
       overlay 0.3s allow-discrete,
       display 0.3s allow-discrete;
   }
@@ -3132,6 +3138,10 @@ body {
 .tienda-joyeria .joy-foto img,
 .tienda-joyeria .joy-cat-foto {
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* La foto de la categoría crece más despacio que la del producto: en la referencia la categoría usa 0,6 s con ease-out (y el producto, 0,5 s). */
+.tienda-joyeria .joy-cat-foto {
+  transition: transform 0.6s cubic-bezier(0, 0, 0.2, 1);
 }
 .tienda-joyeria .joy-cat-velo {
   background-image: linear-gradient(to top, rgb(30 20 12 / 0.72) 0%, rgb(30 20 12 / 0.12) 45%, transparent 70%);
@@ -3311,10 +3321,12 @@ body {
       animation: joy-brillo 2.5s ease-out 0.6s forwards;
     }
   }
-  /* El filete dorado crece de 0 a 4 rem (0,8 s, tras 1,4 s). */
+  /* El filete dorado crece de 0 a 4 rem (0,8 s). Mismos fotogramas y duración que en la referencia, pero con el retardo medido contra el TEXTO: allí el reloj de CSS (1,4 s) arranca al
+     insertar el DOM y la entrada del texto la mueve JS más tarde, así que el filete empieza entre 0,4 y 0,7 s después del título y a la vez que el botón. Aquí texto y filete comparten
+     reloj (el título entra a 0,15 s y el botón a 0,75 s): 0,8 s deja el filete en el mismo lugar de la secuencia. */
   .tienda-joyeria .joy-linea {
     width: 0;
-    animation: joy-linea 0.8s ease-out 1.4s forwards;
+    animation: joy-linea 0.8s ease-out 0.8s forwards;
   }
   /* Aparición al hacer scroll (componente Revelar): 20 px → 0 y 0 → 1 en 0,6 s; las tarjetas de la fila entran escalonadas (0,45 s, +60 ms cada una). */
   .tienda-joyeria .tienda-aparece {

@@ -144,6 +144,14 @@ describe("reglas de CSS que protegen la experiencia (guardas de la fuente)", () 
     }
   });
 
+  it("tres tiempos medidos en la referencia se conservan: el filete empieza a 0,8 s (a la vez que el botón), la foto de categoría crece en 0,6 s y el velo del menú es 0,35 con 8 px de desenfoque", () => {
+    assert.match(css, /\.tienda-joyeria \.joy-linea \{\n    width: 0;\n    animation: joy-linea 0\.8s ease-out 0\.8s forwards;/);
+    assert.match(css, /\.tienda-joyeria \.joy-cat-foto \{\n  transition: transform 0\.6s cubic-bezier\(0, 0, 0\.2, 1\);\n\}/);
+    const velo = regla(".tienda-joyeria dialog.joy-menu::backdrop");
+    assert.match(velo, /background:\s*rgb\(30 25 20 \/ 0\.35\)/);
+    assert.match(velo, /backdrop-filter:\s*blur\(8px\)/);
+  });
+
   it("todo el movimiento de la portada está bajo prefers-reduced-motion: no-preference, y con movimiento reducido la portada no queda fija", () => {
     const inicio = css.indexOf("@media (prefers-reduced-motion: no-preference) {\n  .tienda-joyeria .joy-destellos");
     assert.ok(inicio >= 0, "existe el bloque de movimiento permitido");
