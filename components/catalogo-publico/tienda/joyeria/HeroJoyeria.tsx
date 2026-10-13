@@ -55,7 +55,7 @@ export function HeroJoyeria({ hero, listPath, fijo }: { hero: NonNullable<Return
           <div className="joy-linea mt-7 h-px bg-[var(--joy-oro)]" aria-hidden />
           {/* Un botón vacío = la portada no tiene botón (el CMS lo permite). */}
           {hero.cta !== "" && (
-            <div className="joy-ent mt-8" style={retardo(0.75)}>
+            <div className="joy-ent mt-8" style={retardo(0.7)}>
               <EnlaceJoyeria href={hero.href ?? listPath} className="joy-cristal inline-flex h-12 items-center justify-center gap-2 rounded-lg px-8 text-base font-medium tracking-[0.1em] active:scale-[0.98]">
                 {hero.cta}
                 <ArrowRight className="size-4" strokeWidth={1.8} aria-hidden />

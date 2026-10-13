@@ -152,6 +152,13 @@ describe("reglas de CSS que protegen la experiencia (guardas de la fuente)", () 
     assert.match(velo, /backdrop-filter:\s*blur\(8px\)/);
   });
 
+  it("la aparición al hacer scroll conserva lo ajustado sobre la referencia: contenedor de 0,6 s y tarjetas de 0,4 s con 70 ms por posición; el botón de la portada entra a 0,7 s", () => {
+    assert.match(css, /\.tienda-joyeria \.tienda-aparece \{\n    animation: tienda-revelar 600ms ease-out both;\n  \}/);
+    assert.match(css, /\.tienda-joyeria \.tienda-aparece \.joy-item \{\n    animation: tienda-revelar 400ms ease-out both;\n    animation-delay: calc\(var\(--i, 0\) \* 70ms\);/);
+    const hero = readFileSync(path.join(process.cwd(), "components/catalogo-publico/tienda/joyeria/HeroJoyeria.tsx"), "utf8");
+    assert.match(hero, /className="joy-ent mt-8" style=\{retardo\(0\.7\)\}/);
+  });
+
   it("todo el movimiento de la portada está bajo prefers-reduced-motion: no-preference, y con movimiento reducido la portada no queda fija", () => {
     const inicio = css.indexOf("@media (prefers-reduced-motion: no-preference) {\n  .tienda-joyeria .joy-destellos");
     assert.ok(inicio >= 0, "existe el bloque de movimiento permitido");

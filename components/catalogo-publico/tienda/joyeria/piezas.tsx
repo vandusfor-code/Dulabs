@@ -23,7 +23,7 @@ export function EnlaceJoyeria({ href, className, children }: { href: string; cla
 /** Retardo de entrada (CSS) de un elemento de la portada: `--retardo` lo lee la clase `joy-ent`. */
 export const retardo = (segundos: number) => ({ "--retardo": `${segundos}s` }) as CSSProperties;
 
-/** Posición de una tarjeta en su fila (tope 7): la clase `joy-item` la usa para escalonar su aparición (60 ms por posición). */
+/** Posición de una tarjeta en su fila (tope 7): la clase `joy-item` la usa para escalonar su aparición (70 ms por posición). */
 export const indice = (i: number) => ({ "--i": Math.min(i, 7) }) as CSSProperties;
 
 /** Etiqueta pequeña + título + filete dorado con rombo: el encabezado de cada sección del inicio. El título es siempre un h2 real. */

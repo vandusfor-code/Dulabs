@@ -3328,13 +3328,14 @@ body {
     width: 0;
     animation: joy-linea 0.8s ease-out 0.8s forwards;
   }
-  /* Aparición al hacer scroll (componente Revelar): 20 px → 0 y 0 → 1 en 0,6 s; las tarjetas de la fila entran escalonadas (0,45 s, +60 ms cada una). */
+  /* Aparición al hacer scroll (componente Revelar): 20 px → 0 y 0 → 1 en 0,6 s; las tarjetas de la fila entran escalonadas (0,4 s, +70 ms cada una). Con las curvas ajustadas sobre
+     la referencia: el contenedor es ease-out de 590 ms y las tarjetas, ease-out de 390 ms con ≈ 68 ms por posición. */
   .tienda-joyeria .tienda-aparece {
     animation: tienda-revelar 600ms ease-out both;
   }
   .tienda-joyeria .tienda-aparece .joy-item {
-    animation: tienda-revelar 450ms ease-out both;
-    animation-delay: calc(var(--i, 0) * 60ms);
+    animation: tienda-revelar 400ms ease-out both;
+    animation-delay: calc(var(--i, 0) * 70ms);
   }
 }
 @media (forced-colors: active) {
