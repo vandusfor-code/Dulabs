@@ -36,7 +36,7 @@ export function EncabezadoSeccion({ etiqueta, titulo, id, className = "" }: { et
       </h2>
       <div className="mx-auto mt-4 flex items-center justify-center gap-3" aria-hidden>
         <span className="h-px w-10 bg-[var(--joy-oro)]" />
-        <span className="text-[10px] text-[var(--joy-oro)]">◆</span>
+        <span className="text-[10px] text-[var(--tienda-oro)]">◆</span>
         <span className="h-px w-10 bg-[var(--joy-oro)]" />
       </div>
     </div>

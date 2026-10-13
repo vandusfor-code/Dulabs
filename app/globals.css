@@ -3024,12 +3024,13 @@ body {
     min-height: 480px;
   }
 }
+/* Velo de la portada: el texto blanco debe leerse (AA) sobre la foto del negocio, no solo sobre una foto oscura; medido con el contraste real por píxel. */
 .tienda-joyeria .joy-hero-velo {
-  background-image: linear-gradient(to bottom, rgb(42 28 18 / 0.82) 0%, rgb(42 28 18 / 0.5) 36%, rgb(42 28 18 / 0.12) 62%, transparent 78%);
+  background-image: linear-gradient(to bottom, rgb(42 28 18 / 0.82) 0%, rgb(42 28 18 / 0.58) 36%, rgb(42 28 18 / 0.16) 62%, transparent 78%);
 }
 @media (min-width: 768px) {
   .tienda-joyeria .joy-hero-velo {
-    background-image: linear-gradient(to right, rgb(42 28 18 / 0.8) 0%, rgb(42 28 18 / 0.4) 40%, transparent 74%);
+    background-image: linear-gradient(to right, rgb(42 28 18 / 0.8) 0%, rgb(42 28 18 / 0.5) 40%, transparent 74%);
   }
 }
 /* Texto de la portada: con movimiento permitido entra escalonado; si no, se ve de una vez. */
@@ -3140,6 +3141,10 @@ body {
   .tienda-joyeria .joy-cat:hover .joy-cat-foto {
     transform: scale(1.05);
   }
+}
+/* La referencia sobre la foto (módulo «marca_referencia», componente compartido): en esta tienda lleva un fondo más firme para que se lea también sobre las fotos claras (AA); el archivo de la foto no cambia. */
+.tienda-joyeria .joy-ref {
+  background-color: rgb(0 0 0 / 0.62);
 }
 /* La píldora «Agregar al carrito»: en pantallas con mouse aparece al pasar o enfocar (0,2 s); en las táctiles siempre se ve (no hay «pasar el mouse»). */
 .tienda-joyeria .joy-pildora {

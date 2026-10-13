@@ -47,7 +47,7 @@ export function CarruselCategorias({ categorias, basePath }: { categorias: Publi
                   </>
                 ) : (
                   <span className="flex size-full flex-col items-center justify-center gap-3 bg-[var(--tienda-oro-suave)] p-4 text-center">
-                    <span className="font-serif-tienda text-6xl font-medium text-[var(--joy-oro)]" aria-hidden>
+                    <span className="font-serif-tienda text-6xl font-medium text-[var(--tienda-oro)]" aria-hidden>
                       {c.name.trim().charAt(0).toUpperCase()}
                     </span>
                     <span className="font-serif-tienda line-clamp-2 text-[21px] font-medium leading-tight text-fg">{c.name}</span>

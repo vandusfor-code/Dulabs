@@ -40,7 +40,7 @@ export function HeroJoyeria({ hero, listPath, fijo }: { hero: NonNullable<Return
       >
         <div className="max-w-[34rem]">
           {hero.eyebrow && (
-            <p className="joy-ent text-[11px] font-medium uppercase tracking-[0.34em] text-white/90 sm:text-xs" style={retardo(0)}>
+            <p className="joy-ent text-[11px] font-medium uppercase tracking-[0.34em] text-white sm:text-xs" style={retardo(0)}>
               {hero.eyebrow}
             </p>
           )}
@@ -48,7 +48,7 @@ export function HeroJoyeria({ hero, listPath, fijo }: { hero: NonNullable<Return
             <span className="joy-titulo-brillo">{hero.title}</span>
           </h1>
           {hero.description && (
-            <p className="joy-ent mt-4 max-w-md text-base leading-relaxed text-white/90 sm:text-lg" style={retardo(0.35)}>
+            <p className="joy-ent mt-4 max-w-md text-base leading-relaxed text-white sm:text-lg" style={retardo(0.35)}>
               {hero.description}
             </p>
           )}

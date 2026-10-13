@@ -36,7 +36,7 @@ export function TarjetaJoyeria({ product, basePath, posicion }: { product: Publi
               <ImageOff className="size-7" strokeWidth={1.4} />
             </span>
           )}
-          {product.thumbUrl && <MarcaReferencia reference={product.reference} className="right-2 top-2" />}
+          {product.thumbUrl && <MarcaReferencia reference={product.reference} className="joy-ref right-2 top-2" />}
         </EnlaceIntencion>
         {/* Etiqueta de la oferta vigente (el detalle en palabras va debajo, para quien no ve la foto). */}
         {product.offer && (

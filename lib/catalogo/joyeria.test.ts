@@ -126,6 +126,24 @@ describe("reglas de CSS que protegen la experiencia (guardas de la fuente)", () 
     assert.doesNotMatch(r, /background-color:\s*rgb\(255 255 255/);
   });
 
+  it("el texto de la portada se lee (AA) sobre la foto: blanco sólido (no 90 %) y un velo que no baja de 0,58 (celular, al 36 %) / 0,5 (pantallas medianas, al 40 %)", () => {
+    const movil = regla(".tienda-joyeria .joy-hero-velo");
+    assert.match(movil, /rgb\(42 28 18 \/ 0\.58\) 36%/);
+    const escritorio = css.match(/@media \(min-width: 768px\) \{\n  \.tienda-joyeria \.joy-hero-velo \{[^}]*\}/);
+    assert.ok(escritorio, "existe el velo para pantallas medianas");
+    assert.match(escritorio[0], /rgb\(42 28 18 \/ 0\.5\) 40%/);
+    const hero = readFileSync(path.join(process.cwd(), "components/catalogo-publico/tienda/joyeria/HeroJoyeria.tsx"), "utf8");
+    assert.doesNotMatch(hero, /text-white\/\d+/, "ni la etiqueta ni la descripción de la portada llevan transparencia");
+  });
+
+  it("la referencia sobre la foto (componente compartido) lleva el fondo firme de esta tienda en la tarjeta y en la galería: se lee también sobre las fotos claras", () => {
+    assert.match(regla(".tienda-joyeria .joy-ref"), /background-color:\s*rgb\(0 0 0 \/ 0\.62\)/);
+    for (const archivo of ["TarjetaJoyeria.tsx", "GaleriaJoyeria.tsx"]) {
+      const fuente = readFileSync(path.join(process.cwd(), "components/catalogo-publico/tienda/joyeria", archivo), "utf8");
+      assert.match(fuente, /<MarcaReferencia [^>]*className="joy-ref /, `${archivo} pasa joy-ref a la referencia`);
+    }
+  });
+
   it("todo el movimiento de la portada está bajo prefers-reduced-motion: no-preference, y con movimiento reducido la portada no queda fija", () => {
     const inicio = css.indexOf("@media (prefers-reduced-motion: no-preference) {\n  .tienda-joyeria .joy-destellos");
     assert.ok(inicio >= 0, "existe el bloque de movimiento permitido");

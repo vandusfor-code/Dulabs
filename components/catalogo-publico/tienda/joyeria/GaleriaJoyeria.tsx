@@ -119,7 +119,7 @@ export function GaleriaJoyeria({ images, name, reference }: { images: PublicProd
                   className="size-full object-cover"
                 />
               </button>
-              {reference && <MarcaReferencia reference={reference} className="bottom-3 left-3" />}
+              {reference && <MarcaReferencia reference={reference} className="joy-ref bottom-3 left-3" />}
             </div>
           ))}
         </div>
