@@ -103,7 +103,7 @@ export function GaleriaJoyeria({ images, name, reference }: { images: PublicProd
   }
 
   return (
-    <div className="flex flex-col gap-3" aria-roledescription="galería" aria-label={`Fotos de ${name}`}>
+    <div className="flex flex-col gap-3" role="group" aria-roledescription="galería" aria-label={`Fotos de ${name}`}>
       <div className="relative overflow-hidden rounded-2xl bg-ink-2">
         <div ref={railRef} className="tienda-scroll flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain">
           {images.map((img, i) => (

@@ -119,6 +119,15 @@ describe("listado joyería — las mismas direcciones que el listado de siempre"
     assert.ok(!h.includes("<form"));
     assert.equal((h.match(/<article class="joy-tarjeta/g) ?? []).length, 2);
   });
+
+  it("accesibilidad: los pasos de paginación que no existen se marcan como desactivados (con contraste suficiente) y los títulos de las tarjetas cuelgan de un h2", () => {
+    const primera = listadoJoyeria(pagina({ page: 1 }));
+    assert.ok(primera.includes('aria-disabled="true"'));
+    assert.ok(!/opacity-40/.test(primera), "sin opacidad baja: el texto inactivo conserva contraste");
+    const h = listadoJoyeria(pagina());
+    assert.ok(h.indexOf('<h2 class="sr-only">Productos</h2>') > h.indexOf("<h1"), "h1 → h2 → h3 (sin saltarse niveles)");
+    assert.ok(h.indexOf('<h2 class="sr-only">Productos</h2>') < h.indexOf("<h3"));
+  });
 });
 
 describe("ficha joyería — los mismos datos y las mismas acciones que la de siempre", () => {

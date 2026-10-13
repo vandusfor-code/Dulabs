@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BASE, CATEGORIAS_PRUEBA, HOME_COMPLETO, HOME_VACIO, LISTA, NOMBRE_NEGOCIO, producto } from "@/components/catalogo-publico/tienda/inicio-escenarios";
+import { PieJoyeria } from "@/components/catalogo-publico/tienda/joyeria/PieJoyeria";
 import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
 import { TiendaInicioJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioJoyeria";
 import { TiendaProvider } from "@/components/catalogo-publico/tienda/TiendaContext";
@@ -253,5 +254,33 @@ describe("tarjeta de producto joyería", () => {
     const agotado = html(producto(1, { available: false, availability: "sold_out" }));
     assert.ok(agotado.includes("opacity-60") && agotado.includes("Agotado"));
     assert.ok(!agotado.includes("Agregar Pieza"));
+  });
+});
+
+describe("pie joyería", () => {
+  const CATS = Array.from({ length: 8 }, (_, i) => ({ id: `c${i}`, name: `Categoría ${i}` }));
+  const pie = (over: Partial<Parameters<typeof PieJoyeria>[0]> = {}) =>
+    renderToStaticMarkup(<PieJoyeria marca={{ name: "Delacour & Orus", descriptor: "Joyería" }} basePath={BASE} listPath={LISTA} categorias={CATS} whatsapp={WHATSAPP} descripcion="Frase del pie." mayorista {...over} />);
+
+  it("solo información que la tienda ya tiene: marca, frase, navegación, categorías (las primeras y «Ver todas»), mayoristas, WhatsApp y el crédito; ni teléfono escrito, ni redes, ni dirección", () => {
+    const h = pie();
+    for (const t of ["Delacour &amp; Orus", "Joyería", "Frase del pie.", "Todo el catálogo", `href="${BASE}#mayoristas"`, `href="https://wa.me/${WHATSAPP}"`, "Ver todas", "Catálogo creado con"]) assert.ok(h.includes(t), t);
+    assert.equal(cuenta(h, /\?categoria=/g), 6, "solo las primeras seis categorías");
+    const visible = h.replace(/<[^>]+>/g, " ");
+    assert.ok(!visible.includes(WHATSAPP) && !visible.includes("+57"), "el número solo vive dentro del enlace, nunca escrito en pantalla");
+    assert.ok(!/instagram|tiktok|facebook|direcci[oó]n|calle|carrera|tel[eé]fono/i.test(visible), "nada inventado: ni redes, ni dirección");
+  });
+
+  it("sin WhatsApp válido no hay contacto; sin bloque de mayoristas no hay enlace a él", () => {
+    const h = pie({ whatsapp: null, mayorista: false });
+    assert.ok(!h.includes("wa.me") && !h.includes("Contacto") && !h.includes("#mayoristas"));
+  });
+
+  it("accesibilidad: los títulos de columna son h2 (no se salta de nivel) y el enlace de crédito se distingue por algo más que el color (subrayado)", () => {
+    const h = pie();
+    assert.equal(cuenta(h, /<h3/g), 0);
+    assert.equal(cuenta(h, /<h2 /g), 3);
+    const credito = (h.match(/<a [^>]*href="https:\/\/www\.dulabs\.co"[^>]*>/) ?? [""])[0];
+    assert.match(credito, /\bunderline\b/);
   });
 });

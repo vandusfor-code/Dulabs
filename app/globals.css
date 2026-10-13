@@ -3046,7 +3046,8 @@ body {
   -webkit-backdrop-filter: blur(14px) saturate(140%) brightness(0.55);
   backdrop-filter: blur(14px) saturate(140%) brightness(0.55);
   text-shadow: 0 1px 6px rgb(0 0 0 / 0.45);
-  background-color: rgb(255 255 255 / 0.16);
+  /* Tinte humeado (no blanco): el texto blanco debe leerse sobre cualquier foto, también sobre las claras (contraste AA). */
+  background-color: rgb(42 37 33 / 0.6);
   border: 1px solid rgb(255 255 255 / 0.42);
   box-shadow:
     0 8px 32px rgb(0 0 0 / 0.3),
@@ -3059,8 +3060,8 @@ body {
 }
 @media (hover: hover) {
   .tienda-joyeria .joy-cristal:hover {
-    background-color: rgb(255 255 255 / 0.24);
-    border-color: rgb(255 255 255 / 0.55);
+    background-color: rgb(42 37 33 / 0.52);
+    border-color: rgb(255 255 255 / 0.6);
     box-shadow:
       0 10px 38px rgb(0 0 0 / 0.34),
       inset 0 1px rgb(255 255 255 / 0.36);

@@ -322,6 +322,7 @@ describe("galería joyería", () => {
 
   it("tocar la foto abre la vista ampliada con contador, anterior/siguiente (desactivados en los extremos) y flechas del teclado", async () => {
     const { container, getByLabelText } = render(<GaleriaJoyeria images={FOTOS} name="Dije" reference="DL-000001" />);
+    assert.ok(container.querySelector('[role="group"][aria-roledescription="galería"][aria-label="Fotos de Dije"]'), "el contenedor con nombre accesible tiene un rol válido");
     const dlg = container.querySelector("dialog.joy-lightbox") as HTMLDialogElement;
     assert.equal(dlg.hasAttribute("open"), false);
     fireEvent.click(getByLabelText("Ampliar foto 1 de 3: Dije"));

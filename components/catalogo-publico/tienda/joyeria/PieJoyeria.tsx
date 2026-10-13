@@ -42,7 +42,7 @@ export function PieJoyeria({
 
         <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-8 border-t border-edge pt-8 sm:grid-cols-3">
           <div className="space-y-3">
-            <h3 className={TITULO}>Navegar</h3>
+            <h2 className={TITULO}>Navegar</h2>
             <ul className="space-y-2" role="list">
               <li>
                 <Link href={basePath} className={ENLACE}>
@@ -66,7 +66,7 @@ export function PieJoyeria({
 
           {categorias.length > 0 && (
             <div className="space-y-3">
-              <h3 className={TITULO}>Categorías</h3>
+              <h2 className={TITULO}>Categorías</h2>
               <ul className="space-y-2" role="list">
                 {categorias.slice(0, CATEGORIAS_EN_PIE).map((c) => (
                   <li key={c.id}>
@@ -88,7 +88,7 @@ export function PieJoyeria({
 
           {wa && (
             <div className="col-span-2 space-y-3 sm:col-span-1">
-              <h3 className={TITULO}>Contacto</h3>
+              <h2 className={TITULO}>Contacto</h2>
               <ul className="space-y-2" role="list">
                 <li>
                   <a href={wa} target="_blank" rel="noopener noreferrer" className={ENLACE}>
@@ -106,7 +106,7 @@ export function PieJoyeria({
           </p>
           <p>
             Catálogo creado con{" "}
-            <a href="https://www.dulabs.co" className="text-fg underline-offset-4 hover:underline">
+            <a href="https://www.dulabs.co" className="text-fg underline underline-offset-4 hover:text-[var(--tienda-oro)]">
               DuLabs
             </a>
           </p>

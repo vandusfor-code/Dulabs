@@ -16,6 +16,8 @@ function cn(...cls: Array<string | false | null | undefined>) {
 }
 
 const PAGINA = "joy-boton-linea inline-flex h-11 items-center rounded-lg border px-5 text-sm tracking-[0.06em]";
+/** Paso de paginación que no existe (primera o última página): se ve como inactivo, con contraste de texto suficiente. */
+const PAGINA_INACTIVA = "inline-flex h-11 cursor-not-allowed items-center rounded-lg border border-dashed border-edge px-5 text-sm tracking-[0.06em] text-mist";
 
 export function ListadoJoyeria({
   data,
@@ -148,13 +150,16 @@ export function ListadoJoyeria({
                 )}
               </div>
             ) : (
-              <ul className="grid grid-cols-2 gap-x-4 gap-y-8 md:grid-cols-3 xl:grid-cols-4">
-                {data.products.map((p, i) => (
-                  <li key={p.reference} className="joy-item" style={indice(i % 4)}>
-                    {tile(p, i)}
-                  </li>
-                ))}
-              </ul>
+              <>
+                <h2 className="sr-only">Productos</h2>
+                <ul className="grid grid-cols-2 gap-x-4 gap-y-8 md:grid-cols-3 xl:grid-cols-4">
+                  {data.products.map((p, i) => (
+                    <li key={p.reference} className="joy-item" style={indice(i % 4)}>
+                      {tile(p, i)}
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
 
             {data.search?.capped && data.page === totalPaginas && (
@@ -168,7 +173,9 @@ export function ListadoJoyeria({
                     Anterior
                   </Link>
                 ) : (
-                  <span className={cn(PAGINA, "pointer-events-none opacity-40")}>Anterior</span>
+                  <span className={PAGINA_INACTIVA} aria-disabled="true">
+                    Anterior
+                  </span>
                 )}
                 <span className="tabular-nums text-mist">
                   Página {data.page} de {totalPaginas}
@@ -178,7 +185,9 @@ export function ListadoJoyeria({
                     Siguiente
                   </Link>
                 ) : (
-                  <span className={cn(PAGINA, "pointer-events-none opacity-40")}>Siguiente</span>
+                  <span className={PAGINA_INACTIVA} aria-disabled="true">
+                    Siguiente
+                  </span>
                 )}
               </nav>
             )}

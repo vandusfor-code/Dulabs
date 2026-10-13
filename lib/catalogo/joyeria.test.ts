@@ -3,6 +3,8 @@
  * (ni precios, ni descuentos, ni plazos, ni envíos). Solo presentación: ninguna de estas funciones toca precios, stock ni carrito.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { anunciosVisibles, digitosWhatsapp, enlaceWhatsapp, mayoristasVisible, rotuloDeDestacados } from "@/lib/catalogo/joyeria";
 import { joyeriaOf, storefrontConfigFor, temaDe, tecnologiaOf, type CatalogStorefrontConfig, type ConfigJoyeria } from "@/lib/catalogo/vitrina";
@@ -103,5 +105,32 @@ describe("rótulo de los productos del inicio", () => {
     assert.deepEqual(rotuloDeDestacados("recent"), { etiqueta: "Nuevas piezas", titulo: "Novedades" });
     assert.deepEqual(rotuloDeDestacados("cms"), { etiqueta: "Selección", titulo: "Productos destacados" });
     for (const p of ["recent-with-photo", "recent", "cms"] as const) assert.doesNotMatch(JSON.stringify(rotuloDeDestacados(p)), /vendid|favorit|popular/i);
+  });
+});
+
+describe("reglas de CSS que protegen la experiencia (guardas de la fuente)", () => {
+  const css = readFileSync(path.join(process.cwd(), "app/globals.css"), "utf8").replace(/\r\n/g, "\n");
+  const regla = (selector: string) => {
+    const i = css.indexOf(selector + " {");
+    assert.ok(i >= 0, `falta la regla ${selector}`);
+    return css.slice(i, css.indexOf("}", i));
+  };
+
+  it("el esqueleto de carga ocupa toda la pantalla: el pie, que ya está en el marco, no salta (CLS) cuando llega el contenido", () => {
+    assert.match(regla(".tienda-joyeria .joy-esqueleto"), /min-height:\s*100svh/);
+  });
+
+  it("el vidrio de los botones sobre la foto lleva un tinte oscuro (el texto blanco se lee también sobre fotos claras)", () => {
+    const r = regla(".tienda-joyeria .joy-cristal");
+    assert.match(r, /background-color:\s*rgb\(42 37 33 \/ 0\.6\)/);
+    assert.doesNotMatch(r, /background-color:\s*rgb\(255 255 255/);
+  });
+
+  it("todo el movimiento de la portada está bajo prefers-reduced-motion: no-preference, y con movimiento reducido la portada no queda fija", () => {
+    const inicio = css.indexOf("@media (prefers-reduced-motion: no-preference) {\n  .tienda-joyeria .joy-destellos");
+    assert.ok(inicio >= 0, "existe el bloque de movimiento permitido");
+    const sinMovimiento = css.slice(inicio);
+    for (const clase of [".joy-ent {", ".joy-linea {", ".joy-titulo-brillo {", ".joy-destello {"]) assert.ok(sinMovimiento.includes(clase), `${clase} dentro del bloque de movimiento permitido`);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\n  \/\* Sin movimiento: la portada no queda fija[\s\S]*?position: relative;/);
   });
 });
