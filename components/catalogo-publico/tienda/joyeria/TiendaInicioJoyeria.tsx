@@ -1,22 +1,31 @@
 /**
  * INICIO del tema "joyeria" (Delacour, Bloque 30). Dibuja EXACTAMENTE las secciones que dice `config.secciones` (las que publica el CMS comercial; sin él, el orden de siempre: portada,
- * categorías, destacados y banner), con otro diseño: portada a pantalla completa que queda fija mientras el contenido sube sobre ella («cortina»), categorías en carrusel, productos en
- * cuadrícula vertical, y al final una invitación a compradores mayoristas. Server Component: todo llega en el HTML.
+ * categorías, destacados y banner), con otro diseño: portada a pantalla completa que queda fija mientras el contenido sube sobre ella («cortina»), categorías en una tira de borde a borde,
+ * productos en cuadrícula vertical, y al final una invitación a compradores mayoristas. Server Component: todo llega en el HTML.
  *
- * Nada inventado: no hay «más vendidos», materiales, direcciones ni redes. Un bloque sin datos NO se dibuja (sin categorías, sin banner, sin ofertas, sin campaña, sin combos, sin
+ * Inicio «como la referencia»: con los videos de la vitrina (config.joyeria) la portada es un carrusel con video (PortadaJoyeria), sobre ella sube el video de la colección a pantalla
+ * completa seguido de la franja de acabados, tras las categorías va la marca con su tarjeta de video, los mayoristas llevan un video de fondo y abajo a la derecha flotan WhatsApp y «volver
+ * arriba». Esos bloques los pone el tema (no el CMS): el CMS sigue decidiendo las secciones de siempre y su orden.
+ *
+ * Nada inventado: no hay «más vendidos», direcciones ni redes. Un bloque sin datos NO se dibuja (sin categorías, sin banner, sin ofertas, sin campaña, sin combos, sin acabados reales, sin
  * WhatsApp para los mayoristas). Los precios, las ofertas y los combos los calcula el backend: aquí solo se muestran.
  */
 import Image from "next/image";
 import { ArrowRight, MessageCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { Revelar } from "@/components/catalogo-publico/tienda/Revelar";
+import { AcabadosJoyeria, ColeccionVideo, MarcaVideo } from "@/components/catalogo-publico/tienda/joyeria/BloquesJoyeria";
 import { CarruselCategorias } from "@/components/catalogo-publico/tienda/joyeria/CarruselCategorias";
+import { FlotantesJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FlotantesJoyeria";
 import { HeroJoyeria } from "@/components/catalogo-publico/tienda/joyeria/HeroJoyeria";
+import { PortadaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/PortadaJoyeria";
 import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
 import { VeloHero } from "@/components/catalogo-publico/tienda/joyeria/VeloHero";
-import { Destellos, EncabezadoSeccion, EnlaceJoyeria, indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
+import { VideoSeccion } from "@/components/catalogo-publico/tienda/joyeria/VideoJoyeria";
+import { Destellos, ENLACE_TEXTO, EncabezadoSeccion, EnlaceJoyeria, indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
 import { formatCop } from "@/lib/business-agent-quote";
-import { mayoristasVisible, rotuloDeDestacados, type MayoristasVisible } from "@/lib/catalogo/joyeria";
+import type { OpcionFaceta } from "@/lib/catalogo/filtros";
+import { acabadosVisibles, mayoristasVisible, rotuloDeDestacados, type MayoristasVisible } from "@/lib/catalogo/joyeria";
 import type { PublicHome } from "@/lib/catalogo/service";
 import { heroOf, ORDEN_INICIO_CLASICO, type CampanaVitrina, type CatalogStorefrontConfig, type ComboVitrina, type ConfigJoyeria, type OfertaVitrina, type SeccionInicio } from "@/lib/catalogo/vitrina";
 
@@ -24,7 +33,6 @@ const BANDA = "joy-ancla py-16 md:py-24";
 const CONTENEDOR = "mx-auto max-w-7xl px-4 sm:px-6 lg:px-8";
 const BOTON_LINEA =
   "joy-boton-linea inline-flex h-12 items-center justify-center gap-2 rounded-lg border px-8 text-sm tracking-[0.1em] active:scale-[0.98]";
-const ENLACE_TEXTO = "joy-enlace-texto group inline-flex items-center gap-2 text-sm uppercase tracking-[0.08em] text-[var(--tienda-oro)]";
 
 /** Cuadrícula de tarjetas (destacados y productos de la campaña). `posicionar`: la foto de las primeras se carga de inmediato. */
 function CuadriculaProductos({ productos, basePath, posicionar }: { productos: PublicHome["featured"]; basePath: string; posicionar: boolean }) {
@@ -56,9 +64,9 @@ function Destacados({ home, basePath, listPath, fondo }: { home: PublicHome; bas
           <>
             <CuadriculaProductos productos={home.featured} basePath={basePath} posicionar />
             <div className="mt-12 text-center">
-              <EnlaceJoyeria href={listPath} className={BOTON_LINEA}>
-                Ver todo el catálogo
-                <ArrowRight className="size-4" strokeWidth={1.7} aria-hidden />
+              <EnlaceJoyeria href={listPath} className={ENLACE_TEXTO}>
+                Ver todos
+                <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-1" strokeWidth={1.7} aria-hidden />
               </EnlaceJoyeria>
             </div>
           </>
@@ -233,14 +241,19 @@ function CombosInicio({ combos, fondo }: { combos: readonly ComboVitrina[]; fond
   );
 }
 
-/** Invitación a compradores mayoristas: una banda oscura con un único botón que abre WhatsApp (sin precios ni condiciones inventados). */
+/**
+ * Invitación a compradores mayoristas: una banda oscura con un único botón que abre WhatsApp (sin precios ni condiciones inventados). Con video, corre detrás del texto (con su velo para
+ * que se lea y su botón de pausa).
+ */
 function Mayoristas({ m }: { m: MayoristasVisible }) {
   return (
     <section id="mayoristas" aria-labelledby="joy-mayoristas" className="joy-ancla joy-mayoristas relative isolate overflow-hidden px-6 py-24 text-center md:py-32">
+      {m.video && <VideoSeccion video={m.video} control="icono" className="-z-30" />}
+      {m.video && <div className="joy-mayoristas-velo pointer-events-none absolute inset-0 -z-20" aria-hidden />}
       <div className="joy-mayoristas-fondo pointer-events-none absolute inset-0 -z-10" aria-hidden />
       <Destellos className="-z-10" />
       <div className="relative mx-auto max-w-3xl">
-        <p className="text-[11px] font-medium uppercase tracking-[0.34em] text-[var(--joy-oro-claro)]">{m.etiqueta}</p>
+        <p className={`text-[11px] font-medium uppercase tracking-[0.34em] ${m.video ? "text-white" : "text-[var(--joy-oro-claro)]"}`}>{m.etiqueta}</p>
         <h2 id="joy-mayoristas" className="font-serif-tienda mt-3 text-[clamp(2.1rem,6vw,3.75rem)] font-medium leading-[1.05] text-[#faf8f5]">
           {m.titulo}
         </h2>
@@ -269,6 +282,7 @@ export function TiendaInicioJoyeria({
   listPath,
   businessName,
   whatsapp,
+  acabados,
 }: {
   home: PublicHome;
   config: CatalogStorefrontConfig;
@@ -277,11 +291,14 @@ export function TiendaInicioJoyeria({
   listPath: string;
   businessName: string;
   whatsapp: string | null;
+  /** Colores del catálogo con su conteo (lectura liviana del servidor). Sin ellos, o con menos de dos reales, no hay franja de acabados. */
+  acabados?: readonly OpcionFaceta[] | null;
 }) {
   const hero = heroOf(config);
   const banner = config.bannerImage;
   const secciones = config.secciones ?? ORDEN_INICIO_CLASICO;
   const mayoristas = mayoristasVisible(joyeria, whatsapp);
+  const franja = joyeria.acabados ? acabadosVisibles(acabados, basePath) : [];
 
   const hay: Record<SeccionInicio, boolean> = {
     portada: Boolean(hero),
@@ -306,9 +323,17 @@ export function TiendaInicioJoyeria({
       case "categorias":
         return (
           <Revelar key={tipo}>
-            <section id="categorias" aria-labelledby="joy-categorias" className={`${BANDA} ${fondo}`}>
-              <div className={CONTENEDOR}>
-                <EncabezadoSeccion etiqueta="Explora" titulo="Categorías" id="joy-categorias" />
+            <section id="categorias" aria-labelledby="joy-categorias" className={`joy-ancla pt-16 md:pt-24 ${fondo}`}>
+              <div className={`${CONTENEDOR} mb-8 flex items-end justify-between gap-4 md:mb-10`}>
+                <h2 id="joy-categorias" className="font-serif-tienda text-[28px] font-medium uppercase leading-tight tracking-[0.04em] text-fg md:text-[34px]">
+                  Categorías
+                </h2>
+                <EnlaceJoyeria href={listPath} className="joy-enlace-subrayado inline-flex shrink-0 items-center gap-1.5 pb-1 text-sm text-fg">
+                  Ver todo
+                  <ArrowRight className="size-4" strokeWidth={1.7} aria-hidden />
+                </EnlaceJoyeria>
+              </div>
+              <div className="pb-16 md:pb-24">
                 <CarruselCategorias categorias={home.categories} basePath={basePath} />
               </div>
             </section>
@@ -363,12 +388,39 @@ export function TiendaInicioJoyeria({
     }
   }
 
+  // La marca (texto + tarjeta de video) va tras las categorías, como en la referencia; sin categorías, antes del resto de las secciones.
+  const marcaBloque = joyeria.marca ? (
+    <Revelar key="marca">
+      <MarcaVideo marca={joyeria.marca} href={listPath} fondo="bg-ink" />
+    </Revelar>
+  ) : null;
+  const elementos: ReactNode[] = [];
+  cuerpo.forEach((tipo, i) => {
+    elementos.push(seccion(tipo, fondoDe(i)));
+    if (tipo === "categorias" && marcaBloque) elementos.push(marcaBloque);
+  });
+  if (marcaBloque && !cuerpo.includes("categorias")) elementos.unshift(marcaBloque);
+
   const contenido = (
     <>
-      {cuerpo.map((tipo, i) => seccion(tipo, fondoDe(i)))}
+      {elementos}
       {mayoristas && (
         <Revelar>
           <Mayoristas m={mayoristas} />
+        </Revelar>
+      )}
+    </>
+  );
+
+  // Lo que sube primero sobre la portada fija: el video de la colección a pantalla completa y la franja de acabados. `data-joy-claro` marca dónde empieza lo claro: ahí el cromo deja de ser
+  // transparente (sobre el video sigue siéndolo, como sobre la portada).
+  const intro = (
+    <>
+      {joyeria.coleccion && <ColeccionVideo coleccion={joyeria.coleccion} href={listPath} />}
+      {joyeria.coleccion && <div data-joy-claro="" aria-hidden />}
+      {joyeria.acabados && franja.length > 0 && (
+        <Revelar>
+          <AcabadosJoyeria titulo={joyeria.acabados.titulo} acabados={franja} />
         </Revelar>
       )}
     </>
@@ -381,16 +433,22 @@ export function TiendaInicioJoyeria({
       {portadaArriba && hero ? (
         <div className="joy-escena relative">
           <div className="joy-hero-fijo">
-            <HeroJoyeria hero={hero} listPath={listPath} fijo />
+            {joyeria.portada ? (
+              <PortadaJoyeria hero={hero} listPath={listPath} video={joyeria.portada.video} marca={config.brand ?? { name: businessName }} />
+            ) : (
+              <HeroJoyeria hero={hero} listPath={listPath} fijo />
+            )}
             <VeloHero />
           </div>
           <div className="joy-cortina" data-joy-cortina="">
+            {intro}
             {contenido}
           </div>
         </div>
       ) : (
         <div className="joy-cortina-plana">{contenido}</div>
       )}
+      <FlotantesJoyeria whatsapp={whatsapp} />
     </div>
   );
 }

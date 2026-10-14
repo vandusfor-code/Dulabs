@@ -20,6 +20,9 @@ export function EnlaceJoyeria({ href, className, children }: { href: string; cla
   );
 }
 
+/** Enlace de texto con flecha (dorado, en mayúsculas): «Ver colección →». La flecha se desplaza al pasar el mouse (`group`). */
+export const ENLACE_TEXTO = "joy-enlace-texto group inline-flex items-center gap-2 text-sm uppercase tracking-[0.08em] text-[var(--tienda-oro)]";
+
 /** Retardo de entrada (CSS) de un elemento de la portada: `--retardo` lo lee la clase `joy-ent`. */
 export const retardo = (segundos: number) => ({ "--retardo": `${segundos}s` }) as CSSProperties;
 

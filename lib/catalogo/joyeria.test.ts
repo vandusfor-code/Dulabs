@@ -42,7 +42,9 @@ describe("tema de la vitrina: joyería", () => {
   it("el contenido de Delacour no inventa datos comerciales: ni precios, ni descuentos, ni plazos, ni envíos, ni garantías", () => {
     const j = joyeriaOf(storefrontConfigFor("delacour"));
     assert.ok(j);
-    const todo = JSON.stringify(j);
+    // Solo los textos: los videos son archivos (rutas, medidas y un punto focal de CSS como «72% 46%»), no frases de la tienda.
+    const sinVideos = JSON.stringify(j, (clave, valor) => (clave === "video" ? undefined : valor));
+    const todo = sinVideos;
     assert.doesNotMatch(todo, /\$\s?\d|\d+\s?%|\b\d+\s?(d[ií]as|horas)\b/i, "ni precios, ni descuentos, ni plazos");
     assert.doesNotMatch(todo, /env[ií]o|garant[ií]a|devoluci|gratis|m[aá]s vendid|descuento|oferta/i, "ni envíos, ni garantías, ni «más vendidos», ni promociones inventadas");
     assert.ok(j.anuncios.length >= 1 && j.anuncios.every((a) => a.texto.trim().length > 0));

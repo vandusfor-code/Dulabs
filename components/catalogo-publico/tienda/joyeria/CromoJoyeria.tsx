@@ -5,7 +5,8 @@
  * carrito son los de siempre (mismos enlaces, mismo motor de carrito).
  *
  * Estados (data-estado): "hero" = transparente sobre la portada a pantalla completa (texto claro, velo degradado para que se lea); "vidrio" = crema translúcida con desenfoque. Pasa a
- * vidrio cuando el contenido (la «cortina») sube hasta la cabecera; en las demás pantallas siempre es vidrio. Si la página no tiene portada, el CSS lo dibuja como vidrio.
+ * vidrio cuando lo CLARO del contenido sube hasta la cabecera: la primera sección clara que marca `data-joy-claro` (tras el video de la colección, que también es oscuro) o, si no hay
+ * marca, la propia «cortina» (el contenido que sube sobre la portada). En las demás pantallas siempre es vidrio. Si la página no tiene portada, el CSS lo dibuja como vidrio.
  * Anuncios: rotan cada 5 s con fundido (se pausan al pasar el mouse o enfocar, y con «movimiento reducido» no rotan solos; las flechas siempre funcionan).
  */
 import Link from "next/link";
@@ -169,13 +170,13 @@ export function CromoJoyeria({
   const [categoriasAbiertas, setCategoriasAbiertas] = useState(false);
   const digits = (whatsapp ?? "").replace(/\D/g, "");
 
-  // ¿La cortina (el contenido que sube sobre la portada) ya llegó a la cabecera? Se mide en un fotograma, nunca en cada evento de scroll.
+  // ¿Lo claro del contenido (o, sin marca, la cortina que sube sobre la portada) ya llegó a la cabecera? Se mide en un fotograma, nunca en cada evento de scroll.
   useEffect(() => {
     if (!esInicio) return;
     let cuadro = 0;
     const medir = () => {
       cuadro = 0;
-      const cortina = document.querySelector<HTMLElement>("[data-joy-cortina]");
+      const cortina = document.querySelector<HTMLElement>("[data-joy-claro]") ?? document.querySelector<HTMLElement>("[data-joy-cortina]");
       const alto = cromo.current?.offsetHeight ?? 0;
       setPasado(!cortina || cortina.getBoundingClientRect().top <= alto);
     };
