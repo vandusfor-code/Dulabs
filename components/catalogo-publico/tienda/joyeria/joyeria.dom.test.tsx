@@ -366,26 +366,65 @@ describe("galería joyería", () => {
 describe("carrusel de categorías", () => {
   const CATS = Array.from({ length: 6 }, (_, i) => ({ id: `c${i}`, name: `Categoría ${i}`, coverUrl: i === 0 ? "/c0.webp" : null }));
 
-  it("los enlaces son los de siempre y las flechas desplazan un tramo (sin animación con «movimiento reducido»)", () => {
+  /** jsdom no calcula la maquetación: se le dice cuánto mide el riel y cuánto contenido tiene (para saber si hay hacia dónde desplazarse). */
+  function conMedidas(ancho: number, contenido: number) {
+    const proto = (window as unknown as { HTMLElement: { prototype: object } }).HTMLElement.prototype;
+    Object.defineProperty(proto, "clientWidth", { get: () => ancho, configurable: true });
+    Object.defineProperty(proto, "scrollWidth", { get: () => contenido, configurable: true });
+  }
+  function sinMedidas() {
+    const proto = (window as unknown as { HTMLElement: { prototype: object } }).HTMLElement.prototype;
+    delete (proto as Record<string, unknown>).clientWidth;
+    delete (proto as Record<string, unknown>).scrollWidth;
+  }
+
+  it("los enlaces son los de siempre y las flechas desplazan un tramo (sin animación con «movimiento reducido»); al principio solo hay «siguiente» y al final solo «anterior»", async () => {
     const llamadas: Array<Record<string, unknown>> = [];
     (window as unknown as { HTMLElement: { prototype: { scrollBy?: unknown } } }).HTMLElement.prototype.scrollBy = function (opciones: Record<string, unknown>) {
       llamadas.push(opciones);
     };
-    const { container } = render(<CarruselCategorias categorias={CATS} basePath={BASE} />);
-    const riel = container.querySelector('[role="region"]') as HTMLElement;
-    Object.defineProperty(riel, "clientWidth", { value: 1000, configurable: true });
-    assert.deepEqual([...container.querySelectorAll("li a")].slice(0, 2).map((a) => a.getAttribute("href")), [`${BASE}?categoria=c0`, `${BASE}?categoria=c1`]);
-    const [izquierda, derecha] = [...container.querySelectorAll("button")];
-    fireEvent.click(derecha);
-    fireEvent.click(izquierda);
-    assert.deepEqual(llamadas, [{ left: 850, behavior: "smooth" }, { left: -850, behavior: "smooth" }]);
-    reducido = true;
-    fireEvent.click(derecha);
-    assert.deepEqual(llamadas[2], { left: 850, behavior: "auto" });
+    conMedidas(1000, 3000);
+    try {
+      const { container } = render(<CarruselCategorias categorias={CATS} basePath={BASE} />);
+      const riel = container.querySelector('[role="region"]') as HTMLElement;
+      assert.deepEqual([...container.querySelectorAll("li a")].slice(0, 2).map((a) => a.getAttribute("href")), [`${BASE}?categoria=c0`, `${BASE}?categoria=c1`]);
+      // al principio: solo la flecha de «siguiente»
+      await waitFor(() => assert.equal(container.querySelectorAll("button").length, 1));
+      fireEvent.click(container.querySelector("button")!);
+      assert.deepEqual(llamadas, [{ left: 850, behavior: "smooth" }]);
+      // a mitad de camino: las dos
+      riel.scrollLeft = 900;
+      fireEvent.scroll(riel);
+      await waitFor(() => assert.equal(container.querySelectorAll("button").length, 2));
+      const [izquierda, derecha] = [...container.querySelectorAll("button")];
+      fireEvent.click(izquierda);
+      assert.deepEqual(llamadas[1], { left: -850, behavior: "smooth" });
+      reducido = true;
+      fireEvent.click(derecha);
+      assert.deepEqual(llamadas[2], { left: 850, behavior: "auto" });
+      // al final: solo la de «anterior»
+      riel.scrollLeft = 2000;
+      fireEvent.scroll(riel);
+      await waitFor(() => assert.equal(container.querySelectorAll("button").length, 1));
+      assert.equal(container.querySelector("button")!.className.includes("left-3"), true);
+    } finally {
+      sinMedidas();
+    }
   });
 
-  it("con cuatro categorías o menos no hay flechas (todo cabe)", () => {
-    const { container } = render(<CarruselCategorias categorias={CATS.slice(0, 4)} basePath={BASE} />);
-    assert.equal(container.querySelectorAll("button").length, 0);
+  it("las categorías con foto van primero (cada grupo en su orden de siempre) y ninguna se oculta", () => {
+    const { container } = render(<CarruselCategorias categorias={[{ id: "a", name: "A", coverUrl: null }, { id: "b", name: "B", coverUrl: "/b.webp" }, { id: "c", name: "C", coverUrl: null }, { id: "d", name: "D", coverUrl: "/d.webp" }]} basePath={BASE} />);
+    assert.deepEqual([...container.querySelectorAll("li a")].map((a) => a.getAttribute("href")), ["b", "d", "a", "c"].map((id) => `${BASE}?categoria=${id}`));
+  });
+
+  it("sin nada que desplazar (todo cabe) no hay flechas", async () => {
+    conMedidas(1000, 1000);
+    try {
+      const { container } = render(<CarruselCategorias categorias={CATS.slice(0, 4)} basePath={BASE} />);
+      await new Promise((r) => setTimeout(r, 40));
+      assert.equal(container.querySelectorAll("button").length, 0);
+    } finally {
+      sinMedidas();
+    }
   });
 });

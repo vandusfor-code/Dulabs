@@ -31,6 +31,12 @@ const nextConfig: NextConfig = {
         source: "/catalogo/:path*",
         headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
       },
+      // Videos ambientales de la tienda de Delacour (tema "joyeria", Bloque 30) y sus imágenes fijas: archivos estáticos que casi nunca cambian. Se guardan un día en el navegador
+      // (y se siguen sirviendo mientras se revalidan otra semana) en vez de volver a preguntar al servidor en cada visita; si se reemplazan, se ven nuevos en un día como máximo.
+      {
+        source: "/catalogo/delacour/video/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=86400, stale-while-revalidate=604800" }],
+      },
       {
         source: "/:path*",
         headers: [

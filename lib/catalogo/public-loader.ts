@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { PriceContext } from "@/lib/catalogo/domain";
@@ -40,6 +41,20 @@ export const cargarVitrinaInicio = (registro: CatalogStorefrontConfig, ctx: Omit
 
 /** Inicio con lo que el CMS eligió (destacados, categorías, productos de la campaña). Sin opciones, igual que `cargarInicio`. */
 export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, opciones);
+
+/**
+ * Acabados (colores con productos) de la franja del inicio del tema "joyeria". Es una lectura liviana de TODOS los productos activos, así que se guarda 10 minutos entre peticiones:
+ * los colores del catálogo casi nunca cambian y el inicio no debe leer el catálogo entero en cada visita. NUNCA lanza: sin datos, la franja no se dibuja.
+ */
+const acabadosGuardados = unstable_cache((slug: string) => servicio().getAcabados(slug), ["catalogo-acabados"], { revalidate: 600, tags: ["catalogo-acabados"] });
+export async function cargarAcabados(slug: string) {
+  try {
+    return await acabadosGuardados(slug);
+  } catch (error) {
+    console.error("[catalogo/acabados] no se pudieron leer; el inicio se dibuja sin la franja:", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
 
 /** Ficha pública de un producto (detal) por referencia. */
 export const cargarProducto = cache((slug: string, referencia: string) => servicio().getProduct({ slug, reference: referencia }));

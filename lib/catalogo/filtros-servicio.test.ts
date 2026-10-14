@@ -309,3 +309,66 @@ describe("lo que NO cambia", () => {
     assert.deepEqual(conFiltros, sola);
   });
 });
+
+describe("acabados del inicio (getAcabados)", () => {
+  it("devuelve los colores del catálogo activo (agrupados y con su conteo) de ESA tienda, sin tocar nada", async () => {
+    await sembrar();
+    await nuevo(B, "Dije de otro", { color: "Dorada" });
+    const inactivo = await nuevo(A, "Dije apagado", { categoryId: dijes, color: "Verde" });
+    await admin.updateProduct(A, inactivo.id, { status: "INACTIVE" });
+    const antes = JSON.stringify(await mem.repo.listProducts(A.tenantId, { status: "ALL", offset: 0, limit: 100 }));
+    const colores = (await publico.getAcabados(slugA))!;
+    assert.deepEqual(colores.map((c) => [c.etiqueta, c.n]), [["Dorado", 3], ["Oro rosa", 1], ["Plateada", 1]]);
+    assert.ok(colores.every((c) => typeof c.clave === "string" && c.clave.length > 0));
+    assert.equal(JSON.stringify(await mem.repo.listProducts(A.tenantId, { status: "ALL", offset: 0, limit: 100 })), antes, "solo lectura");
+    assert.deepEqual((await publico.getAcabados(slugB))!.map((c) => c.etiqueta), ["Dorada"]);
+  });
+
+  it("no necesita precios: cuenta también lo que está en 0 o a consultar, y no consulta las ofertas del CMS", async () => {
+    await sembrar();
+    let consultasCms = 0;
+    const puerto = crearPuertoPreciosCms({
+      cargar: async (tenantId) => {
+        consultasCms += 1;
+        return snaps[tenantId] ?? null;
+      },
+      ahora: () => AHORA,
+    });
+    const s = createPublicCatalogService({ repo: conPrecios(mem.repo, puerto) });
+    const colores = (await s.getAcabados(slugA))!;
+    assert.equal(colores.find((c) => c.etiqueta === "Dorado")?.n, 3);
+    assert.equal(consultasCms, 0, "los acabados no evalúan ofertas: solo cuentan colores");
+  });
+
+  it("negocio que no existe o no está publicado: null (nunca un error); catálogo demasiado grande o lectura caída: null y la tienda sigue", async (t) => {
+    await sembrar();
+    assert.equal(await publico.getAcabados("no-existe-nunca"), null);
+    const avisos = t.mock.method(console, "error", () => {});
+    const grande: CatalogRepository = { ...mem.repo, listFilterRows: async () => ({ items: [], total: FILTRO_MAX + 1 }) };
+    assert.equal(await createPublicCatalogService({ repo: grande }).getAcabados(slugA), null);
+    const roto: CatalogRepository = { ...mem.repo, listFilterRows: async () => { throw new Error("base de datos caída"); } };
+    assert.equal(await createPublicCatalogService({ repo: roto }).getAcabados(slugA), null);
+    assert.ok(avisos.mock.calls.length >= 1 && String(avisos.mock.calls[0].arguments[0]).includes("[catalogo/filtros]"));
+    mem.setPublished(A.tenantId, false);
+    assert.equal(await publico.getAcabados(slugA), null);
+  });
+
+  it("es una sola lectura liviana (no lee productos completos)", async () => {
+    await sembrar();
+    let livianas = 0;
+    let completas = 0;
+    const contando: CatalogRepository = {
+      ...mem.repo,
+      listFilterRows: async (t, pagina) => {
+        livianas += 1;
+        return mem.repo.listFilterRows!(t, pagina);
+      },
+      listProducts: async (t, filtro) => {
+        if (filtro.limit === FILTRO_LOTE) completas += 1;
+        return mem.repo.listProducts(t, filtro);
+      },
+    };
+    await createPublicCatalogService({ repo: contando }).getAcabados(slugA);
+    assert.deepEqual([livianas, completas], [1, 0]);
+  });
+});

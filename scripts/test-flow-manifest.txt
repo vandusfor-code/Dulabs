@@ -635,3 +635,7 @@ components/catalogo-publico/tienda/joyeria/listado-ficha-joyeria.test.tsx
 components/catalogo-publico/tienda/joyeria/joyeria.dom.test.tsx
 components/catalogo-publico/tienda/joyeria/filtros-joyeria.test.tsx
 components/catalogo-publico/tienda/joyeria/filtros-joyeria.dom.test.tsx
+# Bloque 30, inicio «como la referencia»: los acabados reales y la guarda de los archivos de video (lib), el inicio con video en el HTML del servidor y el carrusel, el video y los botones flotantes en jsdom.
+lib/catalogo/inicio-video.test.ts
+components/catalogo-publico/tienda/joyeria/inicio-video.test.tsx
+components/catalogo-publico/tienda/joyeria/portada-video.dom.test.tsx

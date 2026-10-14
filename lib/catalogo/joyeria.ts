@@ -2,6 +2,7 @@
  * Tema "joyeria" (Bloque 30) — decisiones PURAS de presentación: qué anuncios se muestran, si hay bloque de mayoristas, cómo se rotulan el título de los destacados y las
  * migas de pan. Sin I/O y sin React: se prueba aparte (joyeria.test.ts). Nunca toca precios, stock, carrito ni pedidos.
  */
+import { SIN_FILTROS, urlFiltros, type OpcionFaceta } from "@/lib/catalogo/filtros";
 import type { ConfigJoyeria, MayoristasJoyeria } from "@/lib/catalogo/vitrina";
 import type { FeaturedPolicy } from "@/lib/catalogo/service";
 
@@ -50,7 +51,32 @@ export function mayoristasVisible(config: ConfigJoyeria, whatsapp: string | null
   if (!m) return null;
   const href = enlaceWhatsapp(whatsapp, m.mensaje);
   if (!href) return null;
-  return { etiqueta: m.etiqueta, titulo: m.titulo, texto: m.texto, boton: m.boton, href };
+  return { etiqueta: m.etiqueta, titulo: m.titulo, texto: m.texto, boton: m.boton, href, ...(m.video ? { video: m.video } : {}) };
+}
+
+export interface AcabadoVisible {
+  clave: string;
+  etiqueta: string;
+  /** Listado filtrado por ese color (`?color=`): el mismo que arma el panel de filtros. */
+  href: string;
+}
+
+/** Un acabado se muestra si el catálogo tiene al menos tantas piezas con ese color (un color con una o dos piezas no es una línea de la tienda). */
+export const ACABADOS_MIN_PIEZAS = 3;
+/** Cuántos acabados caben en la franja. */
+export const ACABADOS_MAX = 4;
+
+/**
+ * Los acabados de la franja «Conoce nuestros acabados»: los colores REALES del catálogo activo con más piezas (nunca una lista escrita a mano), cada uno con su enlace al listado filtrado. Con menos de dos
+ * opciones no hay franja (una sola no es una franja, y sin datos no se dibuja nada).
+ */
+export function acabadosVisibles(colores: readonly OpcionFaceta[] | null | undefined, basePath: string): AcabadoVisible[] {
+  const elegidos = [...(colores ?? [])]
+    .filter((c) => c.n >= ACABADOS_MIN_PIEZAS)
+    .sort((a, b) => b.n - a.n || a.etiqueta.localeCompare(b.etiqueta, "es", { sensitivity: "base" }))
+    .slice(0, ACABADOS_MAX);
+  if (elegidos.length < 2) return [];
+  return elegidos.map((c) => ({ clave: c.clave, etiqueta: c.etiqueta, href: urlFiltros(basePath, { ...SIN_FILTROS, colores: [c.clave] }) }));
 }
 
 /**

@@ -168,6 +168,52 @@ export interface AnuncioJoyeria {
   enlace?: "whatsapp";
 }
 
+/** Un archivo de video ambiental con su imagen fija: el video no suena, se repite sin fin y nunca lleva texto dentro (el texto es HTML real encima). */
+export interface ArchivoVideo {
+  src: string;
+  /** Imagen fija (el primer fotograma, WebP) que se ve mientras el video no corre: al cargar, con ahorro de datos o con movimiento reducido. */
+  poster: string;
+  width: number;
+  height: number;
+}
+
+/** Video ambiental del tema "joyeria": uno horizontal (escritorio) y, si hace falta, uno vertical (celular); el navegador carga solo el que corresponde. */
+export interface VideoAmbiente {
+  horizontal: ArchivoVideo;
+  /** Para pantallas más altas que anchas. Sin él se usa el horizontal. */
+  vertical?: ArchivoVideo;
+  /** Qué muestra, en pocas palabras: nombra el control de pausa («Pausar video de la colección»). */
+  etiqueta: string;
+  /** Punto focal CSS al recortar (object-position). */
+  foco?: string;
+}
+
+/** Primera diapositiva de la portada: el video ambiental, con el texto de siempre de la portada encima. Sin él, la portada es la fotografía de siempre, sin carrusel. */
+export interface PortadaJoyeria {
+  video: VideoAmbiente;
+}
+
+/** Bloque de video a pantalla completa que sube sobre la portada: una etiqueta, un título y un botón al catálogo, con el video detrás. */
+export interface ColeccionJoyeria {
+  video: VideoAmbiente;
+  etiqueta: string;
+  titulo: string;
+  boton: string;
+}
+
+/** Bloque de marca: texto a un lado y el video en una tarjeta al otro. */
+export interface MarcaJoyeria {
+  video: VideoAmbiente;
+  titulo: string;
+  texto: string;
+  boton: string;
+}
+
+/** Franja «Conoce nuestros acabados»: sus opciones NO se escriben aquí, salen de los colores reales del catálogo (con productos) y llevan al listado filtrado. */
+export interface AcabadosJoyeria {
+  titulo: string;
+}
+
 /** Bloque para compradores mayoristas del tema "joyeria": una invitación a escribir por WhatsApp (sin precios ni condiciones: esas las da una asesora). */
 export interface MayoristasJoyeria {
   etiqueta: string;
@@ -176,11 +222,13 @@ export interface MayoristasJoyeria {
   boton: string;
   /** Mensaje que llega escrito al WhatsApp del negocio. */
   mensaje: string;
+  /** Video que corre detrás del bloque (opcional). */
+  video?: VideoAmbiente;
 }
 
 /**
- * Contenido editorial del tema "joyeria" (solo textos de acompañamiento: la barra de anuncios, el bloque de mayoristas y la frase del pie). Los productos, precios,
- * categorías, fotos y el contenido del CMS siguen saliendo del catálogo real; aquí NO hay datos comerciales.
+ * Contenido editorial del tema "joyeria" (solo textos y videos de acompañamiento: la barra de anuncios, la portada con video, el bloque de colección, la marca, los mayoristas y la
+ * frase del pie). Los productos, precios, categorías, fotos y el contenido del CMS siguen saliendo del catálogo real; aquí NO hay datos comerciales.
  */
 export interface ConfigJoyeria {
   /** Mensajes que rotan en la barra superior. Sin mensajes (o sin WhatsApp válido para los que lo piden) no hay barra. */
@@ -189,6 +237,14 @@ export interface ConfigJoyeria {
   mayoristas?: MayoristasJoyeria;
   /** Frase breve bajo el nombre de la marca en el pie. */
   descripcion?: string;
+  /** Video de la portada (primera diapositiva). */
+  portada?: PortadaJoyeria;
+  /** Video a pantalla completa tras la portada. */
+  coleccion?: ColeccionJoyeria;
+  /** Franja de acabados (solo con opciones reales del catálogo). */
+  acabados?: AcabadosJoyeria;
+  /** Texto + tarjeta de video de la marca. */
+  marca?: MarcaJoyeria;
 }
 
 export interface CatalogStorefrontConfig {
@@ -288,6 +344,17 @@ export function enlaceDeConsulta(basePath: string, consulta: string): string {
   return `${basePath}?q=${encodeURIComponent(consulta.trim())}`;
 }
 
+/**
+ * Videos de Delacour (public/catalogo/delacour/video): recorridos lentos por las fotos de sus propias piezas (acercamientos, fundidos suaves y un reflejo de luz), sin sonido y en bucle.
+ * Cada uno trae su imagen fija (el primer fotograma) para la carga, el ahorro de datos y el movimiento reducido.
+ */
+const archivoDelacour = (nombre: string, width: number, height: number): ArchivoVideo => ({
+  src: `/catalogo/delacour/video/${nombre}.mp4`,
+  poster: `/catalogo/delacour/video/${nombre}.webp`,
+  width,
+  height,
+});
+
 // Fuente TEMPORAL (fase visual): configuración por publicación (slug).
 const REGISTRO: Record<string, CatalogStorefrontConfig> = {
   delacour: {
@@ -305,8 +372,24 @@ const REGISTRO: Record<string, CatalogStorefrontConfig> = {
         texto: "Escríbenos por WhatsApp y una asesora te atiende.",
         boton: "Hablar con una asesora",
         mensaje: "Hola, quiero información para comprar al por mayor.",
+        video: { horizontal: archivoDelacour("mayoristas", 1280, 576), etiqueta: "Video de compras por mayor", foco: "72% 46%" },
       },
       descripcion: "Diseños únicos para cada momento de tu vida.",
+      // Los textos de estos bloques son frases que la marca ya usa en sus propias tarjetas y fotos («Más que joyas, historias que te acompañan», «Pequeños detalles, grandes historias»).
+      portada: { video: { horizontal: archivoDelacour("portada-h", 1280, 720), vertical: archivoDelacour("portada-v", 720, 1280), etiqueta: "Video de la portada" } },
+      coleccion: {
+        video: { horizontal: archivoDelacour("coleccion-h", 1280, 720), vertical: archivoDelacour("coleccion-v", 720, 1280), etiqueta: "Video de la colección" },
+        etiqueta: "Colección",
+        titulo: "Pequeños detalles, grandes historias",
+        boton: "Ver la colección",
+      },
+      acabados: { titulo: "Conoce nuestros acabados" },
+      marca: {
+        video: { horizontal: archivoDelacour("marca", 720, 900), etiqueta: "Video de la marca" },
+        titulo: "Más que joyas, historias que te acompañan",
+        texto: "Diseños únicos para cada momento de tu vida. Joyería que te acompaña siempre.",
+        boton: "Ver el catálogo",
+      },
     },
     heroImage: {
       src: "/catalogo/delacour/pantalla1mujer_principal.png",

@@ -42,8 +42,8 @@ describe("inicio joyería — la vitrina de Delacour de hoy", () => {
     for (const t of ["Historias que brillan contigo", "Más que joyas", "Diseños únicos para cada momento de tu vida.", "Ver catálogo"]) assert.ok(html.includes(t), t);
     const portada = html.slice(pos(html, 'data-joy-hero=""'), pos(html, 'data-joy-cortina=""'));
     const enlaces = portada.match(/<a [^>]*>/g) ?? [];
-    assert.equal(enlaces.length, 1, "la portada tiene un solo enlace: su botón");
-    assert.ok(enlaces[0].includes(`href="${LISTA}"`) && enlaces[0].includes("joy-cristal"), "el botón de la portada lleva al listado completo");
+    assert.equal(enlaces.length, 2, "la portada con video tiene dos diapositivas y un solo enlace en cada una: su botón");
+    for (const enlace of enlaces) assert.ok(enlace.includes(`href="${LISTA}"`) && enlace.includes("joy-cristal"), "el botón de cada diapositiva lleva al listado completo");
     assert.ok(html.includes("joy-linea"), "el filete dorado de la portada");
     assert.ok(html.includes("joy-titulo-brillo"), "el título lleva el brillo de una sola vez");
   });

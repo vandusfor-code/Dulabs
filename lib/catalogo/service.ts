@@ -33,7 +33,7 @@ import {
   type PriceContext,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
-import { SIN_FILTROS, calcularFacetas, cumpleFiltros, hayFiltros, soloUnaCategoria, type FacetasCatalogo, type FilaFaceta, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
+import { SIN_FILTROS, calcularFacetas, cumpleFiltros, hayFiltros, soloUnaCategoria, type FacetasCatalogo, type FilaFaceta, type FiltrosCatalogo, type OpcionFaceta } from "@/lib/catalogo/filtros";
 import { PreciosNoDisponibles, precioQueRige, type EvaluadorPrecios } from "@/lib/catalogo/precios";
 import type { CatalogRepository, FilaFiltrable, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
@@ -924,6 +924,18 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
         ...(listing.search ? { search: listing.search } : {}),
         ...(facets !== undefined ? { facets } : {}),
       };
+    },
+
+    /**
+     * Colores (acabados) del catálogo activo con su conteo, para la franja «Conoce nuestros acabados» del inicio del tema "joyeria": la misma lectura liviana de los filtros, SIN precios (no
+     * evalúa ofertas). SOLO LECTURA. `null` = la tienda no existe, no se pudo leer o el catálogo es demasiado grande para contar en memoria: la franja simplemente no se dibuja.
+     */
+    async getAcabados(slug: string): Promise<OpcionFaceta[] | null> {
+      const pub = await openPublication(slug);
+      if (!pub) return null;
+      const activos = await activosParaFiltrar(pub.tenantId);
+      if (!activos) return null;
+      return calcularFacetas(activos.map((f) => ({ categoryId: f.categoryId, color: f.color, material: f.material, price: null })), []).colores;
     },
 
     /**
