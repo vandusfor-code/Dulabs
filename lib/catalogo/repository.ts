@@ -16,6 +16,7 @@ import type {
   CatalogCategory,
   CatalogProduct,
   ImageMimeType,
+  ProductPricing,
   ProductStatus,
   StatusFilter,
 } from "@/lib/catalogo/domain";
@@ -66,6 +67,15 @@ export interface ProductListFilter {
   status: StatusFilter;
   offset: number;
   limit: number;
+}
+
+/** Lo mínimo de un producto ACTIVO para filtrar y contar en la tienda (sin nombre, descripción, fotos ni fechas). */
+export interface FilaFiltrable {
+  reference: string;
+  categoryId: string | null;
+  color: string | null;
+  material: string | null;
+  pricing: ProductPricing;
 }
 
 export interface StoredMedia {
@@ -120,6 +130,11 @@ export interface CatalogRepository {
    */
   readonly precios?: PuertoPrecios;
   listProducts(tenantId: string, filter: ProductListFilter): Promise<{ items: CatalogProduct[]; total: number }>;
+  /**
+   * Los productos ACTIVOS con solo lo necesario para filtrar y contar (referencia, categoría, color, material y precios), del más reciente al más antiguo y por lotes. Es una lectura
+   * mucho más liviana que `listProducts` (que trae descripción, foto y fechas de cada producto): la usa la tienda para sus filtros. Opcional: sin ella el servicio lee los productos completos.
+   */
+  listFilterRows?(tenantId: string, page: { offset: number; limit: number }): Promise<{ items: FilaFiltrable[]; total: number }>;
   getProduct(tenantId: string, productId: string): Promise<CatalogProduct | null>;
   getProductByReference(tenantId: string, reference: string): Promise<CatalogProduct | null>;
   /** Resolución por lote de referencias EXACTAS del tenant (la referencia es la identidad del producto). */
@@ -300,6 +315,17 @@ function mapPublication(row: PublicationRow): CatalogPublication {
 const PRODUCT_COLUMNS =
   "id, referencia, nombre, descripcion, precio, precio_mayor, material, color, categoria, categoria_id, activo, controla_stock, stock, foto_url, created_at, updated_at";
 const MEDIA_COLUMNS = "id, producto_id, storage_path, thumb_path, es_principal, orden, mime_type, bytes, ancho, alto";
+/** Lo que necesita `listFilterRows`: ~150 bytes por producto en vez de ~600 (sin descripción, foto ni fechas). */
+const FILTER_COLUMNS = "referencia, categoria_id, color, material, precio, precio_mayor";
+
+interface FilterRow {
+  referencia: string;
+  categoria_id: string | null;
+  color: string | null;
+  material: string | null;
+  precio: number;
+  precio_mayor: number | null;
+}
 
 interface ProductRow {
   id: string;
@@ -426,6 +452,30 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
       }
       if (error) fail("listProducts", error);
       return { items: ((data ?? []) as unknown as ProductRow[]).map(mapProduct), total: count ?? 0 };
+    },
+
+    async listFilterRows(tenantId, page) {
+      // Mismo orden que `listProducts` (más recientes primero), solo ACTIVOS y solo las columnas que hacen falta para filtrar.
+      const base = (columns: string, head: boolean) => supabase.from(T_PRODUCTOS).select(columns, { count: "exact", head }).eq("id_tenant", tenantId).eq("activo", true);
+      const { data, error, count } = await base(FILTER_COLUMNS, false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(page.offset, page.offset + page.limit - 1);
+      if (error?.code === "PGRST103") {
+        // Lote más allá del final (se borraron productos mientras tanto): vacío con el total REAL, nunca un error.
+        const { count: total, error: e2 } = await base("id", true);
+        if (e2) fail("listFilterRows", e2);
+        return { items: [], total: total ?? 0 };
+      }
+      if (error) fail("listFilterRows", error);
+      const items = ((data ?? []) as unknown as FilterRow[]).map((r) => ({
+        reference: r.referencia,
+        categoryId: r.categoria_id,
+        color: r.color,
+        material: r.material,
+        pricing: { retail: r.precio, wholesale: r.precio_mayor },
+      }));
+      return { items, total: count ?? 0 };
     },
 
     async searchCatalog(tenantId, q) {

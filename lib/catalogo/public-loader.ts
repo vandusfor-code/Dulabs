@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { PriceContext } from "@/lib/catalogo/domain";
+import { filtrosDeTexto } from "@/lib/catalogo/filtros";
 import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
 import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
@@ -16,9 +17,13 @@ import { cargarVitrinaInicio as cargarVitrinaPublica } from "@/lib/cms-comercial
  */
 const servicio = () => createPublicCatalogService({ repo: repositorioConPrecios(supabaseAdmin()) });
 
+/**
+ * `filtros` (texto de `textoDeFiltros`) y `opciones` son del tema "joyeria": el listado filtrado por categorías, color, material y precio, y las opciones de esos filtros con sus
+ * conteos (`facets`), que comparten una sola lectura de los productos activos. Sin ellos, el listado es exactamente el de siempre.
+ */
 export const cargarCatalogoPublico = cache(
-  (slug: string, context: PriceContext, token: string | undefined, q: string | undefined, categoria: string | undefined, pagina: number) =>
-    servicio().getCatalog({ slug, context, token, q, categoryId: categoria, page: pagina }),
+  (slug: string, context: PriceContext, token: string | undefined, q: string | undefined, categoria: string | undefined, pagina: number, filtros?: string, opciones?: boolean) =>
+    servicio().getCatalog({ slug, context, token, q, categoryId: categoria, page: pagina, ...(filtros ? { filters: filtrosDeTexto(filtros) } : {}), ...(opciones ? { facets: true } : {}) }),
 );
 
 /** Marco de la tienda (layout): identidad, categorías y WhatsApp. Compartido con las páginas de la misma petición. */

@@ -37,7 +37,8 @@ export interface PrecioEfectivo {
 
 /** Los precios efectivos de UN negocio en un instante: se carga lo vigente una vez y se evalúan todos los productos que haga falta. */
 export interface EvaluadorPrecios {
-  de(producto: CatalogProduct, canal: PriceContext): PrecioEfectivo;
+  /** Solo lee la referencia, la categoría y los precios de lista: sirve tanto para un producto completo como para la fila liviana con que la tienda filtra. */
+  de(producto: Pick<CatalogProduct, "reference" | "categoryId" | "pricing">, canal: PriceContext): PrecioEfectivo;
 }
 
 export interface PuertoPrecios {

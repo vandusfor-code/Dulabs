@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Home, LayoutGrid, ShoppingBag } from "lucide-react";
 import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
+import { esListadoDeUrl } from "@/lib/catalogo/inicio";
 
 function cn(...cls: Array<string | false | null | undefined>) {
   return cls.filter(Boolean).join(" ");
@@ -23,7 +24,7 @@ export function NavInferior({ basePath, categoriasHref, ocultoEnInicio = false }
   const params = useSearchParams();
   if (pathname.startsWith(`${basePath}/productos/`)) return null;
 
-  const enInicio = pathname === basePath && !params.get("q") && !params.get("categoria") && !params.get("pagina") && !params.get("todo");
+  const enInicio = pathname === basePath && !esListadoDeUrl(params);
   if (ocultoEnInicio && enInicio) return null;
   return (
     <nav

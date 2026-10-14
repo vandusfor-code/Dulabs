@@ -12,15 +12,16 @@ import { LayoutGrid, Menu, MessageCircle, Search, ShoppingCart, X } from "lucide
 import type { CatalogCategory } from "@/lib/catalogo/domain";
 import { Dialogo } from "@/components/catalogo-publico/tienda/Dialogo";
 import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
+import { esListadoDeUrl } from "@/lib/catalogo/inicio";
 import { partirMarca } from "@/lib/catalogo/vitrina";
 
 const iconBtn = "relative flex size-11 items-center justify-center rounded-full text-white transition-[background-color,transform] duration-150 hover:bg-white/10 active:scale-90";
 
-/** El inicio de la tienda: la ruta raíz sin búsqueda, categoría, página ni "ver todo". */
+/** El inicio de la tienda: la ruta raíz sin búsqueda, categoría, página, "ver todo" ni filtros. */
 export function useEnInicio(basePath: string): boolean {
   const pathname = usePathname();
   const params = useSearchParams();
-  return pathname === basePath && !params.get("q") && !params.get("categoria") && !params.get("pagina") && !params.get("todo");
+  return pathname === basePath && !esListadoDeUrl(params);
 }
 
 /** Lo que se ve mientras el marco carga: el mismo bloque navy (sin salto de color). */

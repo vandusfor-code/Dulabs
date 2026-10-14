@@ -7,6 +7,7 @@ import { Menu, MessageCircle, Search, ShoppingBag, X } from "lucide-react";
 import type { CatalogCategory } from "@/lib/catalogo/domain";
 import { Dialogo } from "@/components/catalogo-publico/tienda/Dialogo";
 import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
+import { esListadoDeUrl } from "@/lib/catalogo/inicio";
 
 function cn(...cls: Array<string | false | null | undefined>) {
   return cls.filter(Boolean).join(" ");
@@ -53,7 +54,7 @@ export function TiendaHeader({
   const params = useSearchParams();
   const pathname = usePathname();
   const q = params.get("q") ?? undefined;
-  const esInicio = pathname === basePath && !q && !params.get("categoria") && !params.get("pagina") && !params.get("todo");
+  const esInicio = pathname === basePath && !esListadoDeUrl(params);
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [buscando, setBuscando] = useState(Boolean(q));
   const inputRef = useRef<HTMLInputElement>(null);

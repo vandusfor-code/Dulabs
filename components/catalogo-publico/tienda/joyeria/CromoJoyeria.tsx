@@ -16,6 +16,7 @@ import type { CatalogCategory } from "@/lib/catalogo/domain";
 import { Dialogo } from "@/components/catalogo-publico/tienda/Dialogo";
 import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
 import { useMovimientoReducido } from "@/components/catalogo-publico/tienda/joyeria/medios";
+import { esListadoDeUrl } from "@/lib/catalogo/inicio";
 import type { AnuncioVisible } from "@/lib/catalogo/joyeria";
 
 /** De un mensaje al siguiente pasan 5 s (medido en la referencia): el fundido de salida (0,28 s) va dentro de ese tiempo. */
@@ -156,7 +157,7 @@ export function CromoJoyeria({
   const pathname = usePathname();
   const params = useSearchParams();
   const q = params.get("q") ?? undefined;
-  const hayFiltros = Boolean(q || params.get("categoria") || params.get("pagina") || params.get("todo"));
+  const hayFiltros = esListadoDeUrl(params);
   const enRaiz = pathname === basePath;
   const esInicio = enRaiz && !hayFiltros;
   const esListado = enRaiz && hayFiltros;
