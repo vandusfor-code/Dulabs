@@ -7,6 +7,7 @@ import { ListadoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/Lis
 import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
 import { TiendaInicioJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioJoyeria";
 import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/TiendaInicioTecnologia";
+import { SIN_FILTROS, hayFiltros, leerFiltros, textoDeFiltros } from "@/lib/catalogo/filtros";
 import { esListado } from "@/lib/catalogo/inicio";
 import { cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
@@ -35,7 +36,7 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
   const q = param(sp.q);
   const categoria = param(sp.categoria);
-  const listado = esListado({ q, categoria, pagina: param(sp.pagina), todo: param(sp.todo) });
+  const listado = esListado({ q, categoria, pagina: param(sp.pagina), todo: param(sp.todo), color: param(sp.color), material: param(sp.material), precio_min: param(sp.precio_min), precio_max: param(sp.precio_max) });
 
   const tienda = await cargarTienda(slug);
   if (!tienda) notFound();
@@ -70,12 +71,18 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
     return <TiendaInicio home={home} config={vitrina.config} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
   }
 
-  const data = await cargarCatalogoPublico(slug, "retail", undefined, q, categoria, paginaDe(sp.pagina));
+  // Tema "joyeria": sin búsqueda por texto, el listado lleva el panel de filtros (categorías, color, material y precio) y el servidor aplica lo que trae la dirección.
+  const esJoyeria = Boolean(joyeriaOf(storefrontConfigFor(tienda.slug)));
+  const conFiltros = esJoyeria && !q;
+  const filtros = conFiltros ? leerFiltros(sp) : SIN_FILTROS;
+  const data = await cargarCatalogoPublico(slug, "retail", undefined, q, categoria, paginaDe(sp.pagina), hayFiltros(filtros) ? textoDeFiltros(filtros) : undefined, conFiltros);
   if (!data) notFound();
-  const categoriaActual = categoria ? data.categories.find((c) => c.id === categoria)?.name : undefined;
+  // Con filtros hay varias categorías posibles: el título solo nombra una cuando es la única elegida.
+  const idCategoria = conFiltros ? (filtros.categorias.length === 1 ? filtros.categorias[0] : undefined) : categoria;
+  const categoriaActual = idCategoria ? data.categories.find((c) => c.id === idCategoria)?.name : undefined;
   const titulo = q ? `Resultados para «${q}»` : (categoriaActual ?? "Todo el catálogo");
 
-  if (joyeriaOf(storefrontConfigFor(tienda.slug))) {
+  if (esJoyeria) {
     return (
       <ListadoJoyeria
         data={data}
@@ -84,6 +91,8 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
         categoria={categoria}
         listPath={listPath}
         titulo={titulo}
+        filtros={filtros}
+        facetas={data.facets}
         tile={(p, i) => <TarjetaJoyeria product={p} basePath={basePath} posicion={i} />}
       />
     );

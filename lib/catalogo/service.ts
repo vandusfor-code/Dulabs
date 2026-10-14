@@ -33,8 +33,9 @@ import {
   type PriceContext,
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
+import { SIN_FILTROS, calcularFacetas, cumpleFiltros, hayFiltros, soloUnaCategoria, type FacetasCatalogo, type FilaFaceta, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
 import { PreciosNoDisponibles, precioQueRige, type EvaluadorPrecios } from "@/lib/catalogo/precios";
-import type { CatalogRepository, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
+import type { CatalogRepository, FilaFiltrable, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
   buildOrderDraft,
   normalizeOrderItems,
@@ -437,7 +438,29 @@ export interface PublicCatalogQuery {
   q?: string;
   categoryId?: string;
   page?: number;
+  /**
+   * Filtros del tema "joyeria" (categorías, color, material, rango de precio). Solo aplican al listado SIN búsqueda por texto; sin ellos (o con una sola categoría)
+   * el listado es exactamente el de siempre, con su consulta paginada en la base. Ver lib/catalogo/filtros.ts.
+   */
+  filters?: FiltrosCatalogo;
+  /**
+   * Pide además las opciones de los filtros (categorías con productos, colores, materiales, rango de precio, cada una con su conteo) en `facets`. Comparten la lectura de los
+   * productos activos con el listado filtrado: una sola lectura por petición. `facets: null` = catálogo demasiado grande para contar en memoria.
+   */
+  facets?: boolean;
 }
+
+/** El listado público y, si se pidieron, las opciones de los filtros. */
+export type PublicCatalogPageFiltrable = PublicCatalogPage & { facets?: FacetasCatalogo | null };
+
+/** Productos activos que se leen de una vez para filtrar y contar en memoria (por lote) y tope: un catálogo más grande no ofrece filtros por color, material ni precio. */
+export const FILTRO_LOTE = 500;
+export const FILTRO_MAX = 2000;
+
+const filaDeProducto = (p: CatalogProduct): FilaFiltrable => ({ reference: p.reference, categoryId: p.categoryId, color: p.color, material: p.material, pricing: p.pricing });
+
+/** Una página del listado, antes de proyectarla al formato público: la forma que comparten el listado de siempre y el filtrado. */
+type Listing = { items: CatalogProduct[]; total: number; page: number; pageSize: number; maxResults: number; search?: { relaxed: boolean; capped: boolean } };
 
 export interface PublicImageQuery {
   slug: string;
@@ -752,7 +775,7 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     text: string | undefined,
     categoryId: string | undefined,
     requested: number,
-  ): Promise<{ items: CatalogProduct[]; total: number; page: number; pageSize: number; maxResults: number; search?: { relaxed: boolean; capped: boolean } }> {
+  ): Promise<Listing> {
     const browse = async (search: string | undefined) => {
       const { items, total } = await repo.listProducts(tenantId, { status: "ACTIVE", search, categoryId, offset: (requested - 1) * PUBLIC_PAGE_SIZE, limit: PUBLIC_PAGE_SIZE });
       return { items, total, page: requested, pageSize: PUBLIC_PAGE_SIZE, maxResults: Number.POSITIVE_INFINITY };
@@ -802,6 +825,56 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     };
   }
 
+  /**
+   * Todos los productos ACTIVOS del negocio con lo necesario para filtrar y contar (referencia, categoría, color, material y precios), leídos por lotes, o null si son más de FILTRO_MAX
+   * (filtrar y contar en memoria solo es razonable para catálogos de ese tamaño). SOLO LECTURA; el orden es el de siempre (más recientes primero). Usa la lectura liviana del repositorio
+   * (~150 bytes por producto, en vez de ~600) y, si no la tiene, los productos completos. La vitrina no depende de los filtros para verse: si la lectura falla, devuelve null (sin panel,
+   * con el listado de siempre) y avisa en el registro.
+   */
+  async function activosParaFiltrar(tenantId: string): Promise<FilaFiltrable[] | null> {
+    try {
+      const filas: FilaFiltrable[] = [];
+      for (let offset = 0; ; offset += FILTRO_LOTE) {
+        const { items, total } = repo.listFilterRows
+          ? await repo.listFilterRows(tenantId, { offset, limit: FILTRO_LOTE })
+          : await repo.listProducts(tenantId, { status: "ACTIVE", offset, limit: FILTRO_LOTE }).then((r) => ({ items: r.items.map(filaDeProducto), total: r.total }));
+        if (total > FILTRO_MAX) return null;
+        filas.push(...items);
+        if (items.length < FILTRO_LOTE || filas.length >= total) return filas;
+      }
+    } catch (error) {
+      console.error("[catalogo/filtros] no se pudieron leer los productos para filtrar; se muestra el listado de siempre:", error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
+
+  /** Lo mínimo para filtrar y contar un producto. El precio es el EFECTIVO (el que se muestra: oferta vigente o lista, la misma decisión que la tarjeta), nunca el del otro contexto. */
+  function filaDe(f: FilaFiltrable, context: PriceContext, evaluador: EvaluadorPrecios | null): FilaFaceta {
+    return { categoryId: f.categoryId, color: f.color, material: f.material, price: precioQueRige(f, context, evaluador?.de(f, context)).precio };
+  }
+
+  /**
+   * Listado con filtros (categorías, color, material y rango de precio): de los productos activos deja los que cumplen y pagina igual que el listado de siempre (48 por página); solo los de
+   * la página se leen completos. Sin los activos a la mano (catálogo demasiado grande: `null`) solo se respeta la categoría, con el listado de siempre.
+   */
+  async function filteredListing(
+    tenantId: string,
+    context: PriceContext,
+    filtros: FiltrosCatalogo,
+    requested: number,
+    activos: FilaFiltrable[] | null,
+    evaluador: EvaluadorPrecios | null,
+  ): Promise<Listing> {
+    if (activos === null) return publicListing(tenantId, context, undefined, filtros.categorias.find((c) => UUID_PATTERN.test(c)), requested);
+    const coinciden = activos.filter((f) => cumpleFiltros(filaDe(f, context, evaluador), filtros));
+    const offset = (requested - 1) * PUBLIC_PAGE_SIZE;
+    const referencias = coinciden.slice(offset, offset + PUBLIC_PAGE_SIZE).map((f) => f.reference);
+    // Si algún producto se desactivó entre las dos lecturas, simplemente no aparece (un desactivado nunca se muestra).
+    const completos = referencias.length > 0 ? await repo.getProductsByReferences(tenantId, referencias) : [];
+    const porReferencia = new Map(completos.filter((p) => p.status === "ACTIVE").map((p) => [p.reference, p]));
+    return { items: referencias.flatMap((r) => porReferencia.get(r) ?? []), total: coinciden.length, page: requested, pageSize: PUBLIC_PAGE_SIZE, maxResults: Number.POSITIVE_INFINITY };
+  }
+
   return {
     async getStorefront(slug: string): Promise<PublicStorefront | null> {
       const pub = await openPublication(slug);
@@ -818,18 +891,26 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories, referenceMark };
     },
 
-    async getCatalog(input: PublicCatalogQuery): Promise<PublicCatalogPage | null> {
+    async getCatalog(input: PublicCatalogQuery): Promise<PublicCatalogPageFiltrable | null> {
       const pub = await openPublication(input.slug);
       if (!pub || !contextAllowed(pub, input.context, input.token)) return null;
 
       const requested = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
-      const categoryId = input.categoryId && UUID_PATTERN.test(input.categoryId) ? input.categoryId : undefined;
-      const [listing, categories, business, evaluador] = await Promise.all([
-        publicListing(pub.tenantId, input.context, normalizeSearch(input.q), categoryId, requested),
-        repo.listCategories(pub.tenantId),
-        repo.getBusinessProfile(pub.tenantId),
-        evaluadorDe(pub.tenantId, false),
+      const texto = normalizeSearch(input.q);
+      // Los filtros de joyería solo aplican sin búsqueda por texto; con una sola categoría y nada más, el listado es exactamente el de siempre.
+      const filtros = input.filters && hayFiltros(input.filters) && !texto ? input.filters : null;
+      const unaCategoria = filtros ? soloUnaCategoria(filtros) : null;
+      const categoriaCruda = unaCategoria ?? input.categoryId;
+      const categoryId = categoriaCruda && UUID_PATTERN.test(categoriaCruda) ? categoriaCruda : undefined;
+      // Filtrar (varias categorías, color, material o precio) y contar las opciones necesitan los productos activos: se leen UNA sola vez para las dos cosas.
+      const filtrar = unaCategoria === null ? filtros : null;
+      const [[categories, business, evaluador], activos, deSiempre] = await Promise.all([
+        Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId), evaluadorDe(pub.tenantId, false)]),
+        filtrar !== null || input.facets === true ? activosParaFiltrar(pub.tenantId) : Promise.resolve(undefined),
+        filtrar !== null ? Promise.resolve(null) : publicListing(pub.tenantId, input.context, texto, categoryId, requested),
       ]);
+      const listing = deSiempre ?? (await filteredListing(pub.tenantId, input.context, filtrar ?? SIN_FILTROS, requested, activos ?? null, evaluador));
+      const facets = input.facets === true ? (activos ? calcularFacetas(activos.map((p) => filaDe(p, input.context, evaluador)), categories) : null) : undefined;
 
       return {
         business: { name: pub.publicName, whatsapp: business.whatsapp },
@@ -841,6 +922,7 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
         pageSize: listing.pageSize,
         pageCount: Math.max(1, Math.ceil(Math.min(listing.total, listing.maxResults) / listing.pageSize)),
         ...(listing.search ? { search: listing.search } : {}),
+        ...(facets !== undefined ? { facets } : {}),
       };
     },
 

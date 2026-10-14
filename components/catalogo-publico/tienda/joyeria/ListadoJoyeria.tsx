@@ -1,14 +1,19 @@
 /**
  * Listado y búsqueda del tema "joyeria": SOLO presentación. Los datos, los filtros (búsqueda `?q=`, categoría `?categoria=`, página `?pagina=`), los enlaces y la paginación son los de
- * siempre (mismas direcciones: `href` de PublicCatalog); funciona sin JavaScript y cada vista se puede compartir. Escritorio: categorías en una columna lateral fija junto a la cuadrícula;
- * celular: las mismas categorías como fila deslizable. Server Component.
+ * siempre (mismas direcciones: `href` de PublicCatalog); funciona sin JavaScript y cada vista se puede compartir.
+ *
+ * Sin búsqueda por texto y con las opciones de filtro disponibles (`facetas`), el panel de filtros de la referencia (FiltrosJoyeria): categoría, color, material y rango de precio, con su
+ * conteo por opción (escritorio: columna fija; celular: botón «Filtrar» y hoja inferior). Con búsqueda por texto, o si el catálogo es demasiado grande para contar, la columna de categorías
+ * y la fila deslizable de siempre. Server Component.
  */
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
 import { href } from "@/components/catalogo-publico/PublicCatalog";
 import { EnlaceIntencion } from "@/components/catalogo-publico/tienda/EnlaceIntencion";
+import { FiltrosJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FiltrosJoyeria";
 import { indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
+import { SIN_FILTROS, hayFiltros as hayFiltrosDe, urlFiltros, type FacetasCatalogo, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
 import type { PublicCatalogPage, PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 
 function cn(...cls: Array<string | false | null | undefined>) {
@@ -27,6 +32,8 @@ export function ListadoJoyeria({
   listPath,
   titulo,
   tile,
+  filtros = SIN_FILTROS,
+  facetas = null,
 }: {
   data: PublicCatalogPage;
   basePath: string;
@@ -35,17 +42,88 @@ export function ListadoJoyeria({
   listPath: string;
   titulo: string;
   tile: (product: PublicCatalogProduct, posicion: number) => ReactNode;
+  /** Filtros de la dirección (categorías, color, material, precio): los que el servidor aplicó a `data`. Solo cuentan sin búsqueda por texto. */
+  filtros?: FiltrosCatalogo;
+  /** Opciones de filtro con sus conteos; null = sin panel de filtros (búsqueda por texto, o un catálogo demasiado grande para contar). */
+  facetas?: FacetasCatalogo | null;
 }) {
-  const hayFiltros = Boolean(q || categoria);
+  const conPanel = !q && facetas !== null;
+  const filtrado = conPanel && hayFiltrosDe(filtros);
+  const hayFiltros = Boolean(q || categoria) || filtrado;
   const totalPaginas = data.pageCount;
-  const categoriaActual = categoria ? data.categories.find((c) => c.id === categoria)?.name : undefined;
+  const idCategoria = conPanel ? (filtros.categorias.length === 1 ? filtros.categorias[0] : undefined) : categoria;
+  const categoriaActual = idCategoria ? data.categories.find((c) => c.id === idCategoria)?.name : undefined;
   const cuenta = data.total === 1 ? "1 producto" : `${data.total.toLocaleString("es-CO")} productos`;
+  const enlacePagina = (pagina: number) => (conPanel ? urlFiltros(basePath, filtros, pagina) : href(basePath, { q, categoria, pagina }));
 
   const sinFiltro = q ? href(basePath, { q }) : listPath;
   const enlaceCategoria = (activo: boolean, contenido: ReactNode, destino: string, clase: string) => (
     <EnlaceIntencion href={destino} className={clase} aria-current={activo ? "page" : undefined}>
       {contenido}
     </EnlaceIntencion>
+  );
+
+  // La lista de productos, los avisos y la paginación: lo mismo con o sin panel de filtros.
+  const resultados = (
+    <>
+      {data.search?.relaxed && data.products.length > 0 && (
+        <p className="mb-6 rounded-xl border border-edge bg-card px-4 py-3 text-sm text-mist">Ningún producto tiene todas las palabras que buscaste; estos tienen al menos una.</p>
+      )}
+
+      {data.products.length === 0 ? (
+        <div className="rounded-xl border border-edge bg-card px-6 py-20 text-center">
+          <p className="font-serif-tienda text-2xl text-fg">
+            {hayFiltros ? (conPanel ? "No encontramos productos con esos filtros" : "No encontramos productos con esa búsqueda") : "Pronto verás productos aquí"}
+          </p>
+          {hayFiltros && (
+            <Link href={listPath} className="mt-4 inline-block text-sm text-[var(--tienda-oro)] underline-offset-4 hover:underline">
+              Ver todo el catálogo
+            </Link>
+          )}
+        </div>
+      ) : (
+        <>
+          <h2 className="sr-only">Productos</h2>
+          <ul className="grid grid-cols-2 gap-x-4 gap-y-8 md:grid-cols-3 xl:grid-cols-4">
+            {data.products.map((p, i) => (
+              <li key={p.reference} className="joy-item" style={indice(i % 4)}>
+                {tile(p, i)}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {data.search?.capped && data.page === totalPaginas && (
+        <p className="mt-10 text-center text-sm text-mist">Estos son los resultados más parecidos a tu búsqueda. Agrega otra palabra (color, material…) para encontrar el resto.</p>
+      )}
+
+      {totalPaginas > 1 && (
+        <nav className="mt-12 flex items-center justify-center gap-3 text-sm" aria-label="Paginación">
+          {data.page > 1 ? (
+            <Link href={enlacePagina(data.page - 1)} className={PAGINA}>
+              Anterior
+            </Link>
+          ) : (
+            <span className={PAGINA_INACTIVA} aria-disabled="true">
+              Anterior
+            </span>
+          )}
+          <span className="tabular-nums text-mist">
+            Página {data.page} de {totalPaginas}
+          </span>
+          {data.page < totalPaginas ? (
+            <Link href={enlacePagina(data.page + 1)} className={PAGINA}>
+              Siguiente
+            </Link>
+          ) : (
+            <span className={PAGINA_INACTIVA} aria-disabled="true">
+              Siguiente
+            </span>
+          )}
+        </nav>
+      )}
+    </>
   );
 
   return (
@@ -79,7 +157,7 @@ export function ListadoJoyeria({
                     /
                   </span>
                   <span className="font-medium text-fg" aria-current="page">
-                    {q ? `Búsqueda: ${q}` : (categoriaActual ?? "Categoría")}
+                    {q ? `Búsqueda: ${q}` : (categoriaActual ?? (filtrado ? "Filtros" : "Categoría"))}
                   </span>
                 </li>
               )}
@@ -93,106 +171,58 @@ export function ListadoJoyeria({
       </header>
 
       <section className="py-8 lg:py-12">
-        <div className="mx-auto flex max-w-7xl gap-10 px-4 sm:px-6 lg:px-8">
-          {data.categories.length > 0 && (
-            <aside className="hidden w-60 shrink-0 lg:block" aria-label="Categorías">
-              <div className="sticky top-[calc(var(--joy-alto-barra)+var(--joy-alto-cab)+1.5rem)] space-y-5">
-                <h2 className="text-xs font-medium uppercase tracking-[0.16em] text-fg">Categorías</h2>
-                <ul className="space-y-1" role="list">
-                  <li>{enlaceCategoria(!categoria, "Todo", sinFiltro, cn("joy-cat-lateral", !categoria && "joy-cat-lateral-activa"))}</li>
+        {conPanel ? (
+          <FiltrosJoyeria basePath={basePath} filtros={filtros} facetas={facetas} cuenta={cuenta}>
+            {resultados}
+          </FiltrosJoyeria>
+        ) : (
+          <div className="mx-auto flex max-w-7xl gap-10 px-4 sm:px-6 lg:px-8">
+            {data.categories.length > 0 && (
+              <aside className="hidden w-60 shrink-0 lg:block" aria-label="Categorías">
+                <div className="sticky top-[calc(var(--joy-alto-barra)+var(--joy-alto-cab)+1.5rem)] space-y-5">
+                  <h2 className="text-xs font-medium uppercase tracking-[0.16em] text-fg">Categorías</h2>
+                  <ul className="space-y-1" role="list">
+                    <li>{enlaceCategoria(!categoria, "Todo", sinFiltro, cn("joy-cat-lateral", !categoria && "joy-cat-lateral-activa"))}</li>
+                    {data.categories.map((c) => (
+                      <li key={c.id}>{enlaceCategoria(categoria === c.id, c.name, href(basePath, { q, categoria: c.id }), cn("joy-cat-lateral", categoria === c.id && "joy-cat-lateral-activa"))}</li>
+                    ))}
+                  </ul>
+                  {hayFiltros && (
+                    <Link href={listPath} className="inline-flex items-center gap-1 text-sm text-mist transition-colors hover:text-fg">
+                      <X className="size-3.5" aria-hidden />
+                      Quitar filtros
+                    </Link>
+                  )}
+                </div>
+              </aside>
+            )}
+
+            <div className="min-w-0 flex-1">
+              {data.categories.length > 0 && (
+                <nav aria-label="Categorías" className="tienda-scroll -mx-4 mb-6 flex gap-2 overflow-x-auto px-4 pb-1 sm:-mx-6 sm:px-6 lg:hidden">
+                  {enlaceCategoria(!categoria, "Todo", sinFiltro, cn("joy-chip", !categoria && "joy-chip-activo"))}
                   {data.categories.map((c) => (
-                    <li key={c.id}>{enlaceCategoria(categoria === c.id, c.name, href(basePath, { q, categoria: c.id }), cn("joy-cat-lateral", categoria === c.id && "joy-cat-lateral-activa"))}</li>
+                    <span key={c.id} className="contents">
+                      {enlaceCategoria(categoria === c.id, c.name, href(basePath, { q, categoria: c.id }), cn("joy-chip", categoria === c.id && "joy-chip-activo"))}
+                    </span>
                   ))}
-                </ul>
+                </nav>
+              )}
+
+              <div className="mb-6 flex items-center justify-between text-sm text-mist">
+                <span>{cuenta}</span>
                 {hayFiltros && (
-                  <Link href={listPath} className="inline-flex items-center gap-1 text-sm text-mist transition-colors hover:text-fg">
+                  <Link href={listPath} className="inline-flex items-center gap-1 transition-colors hover:text-fg lg:hidden">
                     <X className="size-3.5" aria-hidden />
                     Quitar filtros
                   </Link>
                 )}
               </div>
-            </aside>
-          )}
 
-          <div className="min-w-0 flex-1">
-            {data.categories.length > 0 && (
-              <nav aria-label="Categorías" className="tienda-scroll -mx-4 mb-6 flex gap-2 overflow-x-auto px-4 pb-1 sm:-mx-6 sm:px-6 lg:hidden">
-                {enlaceCategoria(!categoria, "Todo", sinFiltro, cn("joy-chip", !categoria && "joy-chip-activo"))}
-                {data.categories.map((c) => (
-                  <span key={c.id} className="contents">
-                    {enlaceCategoria(categoria === c.id, c.name, href(basePath, { q, categoria: c.id }), cn("joy-chip", categoria === c.id && "joy-chip-activo"))}
-                  </span>
-                ))}
-              </nav>
-            )}
-
-            <div className="mb-6 flex items-center justify-between text-sm text-mist">
-              <span>{cuenta}</span>
-              {hayFiltros && (
-                <Link href={listPath} className="inline-flex items-center gap-1 transition-colors hover:text-fg lg:hidden">
-                  <X className="size-3.5" aria-hidden />
-                  Quitar filtros
-                </Link>
-              )}
+              {resultados}
             </div>
-
-            {data.search?.relaxed && data.products.length > 0 && (
-              <p className="mb-6 rounded-xl border border-edge bg-card px-4 py-3 text-sm text-mist">Ningún producto tiene todas las palabras que buscaste; estos tienen al menos una.</p>
-            )}
-
-            {data.products.length === 0 ? (
-              <div className="rounded-xl border border-edge bg-card px-6 py-20 text-center">
-                <p className="font-serif-tienda text-2xl text-fg">{hayFiltros ? "No encontramos productos con esa búsqueda" : "Pronto verás productos aquí"}</p>
-                {hayFiltros && (
-                  <Link href={listPath} className="mt-4 inline-block text-sm text-[var(--tienda-oro)] underline-offset-4 hover:underline">
-                    Ver todo el catálogo
-                  </Link>
-                )}
-              </div>
-            ) : (
-              <>
-                <h2 className="sr-only">Productos</h2>
-                <ul className="grid grid-cols-2 gap-x-4 gap-y-8 md:grid-cols-3 xl:grid-cols-4">
-                  {data.products.map((p, i) => (
-                    <li key={p.reference} className="joy-item" style={indice(i % 4)}>
-                      {tile(p, i)}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {data.search?.capped && data.page === totalPaginas && (
-              <p className="mt-10 text-center text-sm text-mist">Estos son los resultados más parecidos a tu búsqueda. Agrega otra palabra (color, material…) para encontrar el resto.</p>
-            )}
-
-            {totalPaginas > 1 && (
-              <nav className="mt-12 flex items-center justify-center gap-3 text-sm" aria-label="Paginación">
-                {data.page > 1 ? (
-                  <Link href={href(basePath, { q, categoria, pagina: data.page - 1 })} className={PAGINA}>
-                    Anterior
-                  </Link>
-                ) : (
-                  <span className={PAGINA_INACTIVA} aria-disabled="true">
-                    Anterior
-                  </span>
-                )}
-                <span className="tabular-nums text-mist">
-                  Página {data.page} de {totalPaginas}
-                </span>
-                {data.page < totalPaginas ? (
-                  <Link href={href(basePath, { q, categoria, pagina: data.page + 1 })} className={PAGINA}>
-                    Siguiente
-                  </Link>
-                ) : (
-                  <span className={PAGINA_INACTIVA} aria-disabled="true">
-                    Siguiente
-                  </span>
-                )}
-              </nav>
-            )}
           </div>
-        </div>
+        )}
       </section>
     </div>
   );

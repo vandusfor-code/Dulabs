@@ -154,6 +154,16 @@ export function createInMemoryCatalogRepository() {
       return { items: items.slice(f.offset, f.offset + f.limit).map(strip), total: items.length };
     },
 
+    async listFilterRows(tenantId: string, page: { offset: number; limit: number }) {
+      const items = [...products.values()].filter((p) => p.tenantId === tenantId && p.status === "ACTIVE");
+      items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      const filas = items.slice(page.offset, page.offset + page.limit).map((p) => {
+        const s = strip(p);
+        return { reference: s.reference, categoryId: s.categoryId, color: s.color, material: s.material, pricing: s.pricing };
+      });
+      return { items: filas, total: items.length };
+    },
+
     async getProduct(tenantId, id) {
       const p = products.get(id);
       return p && p.tenantId === tenantId ? strip(p) : null;

@@ -50,7 +50,7 @@ export function crearEvaluadorPrecios(snap: InstantaneaCms, ahora: number): Eval
     wholesale: ofertasActivas({ snap, canal: "wholesale", ahora }),
   } satisfies Record<PriceContext, ReturnType<typeof ofertasActivas>>;
   return {
-    de(producto: CatalogProduct, canal: PriceContext) {
+    de(producto: Pick<CatalogProduct, "reference" | "categoryId" | "pricing">, canal: PriceContext) {
       const lista = priceFor(producto, canal);
       const r = precioEfectivo({ snap, canal, ahora }, { referencia: producto.reference, categoriaId: producto.categoryId, precioLista: lista }, activas[canal]);
       if (!r.oferta) return { precio: lista, precioLista: lista, oferta: null };

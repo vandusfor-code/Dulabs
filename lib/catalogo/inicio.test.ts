@@ -3,13 +3,24 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { esListado } from "@/lib/catalogo/inicio";
+import { esListado, esListadoDeUrl } from "@/lib/catalogo/inicio";
 import { heroOf, storefrontConfigFor } from "@/lib/catalogo/vitrina";
 
 describe("vista", () => {
   it("inicio sin parámetros; listado con búsqueda, categoría, página o 'ver todo'", () => {
     assert.equal(esListado({}), false);
     for (const p of [{ q: "anillo" }, { categoria: "c1" }, { pagina: "2" }, { todo: "1" }]) assert.equal(esListado(p), true);
+  });
+
+  it("los filtros de la joyería (color, material, precio) también llevan al listado, no al inicio", () => {
+    for (const p of [{ color: "dorad" }, { material: "rodi" }, { precio_min: "6000" }, { precio_max: "30000" }]) assert.equal(esListado(p), true);
+    assert.equal(esListado({ color: "", material: null, precio_min: undefined }), false, "vacío no cuenta");
+  });
+
+  it("el marco de la tienda decide con la dirección del navegador igual que el servidor", () => {
+    for (const [qs, listado] of [["", false], ["?todo=1", true], ["?color=dorad", true], ["?material=rodi&pagina=2", true], ["?precio_max=30000", true], ["?utm_source=x", false]] as const) {
+      assert.equal(esListadoDeUrl(new URLSearchParams(qs)), listado, qs);
+    }
   });
 });
 
