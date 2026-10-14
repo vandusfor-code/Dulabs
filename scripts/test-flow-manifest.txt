@@ -625,3 +625,9 @@ lib/agente/agente-comercial-checkout.test.ts
 lib/agente/agente-comercial-produccion.pglite.test.ts
 lib/cms-comercial/migracion-textos.test.ts
 lib/cms-comercial/migracion-textos.pglite.test.ts
+# Bloque 30 (rediseño visual de la tienda de Delacour, tema "joyeria"): el tema y su contenido (puro), el inicio con lo que publica el CMS (qué se dibuja, el orden, lo que nunca se muestra), la tarjeta,
+# el listado con las MISMAS direcciones que el de siempre, la ficha con los mismos datos y acciones, y lo que hace el cliente en jsdom (cabecera, menú, buscador, anuncios, galería, carrusel, botón de vidrio).
+lib/catalogo/joyeria.test.ts
+components/catalogo-publico/tienda/joyeria/inicio-joyeria.test.tsx
+components/catalogo-publico/tienda/joyeria/listado-ficha-joyeria.test.tsx
+components/catalogo-publico/tienda/joyeria/joyeria.dom.test.tsx

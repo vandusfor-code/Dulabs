@@ -2630,3 +2630,718 @@ body {
     animation: tienda-revelar 650ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   }
 }
+
+/* ---------- Catálogo público · tema "joyeria" (Bloque 30: rediseño editorial de Delacour) ----------
+   Se SUMA a .catalogo-tienda en las vitrinas que lo piden (lib/catalogo/vitrina.ts: tema = "joyeria"). SOLO presentación: redefine los MISMOS tokens (el carrito, el listado
+   y la ficha toman la paleta sin duplicarse) y agrega las piezas del diseño (cromo superior, portada con cortina, tarjetas, galería...). Todo el movimiento va dentro de
+   `prefers-reduced-motion: no-preference`: con movimiento reducido la página es la misma, sin animaciones, sin portada fija y sin destellos. Los tiempos y las curvas salen de
+   la observación de la referencia (ver la matriz de interacciones del PR). */
+.catalogo-tienda.tienda-joyeria {
+  --color-ink: #faf7f2;
+  --color-ink-2: #f1ebe2;
+  --color-card: #fffdfa;
+  --color-edge: #e6ddd0;
+  --color-fg: #1e1914;
+  /* Gris cálido con contraste AA (≥ 4,5:1) tanto sobre el crema como sobre el crema profundo de las bandas. */
+  --color-mist: #6b6054;
+  --tienda-oro: #8a5d2b;
+  --tienda-oro-hover: #74491f;
+  --tienda-oro-suave: #f1e6d6;
+  /* Dorado decorativo (filetes, rombos, destellos, subrayados): nunca como color de texto pequeño. */
+  --joy-oro: #b58d4a;
+  --joy-oro-claro: #e8d5b0;
+  --joy-espresso: #2a1c12;
+  /* Alto del cromo fijo (barra de anuncios + cabecera): lo usan el relleno de cada página, las anclas y las columnas fijas. */
+  --joy-alto-barra: 0px;
+  --joy-alto-cab: 4rem;
+}
+@media (min-width: 768px) {
+  .catalogo-tienda.tienda-joyeria {
+    --joy-alto-cab: 5rem;
+  }
+}
+.catalogo-tienda.tienda-joyeria.joy-con-anuncio {
+  --joy-alto-barra: 2.5rem;
+}
+@media (min-width: 640px) {
+  .catalogo-tienda.tienda-joyeria.joy-con-anuncio {
+    --joy-alto-barra: 2.75rem;
+  }
+}
+
+.tienda-joyeria .joy-compensa {
+  padding-top: calc(var(--joy-alto-barra) + var(--joy-alto-cab) + env(safe-area-inset-top));
+}
+.tienda-joyeria .joy-ancla {
+  scroll-margin-top: calc(var(--joy-alto-barra) + var(--joy-alto-cab) + env(safe-area-inset-top) + 1rem);
+}
+.tienda-joyeria .joy-no-encontrada {
+  padding-top: calc(var(--joy-alto-barra) + var(--joy-alto-cab) + env(safe-area-inset-top) + 4rem);
+}
+/* Mientras llega la página el esqueleto ocupa TODA la pantalla: así el pie (que ya está en el marco) queda debajo del pliegue y no «salta» al llegar el contenido (CLS). */
+.tienda-joyeria .joy-esqueleto {
+  padding-top: calc(var(--joy-alto-barra) + var(--joy-alto-cab) + env(safe-area-inset-top) + 1rem);
+  padding-inline: 1rem;
+  max-width: 80rem;
+  margin-inline: auto;
+  min-height: 100svh;
+}
+/* El esqueleto es genérico (inicio, listado o ficha): en este tema no dibuja el bloque de portada, que es de pantalla completa. */
+.tienda-joyeria .joy-esqueleto-hero {
+  display: none;
+}
+.tienda-joyeria .joy-esqueleto-tarjeta {
+  border-radius: 0.75rem;
+}
+.tienda-joyeria .joy-esqueleto-foto {
+  aspect-ratio: 4 / 5;
+}
+
+/* ----- Cromo superior: barra de anuncios + cabecera, fijos. Por defecto "vidrio"; "hero" solo sobre una portada fija (data-joy-hero). ----- */
+.tienda-joyeria .joy-cromo {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  z-index: 30;
+  padding-top: env(safe-area-inset-top);
+}
+.tienda-joyeria .joy-cromo::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background-image: linear-gradient(rgb(0 0 0 / 0.4), rgb(0 0 0 / 0.18) 62%, transparent);
+  transition: opacity 0.36s ease;
+}
+.tienda-joyeria .joy-anuncios,
+.tienda-joyeria .joy-cab {
+  position: relative;
+  color: var(--color-fg);
+  --joy-hover: var(--tienda-oro);
+  transition:
+    background-color 0.36s ease,
+    box-shadow 0.36s ease,
+    color 0.36s ease,
+    -webkit-backdrop-filter 0.36s ease,
+    backdrop-filter 0.36s ease;
+}
+.tienda-joyeria .joy-cab {
+  background-color: rgb(250 247 242 / 0.75);
+  -webkit-backdrop-filter: blur(16px) saturate(1.05);
+  backdrop-filter: blur(16px) saturate(1.05);
+  box-shadow:
+    0 1px 0 rgb(229 221 210 / 0.7),
+    0 8px 28px -12px rgb(138 106 47 / 0.28);
+}
+.tienda-joyeria .joy-anuncios {
+  background-color: var(--color-ink-2);
+  box-shadow: 0 1px 0 var(--color-edge);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .tienda-joyeria .joy-cab {
+    background-color: var(--color-ink);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .tienda-joyeria .joy-cab {
+    background-color: var(--color-ink);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+/* Sobre la portada: transparente, texto claro y un velo degradado para que se lea. */
+.tienda-joyeria:has([data-joy-hero]) .joy-cromo[data-estado="hero"]::before {
+  opacity: 1;
+}
+.tienda-joyeria:has([data-joy-hero]) .joy-cromo[data-estado="hero"] .joy-cab,
+.tienda-joyeria:has([data-joy-hero]) .joy-cromo[data-estado="hero"] .joy-anuncios {
+  background-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: #fff;
+  --joy-hover: var(--joy-oro-claro);
+}
+.tienda-joyeria:has([data-joy-hero]) .joy-cromo[data-estado="hero"] .joy-tinta {
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+}
+.tienda-joyeria:has([data-joy-hero]) .joy-cromo[data-estado="hero"] :focus-visible {
+  outline-color: #fff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-cromo::before,
+  .tienda-joyeria .joy-anuncios,
+  .tienda-joyeria .joy-cab {
+    transition-duration: 0.15s;
+    transition-timing-function: linear;
+  }
+}
+
+/* Texto del anuncio: se funde (0,3 s) al cambiar. */
+.tienda-joyeria .joy-anuncio-texto {
+  transition: opacity 0.3s ease-out;
+}
+.tienda-joyeria .joy-anuncio-oculto {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-anuncio-texto {
+    transition-duration: 0.15s;
+  }
+}
+
+/* Botones de icono: crecen 1,1× al pasar el mouse y se hunden 0,95× al pulsar (0,3 s). */
+.tienda-joyeria .joy-icono {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  transition:
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tienda-joyeria .joy-icono:active {
+  transform: scale(0.95);
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-icono:hover {
+    transform: scale(1.1);
+    background-color: color-mix(in srgb, var(--joy-oro) 14%, transparent);
+  }
+  .tienda-joyeria .joy-cab .joy-icono:hover,
+  .tienda-joyeria .joy-anuncios .joy-icono:hover {
+    color: var(--joy-hover);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-icono {
+    transition: none;
+  }
+  .tienda-joyeria .joy-icono:hover,
+  .tienda-joyeria .joy-icono:active {
+    transform: none;
+  }
+}
+
+/* Enlaces de la navegación: el filete dorado crece de izquierda a derecha (0,3 s) y el color cambia a la vez. */
+.tienda-joyeria .joy-enlace {
+  position: relative;
+  padding-block: 0.25rem;
+  transition: color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tienda-joyeria .joy-enlace::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  width: 100%;
+  height: 1px;
+  background: var(--joy-oro);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tienda-joyeria .joy-enlace[aria-current="page"],
+.tienda-joyeria .joy-enlace:focus-visible {
+  color: var(--joy-hover);
+}
+.tienda-joyeria .joy-enlace[aria-current="page"]::after,
+.tienda-joyeria .joy-enlace:focus-visible::after {
+  transform: scaleX(1);
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-enlace:hover {
+    color: var(--joy-hover);
+  }
+  .tienda-joyeria .joy-enlace:hover::after {
+    transform: scaleX(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-enlace,
+  .tienda-joyeria .joy-enlace::after {
+    transition: none;
+  }
+}
+.tienda-joyeria .joy-pildora-nav {
+  border-color: color-mix(in srgb, currentColor 50%, transparent);
+  background-color: color-mix(in srgb, currentColor 8%, transparent);
+  transition:
+    border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-pildora-nav:hover {
+    border-color: color-mix(in srgb, currentColor 80%, transparent);
+    background-color: color-mix(in srgb, currentColor 16%, transparent);
+  }
+}
+
+/* Filas del menú lateral y su acordeón de categorías (alto + opacidad en 0,215 s; el chevron gira 180°). */
+.tienda-joyeria .joy-fila-menu {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  letter-spacing: 0.1em;
+  color: var(--color-fg);
+  text-align: left;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+.tienda-joyeria .joy-fila-menu[aria-current="page"] {
+  color: var(--tienda-oro);
+}
+.tienda-joyeria .joy-fila-sub {
+  padding-block: 0.625rem;
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  color: var(--color-mist);
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-fila-menu:hover {
+    background-color: var(--color-ink-2);
+    color: var(--tienda-oro);
+  }
+}
+.tienda-joyeria .joy-acordeon {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 0.215s ease-out,
+    opacity 0.215s ease-out,
+    visibility 0s linear 0.215s;
+}
+.tienda-joyeria .joy-acordeon[data-abierto="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.tienda-joyeria .joy-giro {
+  transition: transform 0.215s ease-out;
+}
+.tienda-joyeria [aria-expanded="true"] > .joy-giro {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-acordeon,
+  .tienda-joyeria .joy-giro {
+    transition: none;
+  }
+}
+
+/* ----- Diálogos nativos: menú lateral (0,3 s), buscador (0,2 s) y vista ampliada de la ficha (entra con fundido de 0,2 s; sale al instante). ----- */
+.tienda-joyeria dialog.joy-lightbox {
+  background-color: rgb(26 22 18 / 0.95);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.tienda-joyeria dialog.joy-lightbox::backdrop {
+  background: transparent;
+  backdrop-filter: none;
+}
+/* Velo del menú lateral: 35 % del tono de la tienda y 8 px de desenfoque, como el de la referencia (medido: 0,35 y blur(8px)). */
+.tienda-joyeria dialog.joy-menu::backdrop {
+  background: rgb(30 25 20 / 0.35);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tienda-joyeria dialog.joy-menu {
+    translate: -100% 0;
+    transition:
+      translate 0.3s ease,
+      overlay 0.3s allow-discrete,
+      display 0.3s allow-discrete;
+  }
+  .tienda-joyeria dialog.joy-menu[open] {
+    translate: 0 0;
+  }
+  .tienda-joyeria dialog.joy-menu::backdrop {
+    opacity: 0;
+    transition:
+      opacity 0.2s ease-out,
+      overlay 0.3s allow-discrete,
+      display 0.3s allow-discrete;
+  }
+  .tienda-joyeria dialog.joy-menu[open]::backdrop {
+    opacity: 1;
+  }
+  .tienda-joyeria dialog.joy-busqueda {
+    opacity: 0;
+    scale: 0.98;
+    transition:
+      opacity 0.19s ease-out,
+      scale 0.19s ease-out,
+      overlay 0.19s allow-discrete,
+      display 0.19s allow-discrete;
+  }
+  .tienda-joyeria dialog.joy-busqueda[open] {
+    opacity: 1;
+    scale: 1;
+  }
+  .tienda-joyeria dialog.joy-lightbox[open] {
+    animation: joy-fundido 0.2s ease-out both;
+  }
+  @starting-style {
+    .tienda-joyeria dialog.joy-menu[open] {
+      translate: -100% 0;
+    }
+    .tienda-joyeria dialog.joy-menu[open]::backdrop {
+      opacity: 0;
+    }
+    .tienda-joyeria dialog.joy-busqueda[open] {
+      opacity: 0;
+      scale: 0.98;
+    }
+  }
+}
+
+/* ----- Portada: pantalla completa, fija arriba mientras el contenido («cortina») sube sobre ella. ----- */
+.tienda-joyeria .joy-hero-fijo {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  min-height: max(560px, 100svh);
+  overflow: hidden;
+}
+.tienda-joyeria .joy-cortina {
+  position: relative;
+  z-index: 10;
+  background-color: var(--color-ink);
+  box-shadow: 0 -12px 28px rgb(42 37 33 / 0.13);
+}
+.tienda-joyeria .joy-cortina-plana {
+  background-color: var(--color-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Sin movimiento: la portada no queda fija (no hay cortina ni velo que se mueva con el scroll). */
+  .tienda-joyeria .joy-hero-fijo {
+    position: relative;
+    height: 80svh;
+    min-height: 480px;
+  }
+}
+/* Velo de la portada: el texto blanco debe leerse (AA) sobre la foto del negocio, no solo sobre una foto oscura; medido con el contraste real por píxel. */
+.tienda-joyeria .joy-hero-velo {
+  background-image: linear-gradient(to bottom, rgb(42 28 18 / 0.82) 0%, rgb(42 28 18 / 0.58) 36%, rgb(42 28 18 / 0.16) 62%, transparent 78%);
+}
+@media (min-width: 768px) {
+  .tienda-joyeria .joy-hero-velo {
+    background-image: linear-gradient(to right, rgb(42 28 18 / 0.8) 0%, rgb(42 28 18 / 0.5) 40%, transparent 74%);
+  }
+}
+/* Texto de la portada: con movimiento permitido entra escalonado; si no, se ve de una vez. */
+.tienda-joyeria .joy-linea {
+  width: 4rem;
+}
+.tienda-joyeria .joy-titulo-brillo {
+  color: inherit;
+}
+
+/* Vidrio esmerilado: botones sobre la foto (portada, mayoristas, «Agregar al carrito»). */
+.tienda-joyeria .joy-cristal {
+  color: #fff;
+  -webkit-backdrop-filter: blur(14px) saturate(140%) brightness(0.55);
+  backdrop-filter: blur(14px) saturate(140%) brightness(0.55);
+  text-shadow: 0 1px 6px rgb(0 0 0 / 0.45);
+  /* Tinte humeado (no blanco): el texto blanco debe leerse sobre cualquier foto, también sobre las claras (contraste AA). */
+  background-color: rgb(42 37 33 / 0.6);
+  border: 1px solid rgb(255 255 255 / 0.42);
+  box-shadow:
+    0 8px 32px rgb(0 0 0 / 0.3),
+    inset 0 1px rgb(255 255 255 / 0.28);
+  transition:
+    background-color 0.3s,
+    border-color 0.3s,
+    box-shadow 0.3s,
+    transform 0.15s;
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-cristal:hover {
+    background-color: rgb(42 37 33 / 0.52);
+    border-color: rgb(255 255 255 / 0.6);
+    box-shadow:
+      0 10px 38px rgb(0 0 0 / 0.34),
+      inset 0 1px rgb(255 255 255 / 0.36);
+  }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .tienda-joyeria .joy-cristal {
+    background-color: rgb(42 37 33 / 0.55);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .tienda-joyeria .joy-cristal {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: rgb(42 37 33 / 0.62);
+  }
+}
+.tienda-joyeria .joy-cristal:focus-visible {
+  outline-color: #fff;
+}
+
+/* Botones de contorno (ver todo, paginación, combos) y enlaces de texto con flecha. */
+.tienda-joyeria .joy-boton-linea {
+  color: var(--color-fg);
+  border-color: color-mix(in srgb, var(--color-fg) 35%, transparent);
+  transition:
+    background-color 0.3s,
+    border-color 0.3s,
+    color 0.3s,
+    transform 0.15s;
+}
+@media (hover: hover) {
+  .tienda-joyeria a.joy-boton-linea:hover {
+    border-color: var(--tienda-oro);
+    color: var(--tienda-oro);
+    background-color: var(--tienda-oro-suave);
+  }
+}
+.tienda-joyeria .joy-enlace-texto {
+  font-weight: 500;
+  transition: color 0.3s;
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-enlace-texto:hover {
+    color: var(--tienda-oro-hover);
+  }
+}
+
+/* Banda de mayoristas: espresso con un resplandor dorado y filetes. */
+.tienda-joyeria .joy-mayoristas {
+  background-color: var(--joy-espresso);
+}
+.tienda-joyeria .joy-mayoristas-fondo {
+  background-image:
+    radial-gradient(60% 80% at 50% 0%, rgb(181 141 74 / 0.28) 0%, transparent 70%),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.04), transparent 30%, rgb(0 0 0 / 0.25));
+}
+
+/* Pie: filete dorado que se desvanece en los extremos. */
+.tienda-joyeria .joy-filete {
+  height: 1px;
+  width: 100%;
+  background-image: linear-gradient(to right, transparent, color-mix(in srgb, var(--joy-oro) 60%, transparent), transparent);
+}
+
+/* ----- Tarjetas de producto y de categoría ----- */
+.tienda-joyeria .joy-foto img,
+.tienda-joyeria .joy-cat-foto {
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* La foto de la categoría crece más despacio que la del producto: en la referencia la categoría usa 0,6 s con ease-out (y el producto, 0,5 s). */
+.tienda-joyeria .joy-cat-foto {
+  transition: transform 0.6s cubic-bezier(0, 0, 0.2, 1);
+}
+.tienda-joyeria .joy-cat-velo {
+  background-image: linear-gradient(to top, rgb(30 20 12 / 0.72) 0%, rgb(30 20 12 / 0.12) 45%, transparent 70%);
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .tienda-joyeria .joy-tarjeta:hover .joy-foto img,
+  .tienda-joyeria .joy-cat:hover .joy-cat-foto {
+    transform: scale(1.05);
+  }
+}
+/* La referencia sobre la foto (módulo «marca_referencia», componente compartido): en esta tienda lleva un fondo más firme para que se lea también sobre las fotos claras (AA); el archivo de la foto no cambia. */
+.tienda-joyeria .joy-ref {
+  background-color: rgb(0 0 0 / 0.62);
+}
+/* La píldora «Agregar al carrito»: en pantallas con mouse aparece al pasar o enfocar (0,2 s); en las táctiles siempre se ve (no hay «pasar el mouse»). */
+.tienda-joyeria .joy-pildora {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.2s ease-out,
+    transform 0.2s ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .tienda-joyeria .joy-pildora {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  .tienda-joyeria .joy-tarjeta:hover .joy-pildora,
+  .tienda-joyeria .joy-tarjeta:focus-within .joy-pildora {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-pildora {
+    transition: none;
+  }
+}
+
+/* Flechas del carrusel de categorías. */
+.tienda-joyeria .joy-flecha {
+  transition:
+    background-color 0.3s,
+    color 0.3s,
+    transform 0.15s;
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-flecha:hover {
+    background-color: var(--tienda-oro-suave);
+    color: var(--tienda-oro);
+  }
+}
+
+/* Columna de categorías del listado y chips del celular. */
+.tienda-joyeria .joy-cat-lateral {
+  display: block;
+  border-left: 2px solid transparent;
+  padding: 0.4rem 0 0.4rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-mist);
+  transition:
+    color 0.3s,
+    border-color 0.3s;
+}
+.tienda-joyeria .joy-cat-lateral-activa {
+  border-left-color: var(--joy-oro);
+  font-weight: 500;
+  color: var(--color-fg);
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-cat-lateral:hover {
+    color: var(--tienda-oro);
+  }
+}
+.tienda-joyeria .joy-chip {
+  flex-shrink: 0;
+  border: 1px solid var(--color-edge);
+  border-radius: 9999px;
+  padding: 0.4rem 1rem;
+  font-size: 0.875rem;
+  color: var(--color-mist);
+  background-color: var(--color-card);
+  transition:
+    background-color 0.3s,
+    border-color 0.3s,
+    color 0.3s;
+}
+.tienda-joyeria .joy-chip-activo {
+  border-color: var(--tienda-oro);
+  background-color: var(--tienda-oro);
+  font-weight: 500;
+  color: #fff;
+}
+.tienda-joyeria .joy-miniatura {
+  transition:
+    border-color 0.3s,
+    opacity 0.3s,
+    box-shadow 0.3s;
+}
+
+/* ----- Movimiento permitido: entradas, brillo, filete, destellos y aparición al hacer scroll. ----- */
+@keyframes joy-ent {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes joy-brillo {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+@keyframes joy-linea {
+  from {
+    width: 0;
+  }
+  to {
+    width: 4rem;
+  }
+}
+@keyframes joy-destello {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    opacity: 0.6;
+    transform: translateY(-14px) rotate(180deg);
+  }
+}
+@keyframes joy-fundido {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Los destellos solo existen con movimiento permitido. */
+.tienda-joyeria .joy-destellos {
+  display: none;
+}
+.tienda-joyeria .joy-destello {
+  background: radial-gradient(circle, var(--joy-oro) 0%, transparent 70%);
+  opacity: 0.3;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tienda-joyeria .joy-destellos {
+    display: block;
+  }
+  .tienda-joyeria .joy-destello {
+    will-change: transform;
+    animation: joy-destello ease-in-out infinite;
+  }
+  /* Entrada escalonada de la portada: 28 px → 0 y 0 → 1 en 0,6 s con la curva de la referencia; `--retardo` escalona cada elemento. */
+  .tienda-joyeria .joy-ent {
+    animation: joy-ent 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: var(--retardo, 0s);
+  }
+  /* Brillo dorado UNA sola vez sobre el título (2,5 s, tras 0,6 s). Solo donde el navegador sabe recortar el fondo al texto. */
+  @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+    .tienda-joyeria .joy-titulo-brillo {
+      color: transparent;
+      background: linear-gradient(100deg, #faf8f5 30%, #e8d5b0 45%, #faf8f5 60%) 0 0 / 200%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      animation: joy-brillo 2.5s ease-out 0.6s forwards;
+    }
+  }
+  /* El filete dorado crece de 0 a 4 rem (0,8 s). Mismos fotogramas y duración que en la referencia, pero con el retardo medido contra el TEXTO: allí el reloj de CSS (1,4 s) arranca al
+     insertar el DOM y la entrada del texto la mueve JS más tarde, así que el filete empieza entre 0,4 y 0,7 s después del título y a la vez que el botón. Aquí texto y filete comparten
+     reloj (el título entra a 0,15 s y el botón a 0,75 s): 0,8 s deja el filete en el mismo lugar de la secuencia. */
+  .tienda-joyeria .joy-linea {
+    width: 0;
+    animation: joy-linea 0.8s ease-out 0.8s forwards;
+  }
+  /* Aparición al hacer scroll (componente Revelar): 20 px → 0 y 0 → 1 en 0,6 s; las tarjetas de la fila entran escalonadas (0,4 s, +70 ms cada una). Con las curvas ajustadas sobre
+     la referencia: el contenedor es ease-out de 590 ms y las tarjetas, ease-out de 390 ms con ≈ 68 ms por posición. */
+  .tienda-joyeria .tienda-aparece {
+    animation: tienda-revelar 600ms ease-out both;
+  }
+  .tienda-joyeria .tienda-aparece .joy-item {
+    animation: tienda-revelar 400ms ease-out both;
+    animation-delay: calc(var(--i, 0) * 70ms);
+  }
+}
+@media (forced-colors: active) {
+  .tienda-joyeria .joy-titulo-brillo {
+    background: none;
+    color: CanvasText;
+    -webkit-text-fill-color: currentColor;
+  }
+}

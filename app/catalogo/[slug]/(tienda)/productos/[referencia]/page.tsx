@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { FichaProducto } from "@/components/catalogo-publico/tienda/FichaProducto";
+import { FichaProductoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FichaProductoJoyeria";
 import { cargarProducto, cargarTienda } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
+import { joyeriaOf, storefrontConfigFor } from "@/lib/catalogo/vitrina";
 
 // Ficha pública de un producto (detal): /catalogo/{slug}/productos/{referencia}.
 // La MISMA proyección pública del backend (referencia -> producto real), sin
@@ -27,5 +29,9 @@ export default async function ProductoPage({ params }: Props) {
   const [tienda, producto] = await Promise.all([cargarTienda(slug), cargarProducto(slug, referencia)]);
   if (!tienda || !producto) notFound();
   const basePath = retailPath(tienda.slug);
+  // Tema "joyeria" (Bloque 30): otra composición de la MISMA ficha (mismos datos y mismas acciones).
+  if (joyeriaOf(storefrontConfigFor(tienda.slug))) {
+    return <FichaProductoJoyeria producto={producto} categorias={tienda.categories} basePath={basePath} listPath={`${basePath}?todo=1`} />;
+  }
   return <FichaProducto producto={producto} categorias={tienda.categories} basePath={basePath} listPath={`${basePath}?todo=1`} />;
 }

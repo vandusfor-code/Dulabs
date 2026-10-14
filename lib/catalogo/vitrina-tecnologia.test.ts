@@ -1,6 +1,7 @@
 /**
  * Vitrina de TECNOLOGÍA de Aquí Sí Lo Compras (Home móvil): lo puro. Qué negocio usa qué tema, el lockup de la marca, el icono de cada categoría REAL,
- * el enlace de los banners y la etiqueta de disponibilidad de las tarjetas. Delacour (y cualquier negocio sin configurar) conserva la vitrina clásica.
+ * el enlace de los banners y la etiqueta de disponibilidad de las tarjetas. Los negocios sin configurar conservan la vitrina clásica; Delacour usa el tema "joyeria" desde el
+ * Bloque 30 (sus pruebas, en joyeria.test.ts).
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -35,13 +36,14 @@ describe("tema de la vitrina: solo Aquí Sí Lo Compras usa el de tecnología", 
     assert.equal(tecnologiaOf({ tecnologia: CONTENIDO }), null, "con el tema clásico el contenido de tecnología no se usa");
   });
 
-  it("por publicación: ASLC usa tecnología; Delacour y los negocios sin configurar, la vitrina clásica de siempre", () => {
+  it("por publicación: ASLC usa tecnología; Delacour, joyería (Bloque 30); los negocios sin configurar, la vitrina clásica de siempre", () => {
     assert.equal(temaDe(storefrontConfigFor("aqui-si-lo-compras")), "tecnologia");
-    assert.equal(temaDe(storefrontConfigFor("delacour")), "clasico");
+    assert.equal(temaDe(storefrontConfigFor("delacour")), "joyeria");
     assert.equal(temaDe(storefrontConfigFor("otro-negocio-cualquiera")), "clasico");
     assert.deepEqual(storefrontConfigFor("otro-negocio-cualquiera"), {});
-    assert.equal(storefrontConfigFor("delacour").tema, undefined, "Delacour no declara tema: sigue exactamente como estaba");
-    assert.equal(storefrontConfigFor("delacour").tecnologia, undefined);
+    assert.equal(storefrontConfigFor("delacour").tema, "joyeria");
+    assert.equal(storefrontConfigFor("delacour").tecnologia, undefined, "Delacour no usa el contenido del tema de tecnología");
+    assert.equal(storefrontConfigFor("aqui-si-lo-compras").joyeria, undefined, "ASLC no usa el contenido del tema de joyería");
   });
 
   it("el contenido de ASLC es consistente: iconos y artes del conjunto cerrado, banners con una búsqueda real y sin datos comerciales inventados", () => {
