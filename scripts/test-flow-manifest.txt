@@ -639,3 +639,5 @@ components/catalogo-publico/tienda/joyeria/filtros-joyeria.dom.test.tsx
 lib/catalogo/inicio-video.test.ts
 components/catalogo-publico/tienda/joyeria/inicio-video.test.tsx
 components/catalogo-publico/tienda/joyeria/portada-video.dom.test.tsx
+# Fuentes propias (lib/fonts/): la compilación no depende de Google Fonts. Ningún código usa next/font/google, cada archivo declarado existe y es un woff2 liviano, no sobra ninguno y la carpeta documenta su origen y su licencia.
+lib/fuentes-propias.test.ts
