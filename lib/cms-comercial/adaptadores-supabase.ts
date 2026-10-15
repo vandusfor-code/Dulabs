@@ -50,6 +50,11 @@ export function crearPuertoCatalogoSupabase(supabase: SupabaseClient): PuertoCat
       const publicacion = await repo.getPublication(tenantId);
       return publicacion?.published ? retailPath(publicacion.slug) : null;
     },
+
+    async tiendaPublica(tenantId) {
+      const publicacion = await repo.getPublication(tenantId);
+      return publicacion?.published ? { slug: publicacion.slug, nombre: publicacion.publicName } : null;
+    },
   };
 }
 

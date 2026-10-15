@@ -1,8 +1,8 @@
 /**
  * CMS comercial — CONTRATO COMPARTIDO (tipos y constantes). PURO.
  *
- * El CMS administra contenido comercial ESTRUCTURADO de un negocio (portada y página principal, ofertas, combos, campañas y contenido como preguntas
- * frecuentes o políticas) con un ciclo único: BORRADOR → VALIDACIÓN → PUBLICAR → VERSIÓN ACTIVA (+ historial y restauración). Lo único que ven la
+ * El CMS administra contenido comercial ESTRUCTURADO de un negocio (portada y página principal, pie de página, páginas propias de la tienda como la política de privacidad, ofertas, combos,
+ * campañas y contenido como preguntas frecuentes o políticas para ARIA) con un ciclo único: BORRADOR → VALIDACIÓN → PUBLICAR → VERSIÓN ACTIVA (+ historial y restauración). Lo único que ven la
  * tienda, el carrito/pedido y ARIA es lo PUBLICADO, vigente y aplicable al canal del cliente; los borradores solo los lee el editor del Dashboard.
  *
  * Las claves de los contenidos (JSON) van en español y snake_case, como el resto de configuraciones jsonb del proyecto (`negocio.pedido.minimo_mayorista`).
@@ -12,7 +12,7 @@ import type { Rol } from "@/lib/team";
 /** Módulo por negocio (dulabs_tenant_modulos). Sin él, el CMS no existe para el negocio: ni API, ni menú, ni lectura publicada. */
 export const CMS_MODULE = "cms_comercial" as const;
 
-export const TIPOS_ENTIDAD = ["home", "oferta", "combo", "campana", "contenido"] as const;
+export const TIPOS_ENTIDAD = ["home", "oferta", "combo", "campana", "contenido", "pie", "pagina"] as const;
 export type TipoEntidad = (typeof TIPOS_ENTIDAD)[number];
 
 /**
@@ -65,6 +65,22 @@ export const ETIQUETAS_TEMA: Readonly<Record<TemaContenido, string>> = {
 /** Secciones que puede mostrar la página principal (lista cerrada: la tienda sabe pintar cada una). */
 export const SECCIONES_HOME = ["portada", "categorias", "destacados", "banner", "ofertas", "combos", "campana"] as const;
 export type SeccionHome = (typeof SECCIONES_HOME)[number];
+
+/** Redes sociales que puede mostrar el pie de página (lista cerrada: la tienda sabe pintar cada icono y comprueba que el enlace sea del dominio de esa red). */
+export const REDES_SOCIALES = ["instagram", "tiktok", "facebook", "youtube", "x", "pinterest", "linkedin", "telegram", "whatsapp"] as const;
+export type RedSocial = (typeof REDES_SOCIALES)[number];
+
+export const ETIQUETAS_RED: Readonly<Record<RedSocial, string>> = {
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  facebook: "Facebook",
+  youtube: "YouTube",
+  x: "X (Twitter)",
+  pinterest: "Pinterest",
+  linkedin: "LinkedIn",
+  telegram: "Telegram",
+  whatsapp: "WhatsApp (canal o grupo)",
+};
 
 /** Quién ejecuta una acción del CMS (siempre sale de la sesión autenticada y de la membresía; nunca del cuerpo de la petición). */
 export interface ActorCms {
@@ -171,7 +187,8 @@ export interface ResultadoValidacion {
 
 export function nombreDeEntidad(tipo: TipoEntidad, contenido: Record<string, unknown> | null | undefined): string {
   if (tipo === "home") return "Página principal";
+  if (tipo === "pie") return "Pie de página";
   const c = contenido ?? {};
-  const valor = tipo === "contenido" ? c.titulo : c.nombre;
+  const valor = tipo === "contenido" || tipo === "pagina" ? c.titulo : c.nombre;
   return typeof valor === "string" && valor.trim() ? valor.trim() : "Sin nombre";
 }

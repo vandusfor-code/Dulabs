@@ -12,10 +12,13 @@ import { Archive, ArrowLeft, ArchiveRestore, Check, Eye, Pause, Play, Save, Send
 import { useI18n } from "@/lib/i18n";
 import type { Problema, TipoEntidad } from "@/lib/cms-comercial/contrato";
 import type { CmsClientError, EntidadDetalle } from "@/lib/cms-comercial-client";
+import { rutaPagina } from "@/lib/cms-comercial/pagina";
 import { useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { mismoContenido, poner as ponerEn, type Draft } from "@/components/dashboard/tienda/borrador";
 import { useTienda } from "@/components/dashboard/tienda/contexto";
 import { NOMBRES_TIPO, chipsDe, fechaHora, resumirCambios } from "@/components/dashboard/tienda/formato";
+import { FormPagina } from "@/components/dashboard/tienda/formulario-pagina";
+import { FormPie } from "@/components/dashboard/tienda/formulario-pie";
 import { FormCampana, FormCombo, FormContenido, FormHome, FormOferta, type FormProps } from "@/components/dashboard/tienda/formularios";
 import { ListaCambios, PanelHistorial, PanelProblemas, PanelVersiones } from "@/components/dashboard/tienda/paneles";
 import { PanelPrevia } from "@/components/dashboard/tienda/previas";
@@ -27,6 +30,8 @@ const FORMULARIOS: Record<TipoEntidad, (p: FormProps) => React.ReactNode> = {
   combo: FormCombo,
   campana: FormCampana,
   contenido: FormContenido,
+  pie: FormPie,
+  pagina: FormPagina,
 };
 
 type Ocupado = "guardar" | "revisar" | "publicar" | "estado" | null;
@@ -265,7 +270,7 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
   const problemas: Problema[] = validacion ? [...validacion.errores, ...validacion.advertencias] : [];
   const trabajando = ocupado !== null;
   const nombre = detalle.nombre;
-  const claveVisible = tipo !== "home" ? detalle.clave : null;
+  const claveVisible = tipo !== "home" && tipo !== "pie" ? detalle.clave : null;
 
   const estadoGuardado = ocupado === "guardar" ? t("Guardando…", "Saving…") : sucio ? t("Cambios sin guardar", "Unsaved changes") : detalle.tieneCambios ? t("Borrador guardado · sin publicar", "Draft saved · not published") : haGuardado ? t("Todo guardado", "All saved") : "";
 
@@ -408,7 +413,15 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
                   <dt className="text-mist">{t("Última modificación", "Last modified")}</dt>
                   <dd className="text-right text-fg">{fechaHora(detalle.updatedAt)}</dd>
                 </div>
-                {claveVisible && (
+                {claveVisible && tipo === "pagina" && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-mist" title={t("La dirección de la página dentro de tu tienda. No cambia aunque cambies el título.", "The address of the page inside your store. It doesn't change if you rename it.")}>
+                      {t("Dirección", "Address")}
+                    </dt>
+                    <dd className="break-all text-right font-mono text-[12px] text-fg">{rutaPagina("", claveVisible)}</dd>
+                  </div>
+                )}
+                {claveVisible && tipo !== "pagina" && (
                   <div className="flex justify-between gap-3">
                     <dt className="text-mist" title={t("El código que usan los enlaces y ARIA. No cambia aunque cambies el nombre.", "The code used by links and ARIA. It doesn't change if you rename it.")}>
                       {t("Código", "Code")}
@@ -417,6 +430,11 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
                   </div>
                 )}
               </dl>
+              {tipo === "pagina" && detalle.estado === "publicada" && !detalle.archivada && contexto?.rutaTienda && (
+                <a href={rutaPagina(contexto.rutaTienda, detalle.clave)} target="_blank" rel="noopener noreferrer" className="inline-block text-sm text-fg underline underline-offset-2 hover:text-lime">
+                  {t("Ver la página en mi tienda", "View the page in my store")}
+                </a>
+              )}
               {canWrite && (
                 <div className="flex flex-wrap gap-2 pt-1">
                   {detalle.archivada ? (

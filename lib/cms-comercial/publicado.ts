@@ -32,6 +32,10 @@ export interface AssetPublicoCms {
 export interface InstantaneaCms {
   tenantId: string;
   home: PublicadaCms<"home"> | null;
+  /** El pie de página de la tienda (uno por negocio). */
+  pie: PublicadaCms<"pie"> | null;
+  /** Las páginas propias de la tienda (política de privacidad, términos…) que hoy están publicadas. */
+  paginas: readonly PublicadaCms<"pagina">[];
   ofertas: readonly PublicadaCms<"oferta">[];
   combos: readonly PublicadaCms<"combo">[];
   campanas: readonly PublicadaCms<"campana">[];
@@ -40,4 +44,4 @@ export interface InstantaneaCms {
 }
 
 /** Instantánea sin nada publicado (negocio con el CMS encendido pero sin contenido). */
-export const instantaneaVacia = (tenantId: string): InstantaneaCms => ({ tenantId, home: null, ofertas: [], combos: [], campanas: [], contenidos: [], assets: new Map() });
+export const instantaneaVacia = (tenantId: string): InstantaneaCms => ({ tenantId, home: null, pie: null, paginas: [], ofertas: [], combos: [], campanas: [], contenidos: [], assets: new Map() });

@@ -7,6 +7,8 @@ import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
 import type { OpcionesPaginaMayoristas } from "@/lib/cms-comercial/pagina-mayoristas";
 import { cargarPaginaMayoristas as cargarPaginaMayoristasPublica } from "@/lib/cms-comercial/pagina-mayoristas-publica";
+import { cargarPaginaPublica } from "@/lib/cms-comercial/pagina-publica";
+import { cargarPiePublico } from "@/lib/cms-comercial/pie-publico";
 import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
 import { crearDepsPublicasCms } from "@/lib/cms-comercial/publico-supabase";
 import type { ContextoVitrina } from "@/lib/cms-comercial/vitrina";
@@ -46,6 +48,18 @@ export const cargarVitrinaInicio = (registro: CatalogStorefrontConfig, ctx: Omit
  * cualquier problema devuelve null y la página se dibuja con el texto de la tienda y su botón de WhatsApp.
  */
 export const cargarPaginaMayoristas = (slug: string, opciones: OpcionesPaginaMayoristas) => cargarPaginaMayoristasPublica(crearDepsPublicasCms(), slug, opciones);
+
+/**
+ * Pie de página publicado de la tienda (tema "joyeria") y los códigos de sus páginas propias publicadas: lo que la administradora publicó en el CMS. Sale en todas las pantallas, así que NUNCA lanza ni
+ * tarda de más: sin CMS, sin pie publicado, ante un error o pasados 2 s no hay pie (`pie: null`) ni páginas y la tienda dibuja el pie de siempre.
+ */
+export const cargarPieTienda = (slug: string) => cargarPiePublico(crearDepsPublicasCms(), slug);
+
+/**
+ * Una página propia publicada de la tienda (política de privacidad, términos…): /catalogo/{slug}/p/{clave}. NUNCA lanza: `ok` con la página, `no_existe` (la ruta responde 404) o `error` (no se pudo
+ * leer o tardó más de 2,5 s; la tienda lo dice en vez de fingir que la página no existe).
+ */
+export const cargarPaginaTienda = cache((slug: string, clave: string) => cargarPaginaPublica(crearDepsPublicasCms(), slug, clave));
 
 /** Inicio con lo que el CMS eligió (destacados, categorías, productos de la campaña). Sin opciones, igual que `cargarInicio`. */
 export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, opciones);

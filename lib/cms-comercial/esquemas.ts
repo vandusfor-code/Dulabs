@@ -13,7 +13,8 @@
  */
 import { z } from "zod";
 import { isReference } from "@/lib/catalogo/domain";
-import { AUDIENCIAS, LIMITE_JSON_CONTENIDO, MODALIDADES, SECCIONES_HOME, TEMAS_CONTENIDO, type TipoEntidad } from "@/lib/cms-comercial/contrato";
+import { AUDIENCIAS, ETIQUETAS_RED, LIMITE_JSON_CONTENIDO, MODALIDADES, REDES_SOCIALES, SECCIONES_HOME, TEMAS_CONTENIDO, type TipoEntidad } from "@/lib/cms-comercial/contrato";
+import { esCorreoValido, esTelefonoValido, esUrlHttpsSegura, numeroDeLineas, perteneceARed } from "@/lib/cms-comercial/enlaces";
 import { contieneHtml, normalizarTexto } from "@/lib/cms-comercial/texto-seguro";
 import { esFechaLocalValida, intervaloDe } from "@/lib/cms-comercial/tiempo";
 
@@ -270,6 +271,121 @@ export const contenidoSchema = z.strictObject({
 export type Contenido = z.infer<typeof contenidoSchema>;
 
 // ---------------------------------------------------------------------------
+// Pie de página (uno por negocio)
+// ---------------------------------------------------------------------------
+
+/** Una dirección web externa. Las reglas de seguridad (solo https, sin usuario ni puerto, dominio público de verdad…) viven en enlaces.ts. */
+const urlExterna = (etiqueta: string) =>
+  z
+    .string({ error: (iss) => (iss.input === undefined ? `${etiqueta} es obligatorio.` : `${etiqueta} debe ser un texto.`) })
+    .refine(esUrlHttpsSegura, { message: `${etiqueta} debe ser una dirección web completa que empiece por https:// (por ejemplo https://www.mitienda.com).` });
+
+/**
+ * A dónde lleva un enlace del pie: un destino de la propia tienda (lista cerrada: la tienda sabe construir cada uno y solo lo muestra si existe hoy) o una dirección externa
+ * segura. No hay rutas libres dentro de la tienda.
+ */
+export const destinoPieSchema = z.discriminatedUnion("tipo", [
+  z.strictObject({ tipo: z.literal("inicio") }),
+  z.strictObject({ tipo: z.literal("catalogo") }),
+  z.strictObject({ tipo: z.literal("mayoristas") }),
+  z.strictObject({ tipo: z.literal("categoria"), categoria_id: uuid("La categoría") }),
+  z.strictObject({ tipo: z.literal("whatsapp") }),
+  /** Una página que la administradora escribió en su tienda (política de privacidad, términos…): se identifica por su código y solo se muestra si hoy está publicada. */
+  z.strictObject({ tipo: z.literal("pagina"), clave: claveSchema }),
+  z.strictObject({ tipo: z.literal("externo"), url: urlExterna("La dirección del enlace") }),
+]);
+export type DestinoPie = z.infer<typeof destinoPieSchema>;
+
+export const enlacePieSchema = z.strictObject({ texto: texto("El texto del enlace", 40, 2), destino: destinoPieSchema });
+
+export const columnaPieSchema = z.strictObject({
+  titulo: texto("El título de la columna", 30, 2),
+  enlaces: z.array(enlacePieSchema).min(1, { message: "Una columna necesita al menos un enlace." }).max(10, { message: "Máximo 10 enlaces por columna." }),
+});
+
+export const redPieSchema = z
+  .strictObject({ red: z.enum(REDES_SOCIALES, { message: "Elige una red social de la lista." }), url: urlExterna("El enlace de la red social") })
+  .superRefine((r, ctx) => {
+    if (!perteneceARed(r.red, r.url)) ctx.addIssue({ code: "custom", path: ["url"], message: `El enlace no es de ${ETIQUETAS_RED[r.red]}: copia la dirección de tu perfil en esa red.` });
+  });
+
+export const pieSchema = z.strictObject({
+  /** Una frase bajo el nombre de la marca. */
+  descripcion: texto("La descripción", 240).optional(),
+  /** Columnas de enlaces (Navegar, Legal…), en el orden en que se pintan. */
+  columnas: z.array(columnaPieSchema).max(3, { message: "Máximo 3 columnas de enlaces." }),
+  /** La columna de categorías sale sola, del catálogo: aquí solo se decide si se muestra. */
+  mostrar_categorias: z.boolean({ message: "Indica si se muestran las categorías." }),
+  contacto: z
+    .strictObject({
+      titulo: texto("El título del contacto", 30, 2).optional(),
+      /** El enlace «Escríbenos por WhatsApp» usa el número de la tienda: nunca se escribe aquí. */
+      whatsapp: z.boolean({ message: "Indica si se muestra el contacto por WhatsApp." }),
+      email: z.string({ message: "El correo debe ser un texto." }).refine(esCorreoValido, { message: "El correo no tiene un formato válido (por ejemplo ventas@mitienda.com)." }).optional(),
+      telefono: z.string({ message: "El teléfono debe ser un texto." }).refine(esTelefonoValido, { message: "El teléfono solo puede llevar números, espacios, +, guiones y paréntesis (por ejemplo +57 300 123 4567)." }).optional(),
+      direccion: texto("La dirección", 200).refine((s) => numeroDeLineas(s) <= 3, { message: "La dirección admite hasta 3 líneas." }).optional(),
+      horario: texto("El horario", 120).optional(),
+    })
+    .optional(),
+  redes: z
+    .array(redPieSchema)
+    .max(8, { message: "Máximo 8 redes sociales." })
+    .refine((r) => sinRepetidos(r.map((x) => x.red)), { message: "Una red social no puede repetirse." }),
+  /** Lo que sigue al «© año» en la línea de derechos. Sin él, «{marca}. Todos los derechos reservados.» */
+  derechos: texto("El texto de derechos", 160).optional(),
+});
+export type Pie = z.infer<typeof pieSchema>;
+
+// ---------------------------------------------------------------------------
+// Página propia de la tienda (política de privacidad, términos y condiciones, cambios y garantías…)
+// ---------------------------------------------------------------------------
+
+/** Topes de una página: lo bastante amplios para una política larga, lo bastante cortos para que ninguna página sea desproporcionada (el borrador entero también está acotado en esquemas: 131.072 caracteres). */
+export const MAX_BLOQUES_PAGINA = 200;
+export const MAX_SUBTITULO_PAGINA = 120;
+export const MAX_PARRAFO_PAGINA = 2000;
+export const MAX_ELEMENTOS_LISTA_PAGINA = 50;
+export const MAX_ELEMENTO_LISTA_PAGINA = 500;
+export const MAX_CARACTERES_PAGINA = 50_000;
+/** Los mensajes de los topes que la administradora puede alcanzar escribiendo (el panel los muestra mientras escribe y la revisión antes de publicar usa los mismos). */
+export const MENSAJE_PAGINA_LARGA = "El texto de la página es demasiado largo (máximo 50.000 caracteres): divídelo en dos páginas.";
+export const MENSAJE_PAGINA_CON_MUCHOS_BLOQUES = `La página admite máximo ${MAX_BLOQUES_PAGINA} bloques (párrafos, subtítulos y listas): divídela en dos páginas.`;
+
+/**
+ * Un bloque de la página: un subtítulo, un párrafo o una lista. TEXTO PLANO: no hay HTML, ni enlaces, ni imágenes dentro de una página (lo que se escribe se muestra tal cual, por lo que no hay
+ * manera de esconder un enlace engañoso en una política). Los saltos de línea de un párrafo se respetan.
+ */
+export const bloquePaginaSchema = z.discriminatedUnion("tipo", [
+  z.strictObject({ tipo: z.literal("subtitulo"), texto: texto("El subtítulo", MAX_SUBTITULO_PAGINA) }),
+  z.strictObject({ tipo: z.literal("parrafo"), texto: texto("El párrafo", MAX_PARRAFO_PAGINA) }),
+  z.strictObject({
+    tipo: z.literal("lista"),
+    items: z
+      .array(texto("El elemento de la lista", MAX_ELEMENTO_LISTA_PAGINA))
+      .min(1, { message: "Una lista necesita al menos un elemento." })
+      .max(MAX_ELEMENTOS_LISTA_PAGINA, { message: `Una lista admite máximo ${MAX_ELEMENTOS_LISTA_PAGINA} elementos.` }),
+  }),
+]);
+export type BloquePagina = z.infer<typeof bloquePaginaSchema>;
+
+/** Cuántos caracteres de texto lleva una página (la suma de todos sus bloques). */
+export const caracteresDePagina = (bloques: readonly BloquePagina[]): number => bloques.reduce((n, b) => n + (b.tipo === "lista" ? b.items.reduce((m, i) => m + i.length, 0) : b.texto.length), 0);
+
+export const paginaSchema = z
+  .strictObject({
+    /** El título de la página: es también lo que dice el enlace del pie si ella no escribe otro. */
+    titulo: texto("El título de la página", 80, 3),
+    bloques: z
+      .array(bloquePaginaSchema)
+      .min(1, { message: "Escribe el texto de la página." })
+      .max(MAX_BLOQUES_PAGINA, { message: MENSAJE_PAGINA_CON_MUCHOS_BLOQUES }),
+  })
+  .superRefine((p, ctx) => {
+    if (caracteresDePagina(p.bloques) > MAX_CARACTERES_PAGINA) ctx.addIssue({ code: "custom", path: ["bloques"], message: MENSAJE_PAGINA_LARGA });
+  });
+export type Pagina = z.infer<typeof paginaSchema>;
+
+// ---------------------------------------------------------------------------
 // Por tipo
 // ---------------------------------------------------------------------------
 
@@ -279,6 +395,8 @@ export interface ContenidoPorTipo {
   combo: Combo;
   campana: Campana;
   contenido: Contenido;
+  pie: Pie;
+  pagina: Pagina;
 }
 
 export const ESQUEMA_POR_TIPO = {
@@ -287,6 +405,8 @@ export const ESQUEMA_POR_TIPO = {
   combo: comboSchema,
   campana: campanaSchema,
   contenido: contenidoSchema,
+  pie: pieSchema,
+  pagina: paginaSchema,
 } as const satisfies Record<TipoEntidad, z.ZodType>;
 
 /** Claves de primer nivel permitidas en el borrador de cada tipo. */
@@ -296,6 +416,8 @@ const CLAVES_PERMITIDAS: Readonly<Record<TipoEntidad, readonly string[]>> = {
   combo: Object.keys(comboSchema.shape),
   campana: Object.keys(campanaSchema.shape),
   contenido: Object.keys(contenidoSchema.shape),
+  pie: Object.keys(pieSchema.shape),
+  pagina: Object.keys(paginaSchema.shape),
 };
 
 // ---------------------------------------------------------------------------

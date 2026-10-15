@@ -76,6 +76,12 @@ export function borradorInicial(tipo: TipoEntidad): Draft {
       return { modalidad: "ambas", prioridad: 0, productos_destacados: [] };
     case "contenido":
       return { tema: "faq", audiencia: "todos", palabras_clave: [], orden: 0 };
+    case "pie":
+      // Solo la estructura vacía: el panel crea el pie con lo que la tienda ya muestra hoy (ver pieInicial en lib/cms-comercial/pie.ts).
+      return { columnas: [], mostrar_categorias: true, redes: [] };
+    case "pagina":
+      // El título lo pone quien la crea (ListaEntidades); el texto se escribe en el editor.
+      return { bloques: [] };
   }
 }
 

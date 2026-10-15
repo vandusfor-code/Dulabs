@@ -5,6 +5,7 @@
  * Perezoso a propósito: el cliente de base de datos se crea al primer uso, DENTRO de quien llama, para que cualquier falla (por ejemplo, una variable de
  * entorno ausente) caiga en su manejo de errores (la tienda usa su vitrina de siempre; la imagen responde 502) y no rompa la página al construir las dependencias.
  */
+import { cache } from "react";
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import { productoParaCombo } from "@/lib/cms-comercial/consulta";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
@@ -24,11 +25,17 @@ function construir() {
   return { supabase, repo, servicio: createPublicCatalogService({ repo }), conPrecios: repositorioConPrecios(supabase) };
 }
 
+/**
+ * El negocio de una tienda publicada, buscado UNA vez por petición del servidor: el pie (que sale en todas las pantallas), la vitrina y la página de mayoristas lo necesitan y comparten la respuesta.
+ * Fuera de un render del servidor `cache` no memoiza (cada llamada pregunta de nuevo).
+ */
+const negocioDeLaTienda = cache((slug: string) => construir().servicio.tenantOf(slug));
+
 export function crearDepsPublicasCms() {
   let base: ReturnType<typeof construir> | null = null;
   const dep = () => (base ??= construir());
   return {
-    tenantDe: (slug: string) => dep().servicio.tenantOf(slug),
+    tenantDe: (slug: string) => negocioDeLaTienda(slug),
     // Lo publicado se lee UNA vez por render: la vitrina, los combos y los precios de la misma página comparten la lectura (lectura-publicada.ts).
     cargar: (tenantId: string) => leerPublicado(dep().supabase, tenantId),
     // La configuración del negocio de ARIA (el mínimo mayorista…): una lectura pequeña por visita a la página de mayoristas.

@@ -77,11 +77,11 @@ export function Campo({ id, etiqueta, ayuda, requerido, error, children }: Pick<
   );
 }
 
-export function CampoTexto({ valor, onCambio, placeholder, tipo = "text", maxLength, inputMode, ...base }: CampoBase & { valor: string; onCambio: (v: string) => void; placeholder?: string; tipo?: string; maxLength?: number; inputMode?: "numeric" | "decimal" | "text" }) {
+export function CampoTexto({ valor, onCambio, onSalir, placeholder, tipo = "text", maxLength, inputMode, ...base }: CampoBase & { valor: string; onCambio: (v: string) => void; /** Al salir del campo (por ejemplo, para completar «@usuario» con la dirección del perfil). */ onSalir?: () => void; placeholder?: string; tipo?: string; maxLength?: number; inputMode?: "numeric" | "decimal" | "text" }) {
   const id = useId();
   return (
     <Campo id={id} {...base}>
-      <input id={id} type={tipo} value={valor} onChange={(e) => onCambio(e.target.value)} placeholder={placeholder} maxLength={maxLength} inputMode={inputMode} disabled={base.disabled} aria-invalid={base.error ? true : undefined} className={cn(inputCls, base.error && "border-red-500/60")} />
+      <input id={id} type={tipo} value={valor} onChange={(e) => onCambio(e.target.value)} onBlur={onSalir} placeholder={placeholder} maxLength={maxLength} inputMode={inputMode} disabled={base.disabled} aria-invalid={base.error ? true : undefined} className={cn(inputCls, base.error && "border-red-500/60")} />
     </Campo>
   );
 }
