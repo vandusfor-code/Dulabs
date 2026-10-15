@@ -214,6 +214,19 @@ export interface AcabadosJoyeria {
   titulo: string;
 }
 
+/**
+ * Página propia de mayoristas (/catalogo/{tienda}/mayoristas). Lo que dice sale de lo PUBLICADO en el CMS con tema «Mayoristas» (las mismas reglas que ARIA; ver lib/cms-comercial/pagina-mayoristas.ts):
+ * aquí solo se decide la forma, nunca los datos. Los códigos son los de las entradas del CMS.
+ */
+export interface PaginaMayoristasJoyeria {
+  /** Entrada que hace de introducción bajo el título. */
+  intro?: string;
+  /** Entradas del tema «Mayoristas» que NO se muestran (p. ej. un texto escrito como instrucción para ARIA, no para clientes). */
+  omitir?: readonly string[];
+  /** Entradas de OTROS temas (envíos, pagos, garantías…) que se suman al final de las preguntas, en este orden. */
+  tambien?: readonly string[];
+}
+
 /** Bloque para compradores mayoristas del tema "joyeria": una invitación a escribir por WhatsApp (sin precios ni condiciones: esas las da una asesora). */
 export interface MayoristasJoyeria {
   etiqueta: string;
@@ -224,6 +237,8 @@ export interface MayoristasJoyeria {
   mensaje: string;
   /** Video que corre detrás del bloque (opcional). */
   video?: VideoAmbiente;
+  /** Si existe, el acceso «Mayorista» (cabecera, menú y pie) lleva a la página propia /mayoristas en vez de bajar al bloque del inicio. */
+  pagina?: PaginaMayoristasJoyeria;
 }
 
 /**
@@ -373,6 +388,8 @@ const REGISTRO: Record<string, CatalogStorefrontConfig> = {
         boton: "Hablar con una asesora",
         mensaje: "Hola, quiero información para comprar al por mayor.",
         video: { horizontal: archivoDelacour("mayoristas", 1280, 576), etiqueta: "Video de compras por mayor", foco: "72% 46%" },
+        // «Venta al por mayor» es la introducción; «Emprendimiento» está escrito como instrucción para ARIA (no para clientes) y no se muestra; envíos, pagos, garantías y cambios son los MISMOS textos del CMS que usa ARIA.
+        pagina: { intro: "venta-al-por-mayor", omitir: ["emprendimiento"], tambien: ["envios", "medios-de-pago", "garantias", "cambios-y-devoluciones"] },
       },
       descripcion: "Diseños únicos para cada momento de tu vida.",
       // Los textos de estos bloques son frases que la marca ya usa en sus propias tarjetas y fotos («Más que joyas, historias que te acompañan», «Pequeños detalles, grandes historias»).

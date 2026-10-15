@@ -9,6 +9,7 @@ import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import { productoParaCombo } from "@/lib/cms-comercial/consulta";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { createPublicCatalogService } from "@/lib/catalogo/service";
+import { crearPuertoVariablesSupabase } from "@/lib/cms-comercial/adaptadores-supabase";
 import type { ProductoParaCombo } from "@/lib/cms-comercial/evaluacion";
 import { leerPublicado } from "@/lib/cms-comercial/lectura-publicada";
 import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
@@ -30,6 +31,8 @@ export function crearDepsPublicasCms() {
     tenantDe: (slug: string) => dep().servicio.tenantOf(slug),
     // Lo publicado se lee UNA vez por render: la vitrina, los combos y los precios de la misma página comparten la lectura (lectura-publicada.ts).
     cargar: (tenantId: string) => leerPublicado(dep().supabase, tenantId),
+    // La configuración del negocio de ARIA (el mínimo mayorista…): una lectura pequeña por visita a la página de mayoristas.
+    negocio: (tenantId: string) => crearPuertoVariablesSupabase(dep().supabase).valores(tenantId),
     abrir: (path: string) => dep().repo.openImage(path),
     /**
      * Los datos reales de los productos de los combos, con el precio EFECTIVO detal (lo que el cliente pagaría hoy por separado: así «precio normal» y «ahorro»

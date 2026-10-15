@@ -4196,3 +4196,67 @@ body {
     border: 2px solid ButtonText;
   }
 }
+
+/* ----- Página «Mayoristas» (/catalogo/{tienda}/mayoristas): portada oscura con el video de fondo, preguntas frecuentes y cierre. ----- */
+
+/* El acceso «Mayorista» de la cabecera, marcado cuando se está en su página (igual que al pasar el mouse por encima). */
+.tienda-joyeria .joy-pildora-nav[aria-current="page"] {
+  border-color: color-mix(in srgb, currentColor 80%, transparent);
+  background-color: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+/* Portada: una pantalla razonable (sin pasarse del alto disponible bajo el cromo fijo) con el contenido centrado. */
+.tienda-joyeria .joy-may-portada {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: min(36rem, calc(100svh - var(--joy-alto-barra) - var(--joy-alto-cab)));
+}
+
+/* Preguntas frecuentes: filas con filete, la pregunta a la izquierda y una flecha que gira al abrir (los `<details>` nativos: se abren con teclado y sin JavaScript). */
+.tienda-joyeria .joy-preguntas {
+  border-top: 1px solid var(--color-edge);
+}
+.tienda-joyeria .joy-pregunta {
+  border-bottom: 1px solid var(--color-edge);
+}
+.tienda-joyeria .joy-pregunta-resumen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 0;
+  cursor: pointer;
+  list-style: none;
+  transition: color 0.3s;
+}
+.tienda-joyeria .joy-pregunta-resumen::-webkit-details-marker {
+  display: none;
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-pregunta-resumen:hover span {
+    color: var(--tienda-oro);
+  }
+}
+.tienda-joyeria .joy-pregunta-resumen:focus-visible {
+  outline: 2px solid var(--tienda-oro);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+.tienda-joyeria .joy-pregunta-flecha {
+  flex: none;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tienda-joyeria .joy-pregunta[open] .joy-pregunta-flecha {
+  transform: rotate(180deg);
+}
+.tienda-joyeria .joy-pregunta-texto {
+  max-width: 42rem;
+  padding-bottom: 1.5rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-pregunta-flecha,
+  .tienda-joyeria .joy-pregunta-resumen {
+    transition: none;
+  }
+}

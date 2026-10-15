@@ -276,6 +276,13 @@ describe("pie joyería", () => {
     assert.ok(!h.includes("wa.me") && !h.includes("Contacto") && !h.includes("#mayoristas"));
   });
 
+  it("el enlace «Mayoristas» lleva a la página propia cuando la tienda la tiene, y al bloque del inicio (como siempre) si no", () => {
+    const conPagina = pie({ mayoristaHref: `${BASE}/mayoristas` });
+    assert.ok(conPagina.includes(`href="${BASE}/mayoristas"`) && !conPagina.includes("#mayoristas"));
+    assert.ok(pie().includes(`href="${BASE}#mayoristas"`));
+    assert.ok(!pie({ mayorista: false, mayoristaHref: `${BASE}/mayoristas` }).includes("/mayoristas"), "sin mayoristas no hay enlace, aunque llegue un destino");
+  });
+
   it("accesibilidad: los títulos de columna son h2 (no se salta de nivel) y el enlace de crédito se distingue por algo más que el color (subrayado)", () => {
     const h = pie();
     assert.equal(cuenta(h, /<h3/g), 0);

@@ -19,6 +19,7 @@ export function PieJoyeria({
   whatsapp,
   descripcion,
   mayorista,
+  mayoristaHref,
 }: {
   marca: { name: string; descriptor?: string };
   basePath: string;
@@ -26,8 +27,10 @@ export function PieJoyeria({
   categorias: CatalogCategory[];
   whatsapp: string | null;
   descripcion?: string;
-  /** Hay bloque de mayoristas en el inicio. */
+  /** Hay mayoristas que mostrar (el enlace «Mayoristas» aparece). */
   mayorista: boolean;
+  /** A dónde lleva el enlace: la página propia o, sin ella, el bloque del inicio (`#mayoristas`, como siempre). */
+  mayoristaHref?: string;
 }) {
   const wa = enlaceWhatsapp(whatsapp);
   return (
@@ -56,7 +59,7 @@ export function PieJoyeria({
               </li>
               {mayorista && (
                 <li>
-                  <Link href={`${basePath}#mayoristas`} className={ENLACE}>
+                  <Link href={mayoristaHref ?? `${basePath}#mayoristas`} className={ENLACE}>
                     Mayoristas
                   </Link>
                 </li>

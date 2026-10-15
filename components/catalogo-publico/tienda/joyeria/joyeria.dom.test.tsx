@@ -12,6 +12,7 @@ import { AgregarAlCarrito } from "@/components/catalogo-publico/tienda/AgregarAl
 import { CarruselCategorias } from "@/components/catalogo-publico/tienda/joyeria/CarruselCategorias";
 import { CromoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/CromoJoyeria";
 import { GaleriaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/GaleriaJoyeria";
+import { NavInferior } from "@/components/catalogo-publico/tienda/NavInferior";
 import { TiendaProvider } from "@/components/catalogo-publico/tienda/TiendaContext";
 import { getCartStore } from "@/lib/catalogo/carrito-store";
 import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
@@ -142,6 +143,68 @@ describe("cromo joyería — estado sobre la portada o vidrio", () => {
       ["Mayorista", `${BASE}#mayoristas`, null],
     ]);
     assert.ok(getByRole("link", { name: "Tienda de prueba, inicio" }));
+  });
+});
+
+describe("cromo joyería — el acceso «Mayorista» con página propia", () => {
+  const PAGINA = `${BASE}/mayoristas`;
+  const conPagina = () => (
+    <CromoJoyeria marca={{ name: "Tienda de prueba", descriptor: "Joyería" }} basePath={BASE} listPath={LISTA} categorias={CATEGORIAS} categoriasHref={`${BASE}#categorias`} anuncios={[]} mayorista mayoristaHref={PAGINA} />
+  );
+  const enlacesDeLaNavegacion = (c: HTMLElement) => [...c.querySelectorAll('nav[aria-label="Menú principal"] a')] as HTMLElement[];
+
+  it("la cabecera lleva a la página propia (no al bloque del inicio) y solo la marca como la actual cuando se está en ella", () => {
+    const fuera = render(conTienda(slugNuevo(), conPagina(), BASE));
+    const pildora = enlacesDeLaNavegacion(fuera.container).find((a) => a.textContent === "Mayorista");
+    assert.equal(pildora?.getAttribute("href"), PAGINA);
+    assert.equal(pildora?.getAttribute("aria-current"), null, "en el inicio no es la página actual");
+    fuera.unmount();
+    const dentro = render(conTienda(slugNuevo(), conPagina(), PAGINA));
+    const enlaces = enlacesDeLaNavegacion(dentro.container);
+    assert.equal(enlaces.find((a) => a.textContent === "Mayorista")?.getAttribute("aria-current"), "page");
+    assert.equal(enlaces.filter((a) => a.getAttribute("aria-current") === "page").length, 1, "solo ese acceso está marcado: ni Inicio ni Catálogo");
+  });
+
+  it("el menú lateral también lleva a la página y la marca como la actual", () => {
+    const { container, getByLabelText } = render(conTienda(slugNuevo(), conPagina(), PAGINA));
+    fireEvent.click(getByLabelText("Abrir menú"));
+    const fila = [...(container.querySelector("dialog.joy-menu") as HTMLElement).querySelectorAll("a")].find((a) => a.textContent === "Mayoristas");
+    assert.equal(fila?.getAttribute("href"), PAGINA);
+    assert.equal(fila?.getAttribute("aria-current"), "page");
+  });
+
+  it("sin la propiedad (una tienda sin página de mayoristas) el acceso sigue bajando al bloque del inicio, como antes, y nunca queda marcado", () => {
+    const { container, getByLabelText } = render(conTienda(slugNuevo(), cromo(), `${BASE}/mayoristas`));
+    const pildora = enlacesDeLaNavegacion(container).find((a) => a.textContent === "Mayorista");
+    assert.equal(pildora?.getAttribute("href"), `${BASE}#mayoristas`);
+    assert.equal(pildora?.getAttribute("aria-current"), null);
+    fireEvent.click(getByLabelText("Abrir menú"));
+    const fila = [...(container.querySelector("dialog.joy-menu") as HTMLElement).querySelectorAll("a")].find((a) => a.textContent === "Mayoristas");
+    assert.equal(fila?.getAttribute("href"), `${BASE}#mayoristas`);
+  });
+});
+
+describe("barra inferior móvil — la página de mayoristas", () => {
+  const PAGINA = `${BASE}/mayoristas`;
+  const barra = (rutasAparte?: readonly string[]) => <NavInferior basePath={BASE} categoriasHref={`${BASE}#categorias`} rutasAparte={rutasAparte} />;
+  const marcadas = (c: HTMLElement) => [...c.querySelectorAll('nav[aria-label="Navegación de la tienda"] a[aria-current="page"]')].map((a) => a.textContent);
+
+  it("en una página aparte (la de mayoristas) ninguna pestaña queda marcada: no es el inicio ni el catálogo", () => {
+    const { container } = render(conTienda(slugNuevo(), barra([PAGINA]), PAGINA));
+    assert.deepEqual(marcadas(container), []);
+  });
+
+  it("el inicio sigue marcando «Inicio» y el catálogo «Categorías»: tener una ruta aparte no cambia eso", () => {
+    const inicio = render(conTienda(slugNuevo(), barra([PAGINA]), BASE));
+    assert.deepEqual(marcadas(inicio.container), ["Inicio"]);
+    inicio.unmount();
+    const catalogo = render(conTienda(slugNuevo(), barra([PAGINA]), BASE, "todo=1"));
+    assert.deepEqual(marcadas(catalogo.container), ["Categorías"]);
+  });
+
+  it("sin rutas aparte (cualquier otra tienda) se comporta como siempre: toda página que no es el inicio marca «Categorías»", () => {
+    const { container } = render(conTienda(slugNuevo(), barra(), PAGINA));
+    assert.deepEqual(marcadas(container), ["Categorías"]);
   });
 });
 
