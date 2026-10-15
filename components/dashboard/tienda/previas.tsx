@@ -7,7 +7,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ImageIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import type { Canal, TipoEntidad } from "@/lib/cms-comercial/contrato";
+import { ETIQUETAS_RED, REDES_SOCIALES, type Canal, type RedSocial, type TipoEntidad } from "@/lib/cms-comercial/contrato";
+import { usuarioDeRed } from "@/lib/cms-comercial/enlaces";
+import { bloquesDeBorrador } from "@/lib/cms-comercial/pagina";
+import { textoDerechos } from "@/lib/cms-comercial/pie";
 import type { Destino, Imagen } from "@/lib/cms-comercial/esquemas";
 import type { MotivoComboNoDisponible } from "@/lib/cms-comercial/evaluacion";
 import { previaCombo, previaContenido, previaOferta, textoAlcance, type ProductoPrevia } from "@/lib/cms-comercial/previa";
@@ -18,6 +21,7 @@ import { leer, type Draft } from "@/components/dashboard/tienda/borrador";
 import { useProductosDe, useTienda } from "@/components/dashboard/tienda/contexto";
 import { NOMBRES_SECCION } from "@/components/dashboard/tienda/formato";
 import { seccionesCompletas } from "@/components/dashboard/tienda/formularios";
+import { usePaginas } from "@/components/dashboard/tienda/usar-paginas";
 import { useUrlImagen } from "@/components/dashboard/tienda/selectores";
 import { Aviso, cn } from "@/components/dashboard/tienda/ui";
 
@@ -387,6 +391,7 @@ function PreviaContenidoUi({ borrador }: { borrador: Draft }) {
   }, [contexto]);
   const previa = useMemo(() => previaContenido(borrador, valores), [borrador, valores]);
   const audiencia = texto(borrador, "audiencia") || "todos";
+  const tema = texto(borrador, "tema");
   return (
     <Marco titulo={t("Así lo recibirá el cliente", "How the customer will receive it")}>
       {!previa.lista ? (
@@ -403,8 +408,189 @@ function PreviaContenidoUi({ borrador }: { borrador: Draft }) {
             {audiencia === "mayorista" ? t("Solo lo recibirán clientes mayoristas.", "Only wholesale customers will receive it.") : audiencia === "detal" ? t("Solo lo recibirán clientes detal.", "Only retail customers will receive it.") : t("Lo recibirá cualquier cliente.", "Any customer will receive it.")}{" "}
             {t("ARIA solo lo usará una vez publicado y vigente.", "ARIA will only use it once published and active.")}
           </p>
+          {tema === "mayoristas" && audiencia !== "mayorista" && (
+            <p className="text-[11px] text-mist/80">{t("Una vez publicado, también aparece como pregunta en la página «Mayoristas» de tu tienda.", "Once published, it also shows as a question on the “Wholesale” page of your store.")}</p>
+          )}
         </>
       )}
+    </Marco>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pie de página
+// ---------------------------------------------------------------------------
+
+type EnlacePrevia = { texto?: string; destino?: { tipo?: string; categoria_id?: string; url?: string; clave?: string } };
+type ColumnaPrevia = { titulo?: string; enlaces?: EnlacePrevia[] };
+
+const objetosPrevia = <T,>(v: unknown): T[] => (Array.isArray(v) ? v.filter((x) => typeof x === "object" && x !== null && !Array.isArray(x)) : []) as T[];
+
+/** El dominio de una dirección escrita (para decir «lleva a delacour.co» sin enseñar toda la dirección). */
+function dominioDe(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function PreviaPie({ borrador }: { borrador: Draft }) {
+  const { t } = useI18n();
+  const { contexto } = useTienda();
+  const paginas = usePaginas();
+  const descripcion = texto(borrador, "descripcion");
+  const columnas = objetosPrevia<ColumnaPrevia>(leer(borrador, "columnas"));
+  const mostrarCategorias = leer(borrador, "mostrar_categorias") !== false;
+  const contacto = leer(borrador, "contacto") as { titulo?: string; whatsapp?: boolean; email?: string; telefono?: string; direccion?: string; horario?: string } | undefined;
+  const redes = objetosPrevia<{ red?: string; url?: string }>(leer(borrador, "redes"));
+  const derechos = texto(borrador, "derechos");
+  const marca = contexto?.tienda?.nombre ?? t("Tu marca", "Your brand");
+
+  const destino = (d: EnlacePrevia["destino"]): string => {
+    switch (d?.tipo) {
+      case "inicio":
+        return t("el inicio", "the home page");
+      case "catalogo":
+        return t("todo el catálogo", "the whole catalog");
+      case "mayoristas":
+        return t("Mayoristas", "Wholesale");
+      case "categoria":
+        return contexto?.categorias.find((c) => c.id === d.categoria_id)?.nombre ?? "—";
+      case "whatsapp":
+        return "WhatsApp";
+      case "pagina":
+        return paginas?.find((x) => x.clave === d.clave)?.nombre ?? d.clave ?? "—";
+      case "externo":
+        return dominioDe(d.url) ?? t("(falta la dirección)", "(address missing)");
+      default:
+        return "—";
+    }
+  };
+  const lineasContacto = [contacto?.whatsapp !== false && contacto ? t("Escríbenos por WhatsApp", "Write to us on WhatsApp") : null, contacto?.email, contacto?.telefono, ...(contacto?.direccion ? contacto.direccion.split("\n") : []), contacto?.horario].filter((x): x is string => Boolean(x && x.trim()));
+  const hayAlgo = Boolean(descripcion) || columnas.length > 0 || mostrarCategorias || lineasContacto.length > 0 || redes.length > 0;
+
+  return (
+    <Marco titulo={t("Así se vería el pie de tu tienda", "How your store's footer would look")}>
+      <div className="space-y-4 rounded-lg border border-edge bg-ink p-3 text-sm">
+        <div className="text-center">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-fg">{marca}</p>
+          {descripcion && <p className="mt-1.5 text-xs text-mist">{descripcion}</p>}
+        </div>
+        {!hayAlgo && <p className="text-center text-xs text-mist">{t("Todavía no hay nada más que mostrar.", "There is nothing else to show yet.")}</p>}
+        <div className="grid grid-cols-2 gap-3 border-t border-edge pt-3">
+          {columnas.map((c, i) => (
+            <div key={i}>
+              <p className="text-[10.5px] font-medium uppercase tracking-widest text-lime">{c.titulo?.trim() || t("(sin título)", "(no title)")}</p>
+              <ul className="mt-1.5 space-y-1">
+                {objetosPrevia<EnlacePrevia>(c.enlaces).map((e, j) => (
+                  <li key={j} className="text-xs text-fg">
+                    {e.texto?.trim() || t("(sin texto)", "(no text)")}
+                    <span className="block text-[10.5px] text-mist">→ {destino(e.destino)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+          {mostrarCategorias && (
+            <div>
+              <p className="text-[10.5px] font-medium uppercase tracking-widest text-lime">{t("Categorías", "Categories")}</p>
+              <ul className="mt-1.5 space-y-1">
+                {(contexto?.categorias ?? []).slice(0, 3).map((c) => (
+                  <li key={c.id} className="text-xs text-fg">
+                    {c.nombre}
+                  </li>
+                ))}
+                <li className="text-[10.5px] text-mist">{t("…las de tu catálogo", "…those in your catalog")}</li>
+              </ul>
+            </div>
+          )}
+          {lineasContacto.length > 0 && (
+            <div>
+              <p className="text-[10.5px] font-medium uppercase tracking-widest text-lime">{contacto?.titulo?.trim() || t("Contacto", "Contact")}</p>
+              <ul className="mt-1.5 space-y-1">
+                {lineasContacto.map((l, i) => (
+                  <li key={i} className="break-words text-xs text-fg">
+                    {l}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {redes.length > 0 && (
+            <div>
+              <p className="text-[10.5px] font-medium uppercase tracking-widest text-lime">{t("Síguenos", "Follow us")}</p>
+              <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                {redes.map((r, i) => {
+                  const red = r.red && (REDES_SOCIALES as readonly string[]).includes(r.red) ? (r.red as RedSocial) : null;
+                  const usuario = red && r.url ? usuarioDeRed(red, r.url) : null;
+                  return (
+                    <li key={i} className="rounded-full border border-edge px-2 py-0.5 text-[11px] text-fg">
+                      {red ? ETIQUETAS_RED[red] : "—"}
+                      {usuario && <span className="text-mist"> {usuario}</span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+        <p className="border-t border-edge pt-2 text-[10.5px] text-mist">{textoDerechos(marca, derechos || null, new Date().getFullYear())}</p>
+      </div>
+      <p className="text-[11px] text-mist/80">
+        {t("Un enlace a una página que hoy no existe en tu tienda (por ejemplo, una categoría que borraste) no aparece. Cuando lo publiques, míralo con «Ver mi tienda».", "A link to a page that doesn't exist in your store today (for example, a category you deleted) isn't shown. Once you publish it, check it with “View my store”.")}
+      </p>
+    </Marco>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Página propia de la tienda
+// ---------------------------------------------------------------------------
+
+function PreviaPagina({ borrador }: { borrador: Draft }) {
+  const { t } = useI18n();
+  const { contexto } = useTienda();
+  const titulo = texto(borrador, "titulo");
+  const bloques = bloquesDeBorrador(leer(borrador, "bloques"));
+  const marca = contexto?.tienda?.nombre ?? t("Tu marca", "Your brand");
+  return (
+    <Marco titulo={t("Así se vería tu página", "How your page would look")}>
+      <article className="space-y-3 rounded-lg border border-edge bg-ink p-3 text-sm">
+        <header className="space-y-1 text-center">
+          <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-mist">{marca}</p>
+          <h4 className="break-words text-base font-semibold text-fg">{titulo || t("(sin título)", "(no title)")}</h4>
+        </header>
+        {bloques.length === 0 ? (
+          <p className="text-center text-xs text-mist">{t("Todavía no hay texto.", "There is no text yet.")}</p>
+        ) : (
+          <div className="space-y-2.5 border-t border-edge pt-3 text-xs leading-relaxed text-fg">
+            {bloques.map((b, i) =>
+              b.tipo === "subtitulo" ? (
+                <h5 key={i} className="break-words pt-1 text-[13px] font-semibold">
+                  {b.texto}
+                </h5>
+              ) : b.tipo === "lista" ? (
+                <ul key={i} className="list-disc space-y-1 pl-4">
+                  {b.items.map((item, j) => (
+                    <li key={j} className="whitespace-pre-line break-words">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p key={i} className="whitespace-pre-line break-words">
+                  {b.texto}
+                </p>
+              ),
+            )}
+          </div>
+        )}
+      </article>
+      <p className="text-[11px] text-mist/80">
+        {t("Solo texto: no se pueden poner enlaces, imágenes ni formato especial dentro de la página. Cuando la publiques, míralo con «Ver la página en mi tienda».", "Text only: you can't put links, images or special formatting inside the page. Once you publish it, check it with “View the page in my store”.")}
+      </p>
     </Marco>
   );
 }
@@ -423,5 +609,9 @@ export function PanelPrevia({ tipo, borrador }: { tipo: TipoEntidad; borrador: D
       return <PreviaCampana borrador={borrador} />;
     case "contenido":
       return <PreviaContenidoUi borrador={borrador} />;
+    case "pie":
+      return <PreviaPie borrador={borrador} />;
+    case "pagina":
+      return <PreviaPagina borrador={borrador} />;
   }
 }

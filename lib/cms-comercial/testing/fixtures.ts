@@ -2,7 +2,7 @@
  * CMS comercial — fixtures de prueba compartidos (datos sintéticos; nunca de un negocio real).
  */
 import type { TipoEntidad } from "@/lib/cms-comercial/contrato";
-import type { Campana, Combo, Contenido, ContenidoPorTipo, Home, Oferta } from "@/lib/cms-comercial/esquemas";
+import type { Campana, Combo, Contenido, ContenidoPorTipo, Home, Oferta, Pagina, Pie } from "@/lib/cms-comercial/esquemas";
 import type { AssetPublicoCms, InstantaneaCms, PublicadaCms } from "@/lib/cms-comercial/publicado";
 import { instantaneaVacia } from "@/lib/cms-comercial/publicado";
 
@@ -23,6 +23,8 @@ export function publicada(clave: string, contenido: Combo, extra?: Partial<Omit<
 export function publicada(clave: string, contenido: Campana, extra?: Partial<Omit<PublicadaCms<"campana">, "contenido" | "clave">>): PublicadaCms<"campana">;
 export function publicada(clave: string, contenido: Contenido, extra?: Partial<Omit<PublicadaCms<"contenido">, "contenido" | "clave">>): PublicadaCms<"contenido">;
 export function publicada(clave: string, contenido: Home, extra?: Partial<Omit<PublicadaCms<"home">, "contenido" | "clave">>): PublicadaCms<"home">;
+export function publicada(clave: string, contenido: Pie, extra?: Partial<Omit<PublicadaCms<"pie">, "contenido" | "clave">>): PublicadaCms<"pie">;
+export function publicada(clave: string, contenido: Pagina, extra?: Partial<Omit<PublicadaCms<"pagina">, "contenido" | "clave">>): PublicadaCms<"pagina">;
 export function publicada(clave: string, contenido: ContenidoPorTipo[TipoEntidad], extra: Partial<Omit<PublicadaCms, "contenido" | "clave">> = {}): PublicadaCms {
   serie += 1;
   return { id: `00000000-0000-4000-8000-${String(serie).padStart(12, "0")}`, clave, version: 1, publicadaAt: "2026-10-20T12:00:00.000Z", creadaAt: "2026-10-01T12:00:00.000Z", contenido, ...extra } as PublicadaCms;
@@ -67,6 +69,21 @@ export const contenido = (over: Partial<Contenido> = {}): Contenido => ({
   texto: "Sí, enviamos a todo el país.",
   palabras_clave: [],
   orden: 0,
+  ...over,
+});
+
+/** Un pie de página mínimo y válido (sin columnas ni redes; muestra las categorías). */
+export const pie = (over: Partial<Pie> = {}): Pie => ({ columnas: [], mostrar_categorias: true, redes: [], ...over });
+
+/** Una página propia mínima y válida: un título, un subtítulo, dos párrafos y una lista. */
+export const pagina = (over: Partial<Pagina> = {}): Pagina => ({
+  titulo: "Política de privacidad",
+  bloques: [
+    { tipo: "subtitulo", texto: "1. Qué datos recogemos" },
+    { tipo: "parrafo", texto: ["Solo recogemos tu nombre y tu teléfono cuando nos escribes por WhatsApp.", "Nunca los compartimos."].join("\n") },
+    { tipo: "lista", items: ["Tu nombre", "Tu teléfono"] },
+    { tipo: "parrafo", texto: "Puedes pedirnos que los borremos cuando quieras." },
+  ],
   ...over,
 });
 

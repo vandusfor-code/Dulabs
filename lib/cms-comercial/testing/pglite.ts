@@ -15,6 +15,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const MIGRACION_CMS = "20261210000000_dulabs_cms_comercial.sql";
 export const ROLLBACK_CMS = "20261210000000_dulabs_cms_comercial.down.sql";
 export const PRUEBA_SQL_CMS = "20261210000000_dulabs_cms_comercial.test.sql";
+/** El pie de página y las páginas propias de la tienda como tipos del CMS (se aplica DESPUÉS de la migración base). */
+export const MIGRACION_PIE = "20261211000000_dulabs_cms_pie_y_paginas.sql";
+export const ROLLBACK_PIE = "20261211000000_dulabs_cms_pie_y_paginas.down.sql";
+export const PRUEBA_SQL_PIE = "20261211000000_dulabs_cms_pie_y_paginas.test.sql";
 
 const raiz = () => process.cwd();
 export const rutaMigracion = (archivo = MIGRACION_CMS) => path.join(raiz(), "supabase", "migrations", archivo);
@@ -65,11 +69,18 @@ export interface BaseCms {
   cerrar(): Promise<void>;
 }
 
-export async function crearBaseCms(opciones: { aplicarMigracion?: boolean; veces?: number } = {}): Promise<BaseCms> {
+/** `conPie: false` aplica solo la migración base (cómo estaba la base antes de la del pie y las páginas). */
+export async function crearBaseCms(opciones: { aplicarMigracion?: boolean; veces?: number; conPie?: boolean } = {}): Promise<BaseCms> {
   const db = new PGlite();
   await db.exec(PREPARACION);
   const migracion = readFileSync(rutaMigracion(), "utf8");
-  if (opciones.aplicarMigracion !== false) for (let i = 0; i < (opciones.veces ?? 1); i++) await db.exec(migracion);
+  const migracionPie = readFileSync(rutaMigracion(MIGRACION_PIE), "utf8");
+  if (opciones.aplicarMigracion !== false) {
+    for (let i = 0; i < (opciones.veces ?? 1); i++) {
+      await db.exec(migracion);
+      if (opciones.conPie !== false) await db.exec(migracionPie);
+    }
+  }
 
   const firmas = new Map<string, FirmaFuncion | null>();
   async function firmaDe(nombre: string): Promise<FirmaFuncion | null> {

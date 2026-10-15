@@ -8,12 +8,13 @@ import { Plus, Search } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { ETIQUETAS_TEMA, TEMAS_CONTENIDO, type EstadoEntidad, type TemaContenido, type TipoEntidad } from "@/lib/cms-comercial/contrato";
 import type { EntidadResumen } from "@/lib/cms-comercial-client";
+import { rutaPagina } from "@/lib/cms-comercial/pagina";
 import { borradorInicial } from "@/components/dashboard/tienda/borrador";
 import { useTienda } from "@/components/dashboard/tienda/contexto";
 import { NOMBRES_TIPO, chipsDe, fechaHora } from "@/components/dashboard/tienda/formato";
 import { Aviso, BotonCargando, CampoTexto, Cargando, ChipUi, Dialogo, actionBtn, cn, inputCls, primaryBtn } from "@/components/dashboard/tienda/ui";
 
-export type TipoLista = Exclude<TipoEntidad, "home">;
+export type TipoLista = Exclude<TipoEntidad, "home" | "pie">;
 
 const sinAcentos = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
@@ -27,6 +28,8 @@ export function ListaEntidades({ tipo, onAbrir }: { tipo: TipoLista; onAbrir: (i
   const { t } = useI18n();
   const { client, canWrite } = useTienda();
   const nombres = NOMBRES_TIPO[tipo];
+  /** El contenido y las páginas se nombran por su título; lo demás, por su nombre. */
+  const conTitulo = tipo === "contenido" || tipo === "pagina";
 
   const [items, setItems] = useState<EntidadResumen[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,12 +72,12 @@ export function ListaEntidades({ tipo, onAbrir }: { tipo: TipoLista; onAbrir: (i
   const crear = async () => {
     const nombre = nuevoNombre.trim();
     if (nombre === "") {
-      setErrorCrear(tipo === "contenido" ? t("Escribe un título.", "Write a title.") : t("Escribe un nombre.", "Write a name."));
+      setErrorCrear(conTitulo ? t("Escribe un título.", "Write a title.") : t("Escribe un nombre.", "Write a name."));
       return;
     }
     setEnviando(true);
     setErrorCrear(null);
-    const r = await client.crear(tipo, { ...borradorInicial(tipo), [tipo === "contenido" ? "titulo" : "nombre"]: nombre });
+    const r = await client.crear(tipo, { ...borradorInicial(tipo), [conTitulo ? "titulo" : "nombre"]: nombre });
     setEnviando(false);
     if (!r.ok) {
       setErrorCrear(r.error.message);
@@ -166,7 +169,7 @@ export function ListaEntidades({ tipo, onAbrir }: { tipo: TipoLista; onAbrir: (i
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-fg">{i.nombre}</span>
                     <span className="mt-0.5 block text-xs text-mist">
-                      {[i.tema ? ETIQUETAS_TEMA[i.tema as TemaContenido] : null, etiquetaAudiencia(tipo, i.modalidad, t), i.versionActiva !== null && i.estado !== "borrador" ? `${t("Versión", "Version")} ${i.versionActiva}` : null, `${t("Editado", "Edited")} ${fechaHora(i.updatedAt)}`].filter(Boolean).join(" · ")}
+                      {[tipo === "pagina" ? rutaPagina("", i.clave) : null, i.tema ? ETIQUETAS_TEMA[i.tema as TemaContenido] : null, etiquetaAudiencia(tipo, i.modalidad, t), i.versionActiva !== null && i.estado !== "borrador" ? `${t("Versión", "Version")} ${i.versionActiva}` : null, `${t("Editado", "Edited")} ${fechaHora(i.updatedAt)}`].filter(Boolean).join(" · ")}
                     </span>
                   </span>
                   <span className="flex flex-wrap gap-1.5">
@@ -204,8 +207,14 @@ export function ListaEntidades({ tipo, onAbrir }: { tipo: TipoLista; onAbrir: (i
           }}
         >
           <CampoTexto
-            etiqueta={tipo === "contenido" ? t("Título o pregunta", "Title or question") : t("Nombre", "Name")}
-            ayuda={tipo === "contenido" ? t("Por ejemplo «¿Cuál es el mínimo de compra mayorista?»", "For example “What is the wholesale minimum order?”") : t("Por ejemplo «Amor y Amistad». Lo verán tus clientes.", "For example “Valentine's Day”. Your customers will see it.")}
+            etiqueta={tipo === "contenido" ? t("Título o pregunta", "Title or question") : tipo === "pagina" ? t("Título de la página", "Page title") : t("Nombre", "Name")}
+            ayuda={
+              tipo === "contenido"
+                ? t("Por ejemplo «¿Cuál es el mínimo de compra mayorista?»", "For example “What is the wholesale minimum order?”")
+                : tipo === "pagina"
+                  ? t("Por ejemplo «Política de privacidad». Lo verán tus clientes y da la dirección de la página.", "For example “Privacy policy”. Your customers will see it and it sets the page address.")
+                  : t("Por ejemplo «Amor y Amistad». Lo verán tus clientes.", "For example “Valentine's Day”. Your customers will see it.")
+            }
             valor={nuevoNombre}
             onCambio={setNuevoNombre}
             maxLength={tipo === "contenido" ? 160 : 80}

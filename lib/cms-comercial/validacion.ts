@@ -43,7 +43,9 @@ export interface ContextoValidacion {
   minimoMayorista: number | null;
 }
 
-export const llaveElemento = (tipo: "oferta" | "combo" | "campana", clave: string) => `${tipo}:${clave}`;
+/** Los elementos a los que otro elemento puede apuntar: las ofertas, combos y campañas (desde botones y campañas) y las páginas propias de la tienda (desde el pie). */
+export type TipoReferenciado = "oferta" | "combo" | "campana" | "pagina";
+export const llaveElemento = (tipo: TipoReferenciado, clave: string) => `${tipo}:${clave}`;
 
 // ---------------------------------------------------------------------------
 // Acceso defensivo al borrador (puede estar incompleto o mal formado)
@@ -59,14 +61,14 @@ export interface Dependencias {
   referencias: Array<{ valor: string; campo: string }>;
   categorias: Array<{ valor: string; campo: string }>;
   assets: Array<{ valor: string; campo: string }>;
-  elementos: Array<{ tipo: "oferta" | "combo" | "campana"; clave: string; campo: string }>;
+  elementos: Array<{ tipo: TipoReferenciado; clave: string; campo: string }>;
 }
 
 function destino(d: unknown, campo: string, dep: Dependencias) {
   const o = objeto(d);
   const tipo = cadena(o.tipo);
   if (tipo === "categoria" && cadena(o.categoria_id)) dep.categorias.push({ valor: o.categoria_id as string, campo: `${campo}.categoria_id` });
-  if ((tipo === "oferta" || tipo === "combo" || tipo === "campana") && cadena(o.clave)) dep.elementos.push({ tipo, clave: o.clave as string, campo: `${campo}.clave` });
+  if ((tipo === "oferta" || tipo === "combo" || tipo === "campana" || tipo === "pagina") && cadena(o.clave)) dep.elementos.push({ tipo, clave: o.clave as string, campo: `${campo}.clave` });
 }
 
 function imagen(i: unknown, campo: string, dep: Dependencias) {
@@ -108,6 +110,8 @@ export function dependenciasDe(tipo: TipoEntidad, borrador: unknown): Dependenci
     imagen(portada.imagen, "portada.imagen", dep);
     destino(objeto(portada.boton).destino, "portada.boton.destino", dep);
     refs(b.productos_destacados, "productos_destacados");
+  } else if (tipo === "pie") {
+    lista(b.columnas).forEach((columna, i) => lista(objeto(columna).enlaces).forEach((enlace, j) => destino(objeto(enlace).destino, "columnas." + i + ".enlaces." + j + ".destino", dep)));
   }
   return dep;
 }
@@ -158,6 +162,31 @@ const ETIQUETAS: Readonly<Record<string, string>> = {
   secciones: "Secciones",
   categorias_destacadas: "Categorías destacadas",
   productos_destacados: "Productos destacados",
+  columnas: "Columnas de enlaces",
+  "columnas.titulo": "Título de la columna",
+  "columnas.enlaces": "Enlaces",
+  "columnas.enlaces.texto": "Texto del enlace",
+  "columnas.enlaces.destino": "Destino del enlace",
+  "columnas.enlaces.destino.tipo": "Destino del enlace",
+  "columnas.enlaces.destino.url": "Dirección del enlace",
+  "columnas.enlaces.destino.categoria_id": "Categoría del enlace",
+  "columnas.enlaces.destino.clave": "Página del enlace",
+  mostrar_categorias: "Mostrar categorías",
+  contacto: "Contacto",
+  "contacto.titulo": "Título del contacto",
+  "contacto.whatsapp": "Contacto por WhatsApp",
+  "contacto.email": "Correo",
+  "contacto.telefono": "Teléfono",
+  "contacto.direccion": "Dirección",
+  "contacto.horario": "Horario",
+  redes: "Redes sociales",
+  "redes.red": "Red social",
+  "redes.url": "Enlace de la red social",
+  derechos: "Texto de derechos",
+  bloques: "Texto de la página",
+  "bloques.tipo": "Tipo de bloque",
+  "bloques.texto": "Texto",
+  "bloques.items": "Lista",
   tema: "Tema",
   audiencia: "Audiencia",
   titulo: "Título",
@@ -198,6 +227,7 @@ export function validar(tipo: TipoEntidad, borrador: unknown, ctx: ContextoValid
 
   // 2) Textos: ni órdenes al asistente, ni secretos, ni variables fuera del contenido.
   revisarTextos(tipo, borrador, err);
+  if (tipo === "pie" || tipo === "pagina") revisarEnlaceMayoristaVisible(tipo, borrador, err);
 
   // 3) Lo que el borrador menciona debe existir.
   revisarDependencias(tipo, borrador, ctx, err, adv);
@@ -223,6 +253,9 @@ export function validar(tipo: TipoEntidad, borrador: unknown, ctx: ContextoValid
         break;
       case "contenido":
         revisarContenido(parseo.data as never, ctx, err, adv);
+        break;
+      case "pie":
+        revisarPie(parseo.data as never, adv);
         break;
       default:
         break;
@@ -281,15 +314,34 @@ function revisarDependencias(tipo: TipoEntidad, borrador: unknown, ctx: Contexto
   }
   for (const { tipo: t, clave, campo } of dep.elementos) {
     const el = ctx.elementos.get(llaveElemento(t, clave));
-    const nombreTipo = t === "oferta" ? "la oferta" : t === "combo" ? "el combo" : "la campaña";
+    const nombreTipo = t === "oferta" ? "la oferta" : t === "combo" ? "el combo" : t === "pagina" ? "la página" : "la campaña";
     if (!el || el.archivada) {
       err("elemento_inexistente", campo, `Ya no existe ${nombreTipo} «${clave}».`);
+    } else if (t === "pagina") {
+      // Un enlace a una página que hoy no se ve no se pinta (nunca hay enlaces rotos): se avisa, pero no impide publicar el pie.
+      if (el.estado !== "publicada") adv("pagina_no_publicada", campo, `El enlace lleva a la página «${el.nombre}», que hoy no está publicada: el enlace no aparecerá en el pie hasta que la publiques.`);
     } else if (campo === "campana") {
       if (el.estado !== "publicada") adv("campana_no_publicada", campo, `Pertenece a la campaña «${el.nombre}», que aún no está publicada: no se verá hasta que la campaña esté activa.`);
     } else if (el.estado !== "publicada") {
       err("destino_no_publicado", campo, `El botón apunta a ${nombreTipo} «${el.nombre}», que todavía no está publicad${t === "combo" ? "o" : "a"}. Publícalo primero.`);
     }
   }
+}
+
+/** El pie y las páginas de la tienda los ven todos los clientes: ni una dirección ni un texto pueden llevar el enlace del catálogo mayorista (el token es un secreto). Se revisa aunque el resto no esté completo. */
+function revisarEnlaceMayoristaVisible(tipo: "pie" | "pagina", borrador: unknown, err: Reportar) {
+  const donde = tipo === "pie" ? "el pie de página: lo verían" : "una página de la tienda: la verían";
+  recorrerTextos(borrador, "", (texto, campo) => {
+    if (contieneEnlaceMayorista(texto)) err("enlace_mayorista", campo, `No pongas el enlace del catálogo mayorista en ${donde} todos los clientes.`);
+  });
+}
+
+function revisarPie(p: { descripcion?: string; columnas: unknown[]; mostrar_categorias: boolean; contacto?: { whatsapp: boolean; email?: string; telefono?: string; direccion?: string; horario?: string }; redes: unknown[] }, adv: Reportar) {
+  const c = p.contacto;
+  const contactoVacio = c !== undefined && !c.whatsapp && !c.email && !c.telefono && !c.direccion && !c.horario;
+  if (contactoVacio) adv("contacto_vacio", "contacto", "El bloque de contacto no tiene nada que mostrar: no aparecerá en la tienda.");
+  const hayAlgo = Boolean(p.descripcion) || p.columnas.length > 0 || p.mostrar_categorias || (c !== undefined && !contactoVacio) || p.redes.length > 0;
+  if (!hayAlgo) adv("pie_vacio", "", "El pie no tiene descripción, enlaces, contacto ni redes: solo se verá el nombre de tu marca.");
 }
 
 function revisarHome(h: { portada: { visible: boolean; imagen?: unknown }; banner?: { visible: boolean }; secciones: Array<{ tipo: string; visible: boolean }>; categorias_destacadas: string[]; productos_destacados: string[] }, adv: Reportar) {

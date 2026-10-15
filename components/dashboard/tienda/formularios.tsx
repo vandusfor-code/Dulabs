@@ -557,8 +557,8 @@ export function FormContenido(p: FormProps) {
         />
       </Tarjeta>
       <Tarjeta titulo={t("Contenido", "Content")} descripcion={t("Es información para tus clientes: ARIA la usa tal cual para responder. No escribas instrucciones.", "This is information for your customers: ARIA uses it as written to answer. Don't write instructions.")}>
-        <CampoTexto etiqueta={tema === "faq" ? t("Pregunta", "Question") : t("Título", "Title")} valor={texto(borrador, "titulo")} onCambio={(v) => poner("titulo", v)} maxLength={160} disabled={disabled} requerido error={errorEn(problemas, "titulo")} />
-        <CampoArea etiqueta={tema === "faq" ? t("Respuesta", "Answer") : t("Texto", "Text")} valor={cuerpo} onCambio={(v) => poner("texto", v)} maxLength={1500} filas={6} disabled={disabled} requerido error={errorEn(problemas, "texto")} />
+        <CampoTexto etiqueta={tema === "faq" ? t("Pregunta", "Question") : tema === "mayoristas" ? t("Pregunta o título", "Question or title") : t("Título", "Title")} valor={texto(borrador, "titulo")} onCambio={(v) => poner("titulo", v)} maxLength={160} disabled={disabled} requerido error={errorEn(problemas, "titulo")} />
+        <CampoArea etiqueta={tema === "faq" ? t("Respuesta", "Answer") : tema === "mayoristas" ? t("Respuesta o texto", "Answer or text") : t("Texto", "Text")} valor={cuerpo} onCambio={(v) => poner("texto", v)} maxLength={1500} filas={6} disabled={disabled} requerido error={errorEn(problemas, "texto")} />
         {!disabled && contexto && contexto.variables.length > 0 && (
           <div>
             <p className="mb-1.5 text-[11px] text-mist/80">{t("Datos del negocio que se completan solos (así nunca quedan desactualizados):", "Business data filled in automatically (so they never go stale):")}</p>

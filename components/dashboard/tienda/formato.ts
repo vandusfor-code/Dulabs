@@ -1,7 +1,9 @@
 /**
  * Administración de tienda — helpers PUROS de presentación: etiquetas, chips de estado, fechas en hora de Bogotá y el resumen «antes → después» del historial.
  */
-import { ETIQUETAS_TEMA, type AccionAuditoria, type RegistroAuditoria, type SeccionHome, type TipoEntidad } from "@/lib/cms-comercial/contrato";
+import { ETIQUETAS_RED, ETIQUETAS_TEMA, type AccionAuditoria, type RegistroAuditoria, type SeccionHome, type TipoEntidad } from "@/lib/cms-comercial/contrato";
+import type { BloquePagina } from "@/lib/cms-comercial/esquemas";
+import { resumenDeCambiosDeBloques } from "@/lib/cms-comercial/pagina";
 import type { EntidadResumen } from "@/lib/cms-comercial/servicio";
 import { etiquetaDeCampo } from "@/lib/cms-comercial/validacion";
 import { formatearPesos } from "@/lib/cms-comercial/variables";
@@ -18,6 +20,8 @@ export const NOMBRES_TIPO: Readonly<Record<TipoEntidad, { singular: string; plur
   combo: { singular: "Combo", plural: "Combos", nuevo: "Nuevo combo", nuevoEn: "New combo", singularEn: "Combo", pluralEn: "Combos" },
   campana: { singular: "Campaña", plural: "Campañas", nuevo: "Nueva campaña", nuevoEn: "New campaign", singularEn: "Campaign", pluralEn: "Campaigns" },
   contenido: { singular: "Contenido", plural: "Contenido", nuevo: "Nuevo contenido", nuevoEn: "New content", singularEn: "Content", pluralEn: "Content" },
+  pie: { singular: "Pie de página", plural: "Pie de página", nuevo: "Crear el pie de página", nuevoEn: "Create the footer", singularEn: "Footer", pluralEn: "Footer" },
+  pagina: { singular: "Página", plural: "Páginas", nuevo: "Nueva página", nuevoEn: "New page", singularEn: "Page", pluralEn: "Pages" },
 };
 
 /** El texto de cada chip en inglés (los chips nacen en español, que es lo que prueba la lógica). */
@@ -78,9 +82,9 @@ export const ACCION_CORTA_EN: Readonly<Record<AccionAuditoria, string>> = {
 export function objetoDeAuditoria(r: Pick<RegistroAuditoria, "entidadTipo" | "antes" | "despues">): string {
   if (r.entidadTipo === "imagen") return "";
   const tipo = NOMBRES_TIPO[r.entidadTipo].singular;
-  if (r.entidadTipo === "home") return tipo;
+  if (r.entidadTipo === "home" || r.entidadTipo === "pie") return tipo;
   const contenido = [r.despues, r.antes].find((c): c is Record<string, unknown> => typeof c === "object" && c !== null && !Array.isArray(c));
-  const nombre = contenido ? (r.entidadTipo === "contenido" ? contenido.titulo : contenido.nombre) : undefined;
+  const nombre = contenido ? (r.entidadTipo === "contenido" || r.entidadTipo === "pagina" ? contenido.titulo : contenido.nombre) : undefined;
   return typeof nombre === "string" && nombre.trim() ? `${tipo}: ${nombre.trim()}` : tipo;
 }
 
@@ -138,6 +142,13 @@ function simplificar(contenido: unknown): unknown {
   return copia;
 }
 
+/** Separa el texto de una página (`bloques`) del resto del contenido; null si el contenido no lo trae. */
+function sinBloques(contenido: unknown): [unknown, readonly BloquePagina[] | null] {
+  if (!esObjeto(contenido) || !Array.isArray(contenido.bloques)) return [contenido, null];
+  const { bloques, ...resto } = contenido;
+  return [resto, bloques as BloquePagina[]];
+}
+
 function aplanar(valor: unknown, ruta: string, salida: Map<string, Hoja>) {
   if (Array.isArray(valor)) {
     if (valor.every((v) => v === null || ["string", "number", "boolean"].includes(typeof v))) salida.set(ruta, valor.length === 0 ? "" : valor.join(", "));
@@ -159,7 +170,8 @@ const VALORES: ReadonlyArray<[RegExp, Readonly<Record<string, string>>]> = [
   [/(^|\.)modalidad$/, { detal: "Detal", mayorista: "Mayorista", ambas: "Ambas" }],
   [/(^|\.)audiencia$/, { todos: "Todos", detal: "Solo detal", mayorista: "Solo mayorista" }],
   [/^beneficio\.tipo$/, { porcentaje: "Porcentaje", monto_fijo: "Descuento en pesos", precio_especial: "Precio especial" }],
-  [/(^|\.)destino\.tipo$/, { catalogo: "Todo el catálogo", categoria: "Una categoría", busqueda: "Una búsqueda", oferta: "Una oferta", combo: "Un combo", campana: "Una campaña", whatsapp: "WhatsApp" }],
+  [/(^|\.)destino\.tipo$/, { inicio: "Inicio de la tienda", catalogo: "Todo el catálogo", mayoristas: "Mayoristas", categoria: "Una categoría", busqueda: "Una búsqueda", oferta: "Una oferta", combo: "Un combo", campana: "Una campaña", whatsapp: "WhatsApp", pagina: "Una de mis páginas", externo: "Otra página (un enlace)" }],
+  [/^redes\.\d+\.red$/, ETIQUETAS_RED],
   [/^tema$/, ETIQUETAS_TEMA],
   [/(^|\.)foco$/, { "50% 50%": "Centro", "50% 0%": "Arriba", "50% 100%": "Abajo", "0% 50%": "Izquierda", "100% 50%": "Derecha", "72% 50%": "Derecha (suave)" }],
 ];
@@ -178,7 +190,8 @@ function etiquetaCampo(ruta: string): string {
     if (ultimo === "tipo") return destino;
     if (ultimo === "categoria_id") return `${destino} · categoría`;
     if (ultimo === "consulta") return `${destino} · búsqueda`;
-    if (ultimo === "clave") return `${destino} · elemento`;
+    // En el pie, lo único con código es una de las páginas propias; en un botón, una oferta, un combo o una campaña.
+    if (ultimo === "clave") return ruta.startsWith("columnas.") ? `${destino} · página` : `${destino} · elemento`;
   }
   return etiquetaDeCampo(ruta);
 }
@@ -201,8 +214,11 @@ export function resumirCambios(antes: unknown, despues: unknown, max = 6, opcion
   const categorias = new Map((opciones.categorias ?? []).map((c) => [c.id, c.nombre] as const));
   const a = new Map<string, Hoja>();
   const d = new Map<string, Hoja>();
-  aplanar(simplificar(antes ?? {}), "", a);
-  aplanar(simplificar(despues ?? {}), "", d);
+  // El texto de una página se resume aparte («12 bloques → 13 bloques, 2 con cambios»): compararlo bloque por bloque llenaría la lista de filas ilegibles.
+  const [restoAntes, bloquesAntes] = sinBloques(antes ?? {});
+  const [restoDespues, bloquesDespues] = sinBloques(despues ?? {});
+  aplanar(simplificar(restoAntes), "", a);
+  aplanar(simplificar(restoDespues), "", d);
   const rutas = [...new Set([...a.keys(), ...d.keys()])].filter((r) => r !== "" && !RUIDO.test(r));
   const cambios: CambioResumido[] = [];
   for (const ruta of rutas) {
@@ -219,5 +235,7 @@ export function resumirCambios(antes: unknown, despues: unknown, max = 6, opcion
       despues: esImagen ? (vd ? "imagen nueva" : "—") : formatoValor(ruta, vd, categorias),
     });
   }
+  const texto = bloquesAntes !== null || bloquesDespues !== null ? resumenDeCambiosDeBloques(bloquesAntes, bloquesDespues) : null;
+  if (texto) cambios.push({ campo: etiquetaDeCampo("bloques"), antes: texto.antes, despues: texto.despues });
   return cambios.slice(0, max);
 }

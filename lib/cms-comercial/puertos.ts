@@ -21,6 +21,8 @@ export interface PuertoCatalogo {
   listarCategorias(tenantId: string): Promise<Array<{ id: string; nombre: string }>>;
   /** Ruta pública de la tienda detal (`/catalogo/{tienda}`) si está publicada; null si no. Solo para el enlace «Ver mi tienda» del editor. */
   rutaPublica?(tenantId: string): Promise<string | null>;
+  /** La tienda publicada del negocio: su slug (por ejemplo «delacour») y su nombre público; null si no hay una publicada. Sirve para saber qué tema y qué páginas tiene (el editor del pie y de las preguntas solo aparece donde la tienda los dibuja). */
+  tiendaPublica?(tenantId: string): Promise<{ slug: string; nombre: string } | null>;
 }
 
 export interface VariablesNegocio {

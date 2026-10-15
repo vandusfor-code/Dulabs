@@ -29,6 +29,8 @@ export interface ContextoTienda {
   categorias: Array<{ id: string; nombre: string }>;
   /** Ruta pública de la tienda (`/catalogo/{tienda}`) si está publicada; null si no se pudo resolver. */
   rutaTienda?: string | null;
+  /** Qué tienda es el negocio (null si no se pudo resolver): del tema depende si se dibujan el pie y la página de mayoristas. */
+  tienda?: { slug: string; nombre: string; tema: "clasico" | "tecnologia" | "joyeria"; mayoristas: boolean; paginaMayoristas: { intro: string | null; omitir: string[]; tambien: string[] } | null; descripcion: string | null } | null;
   zona: string;
   ahora: string;
 }

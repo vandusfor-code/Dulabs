@@ -147,6 +147,14 @@ describe("etiquetas y fechas", () => {
     assert.equal(objetoDeAuditoria({ entidadTipo: "combo", antes: null, despues: null }), "Combo");
     assert.equal(objetoDeAuditoria({ entidadTipo: "imagen", antes: null, despues: { nombre: "x" } }), "");
   });
+
+  it("una página se nombra por su título en el historial, y el pie por su nombre fijo", () => {
+    assert.equal(objetoDeAuditoria({ entidadTipo: "pagina", antes: null, despues: { titulo: " Política de privacidad ", bloques: [] } }), "Página: Política de privacidad");
+    assert.equal(objetoDeAuditoria({ entidadTipo: "pagina", antes: { titulo: "Antes" }, despues: { estado: "pausada" } }), "Página", "pausar guarda solo el estado: sin título");
+    assert.equal(objetoDeAuditoria({ entidadTipo: "pie", antes: null, despues: null }), "Pie de página");
+    assert.deepEqual([NOMBRES_TIPO.pagina.singular, NOMBRES_TIPO.pagina.plural, NOMBRES_TIPO.pagina.nuevo], ["Página", "Páginas", "Nueva página"]);
+    assert.ok(NOMBRES_TIPO.pagina.singularEn && NOMBRES_TIPO.pagina.pluralEn && NOMBRES_TIPO.pagina.nuevoEn);
+  });
 });
 
 describe("resumirCambios — el «20% → 25%» del historial", () => {
@@ -178,6 +186,43 @@ describe("resumirCambios — el «20% → 25%» del historial", () => {
     const largo = resumirCambios({ texto: "a" }, { texto: "x".repeat(200) });
     assert.ok(largo[0].despues.length <= 90 && largo[0].despues.endsWith("…"));
     assert.deepEqual(resumirCambios({ activo: false }, { activo: true }), [{ campo: "activo", antes: "No", despues: "Sí" }]);
+  });
+});
+
+describe("resumirCambios — el texto de una página", () => {
+  const bloques = [
+    { tipo: "subtitulo", texto: "Datos" },
+    { tipo: "parrafo", texto: "Cuidamos tus datos." },
+    { tipo: "lista", items: ["Nombre", "Teléfono"] },
+  ];
+
+  it("se resume en una sola fila («3 bloques → 3 bloques, 1 con cambios»), no una fila por cada bloque ni por cada clave", () => {
+    const editada = [bloques[0], { tipo: "parrafo", texto: "Cuidamos mucho tus datos." }, bloques[2]];
+    assert.deepEqual(resumirCambios({ titulo: "Privacidad", bloques }, { titulo: "Privacidad", bloques: editada }), [{ campo: "Texto de la página", antes: "3 bloques", despues: "3 bloques, 1 con cambios" }]);
+  });
+
+  it("el título y el texto se cuentan por separado, el título primero", () => {
+    const r = resumirCambios({ titulo: "Privacidad", bloques }, { titulo: "Política de privacidad", bloques: [...bloques, { tipo: "parrafo", texto: "Fin." }] });
+    assert.deepEqual(r, [
+      { campo: "Título", antes: "Privacidad", despues: "Política de privacidad" },
+      { campo: "Texto de la página", antes: "3 bloques", despues: "4 bloques, 1 con cambios" },
+    ]);
+  });
+
+  it("el mismo texto no es un cambio (aunque las claves de cada bloque vengan en otro orden); una página nueva muestra «—»", () => {
+    assert.deepEqual(resumirCambios({ titulo: "P", bloques }, { titulo: "P", bloques: bloques.map((b) => (b.tipo === "parrafo" ? { texto: b.texto, tipo: b.tipo } : b)) }), []);
+    assert.deepEqual(resumirCambios(null, { titulo: "Nueva", bloques }), [
+      { campo: "Título", antes: "—", despues: "Nueva" },
+      { campo: "Texto de la página", antes: "—", despues: "3 bloques, 3 con cambios" },
+    ]);
+  });
+
+  it("el destino «Una de mis páginas» de un enlace del pie se lee en español", () => {
+    const r = resumirCambios({ columnas: [{ titulo: "Legal", enlaces: [{ texto: "Privacidad", destino: { tipo: "inicio" } }] }] }, { columnas: [{ titulo: "Legal", enlaces: [{ texto: "Privacidad", destino: { tipo: "pagina", clave: "privacidad" } }] }] }, 12);
+    assert.ok(r.some((c) => c.campo === "Destino del enlace" && c.antes === "Inicio de la tienda" && c.despues === "Una de mis páginas"), JSON.stringify(r));
+    assert.ok(r.some((c) => c.campo === "Destino del enlace · página" && c.antes === "—" && c.despues === "privacidad"), "el código de la página se llama «página», no «elemento»");
+    const boton = resumirCambios({ portada: { boton: { destino: { tipo: "oferta", clave: "a" } } } }, { portada: { boton: { destino: { tipo: "oferta", clave: "b" } } } });
+    assert.deepEqual(boton.map((c) => c.campo), ["Destino del botón · elemento"], "en un botón sigue siendo un elemento (oferta, combo o campaña)");
   });
 });
 

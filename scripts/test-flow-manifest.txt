@@ -645,3 +645,21 @@ lib/fuentes-propias.test.ts
 lib/cms-comercial/pagina-mayoristas.test.ts
 lib/cms-comercial/pagina-mayoristas-publica.test.ts
 components/catalogo-publico/tienda/joyeria/pagina-mayoristas.test.tsx
+# Pie de página editable (tipo «pie» del CMS, migración 20261211): enlaces seguros (solo https y el dominio de cada red), esquema y validación, el pie resuelto contra lo que la tienda tiene, su carga con respaldo y el lector, la migración y su reversa en SQL real, el servicio sobre SQL real, el HTML de la tienda y las pantallas del panel (pie y preguntas frecuentes). Los dorados guardan el pie de siempre: no puede cambiar sin un pie publicado.
+lib/cms-comercial/enlaces.test.ts
+lib/cms-comercial/pie.test.ts
+lib/cms-comercial/pie-esquema.test.ts
+lib/cms-comercial/pie-publico.test.ts
+lib/cms-comercial/pie-y-paginas-sql.pglite.test.ts
+lib/cms-comercial/pie-servicio.pglite.test.ts
+components/catalogo-publico/tienda/joyeria/pie-dorado.test.tsx
+components/catalogo-publico/tienda/joyeria/pie-cms.test.tsx
+components/dashboard/tienda/pie.dom.test.tsx
+app/api/dashboard/tienda/contexto.test.ts
+# Páginas propias de la tienda (tipo «pagina» del CMS, misma migración 20261211: política de privacidad, términos, cambios…): el texto que escribe la administradora ↔ bloques, el esquema y la validación (HTML, enlace mayorista, topes), el enlace desde el pie, su carga y el lector (solo publicadas y válidas), el servicio sobre SQL real, el HTML de la tienda (todo es texto, nada de enlaces ni etiquetas) y el panel de punta a punta.
+lib/cms-comercial/pagina.test.ts
+lib/cms-comercial/pagina-esquema.test.ts
+lib/cms-comercial/pagina-publica.test.ts
+lib/cms-comercial/pagina-servicio.pglite.test.ts
+components/catalogo-publico/tienda/joyeria/pagina-tienda.test.tsx
+components/dashboard/tienda/pagina.dom.test.tsx
