@@ -144,6 +144,7 @@ export function CromoJoyeria({
   categoriasHref,
   anuncios,
   mayorista,
+  mayoristaHref,
 }: {
   marca: { name: string; descriptor?: string };
   basePath: string;
@@ -151,8 +152,10 @@ export function CromoJoyeria({
   categorias: CatalogCategory[];
   categoriasHref: string;
   anuncios: AnuncioVisible[];
-  /** Hay bloque de mayoristas en el inicio (el acceso «Mayorista» lleva a él). */
+  /** Hay mayoristas que mostrar (el acceso «Mayorista» aparece). */
   mayorista: boolean;
+  /** A dónde lleva el acceso «Mayorista»: la página propia o, sin ella, el bloque del inicio (`#mayoristas`, como siempre). */
+  mayoristaHref?: string;
 }) {
   const { whatsapp } = useTienda();
   const pathname = usePathname();
@@ -169,6 +172,8 @@ export function CromoJoyeria({
   const [buscando, setBuscando] = useState(false);
   const [categoriasAbiertas, setCategoriasAbiertas] = useState(false);
   const digits = (whatsapp ?? "").replace(/\D/g, "");
+  const hrefMayorista = mayoristaHref ?? `${basePath}#mayoristas`;
+  const enMayoristas = pathname === hrefMayorista;
 
   // ¿Lo claro del contenido (o, sin marca, la cortina que sube sobre la portada) ya llegó a la cabecera? Se mide en un fotograma, nunca en cada evento de scroll.
   useEffect(() => {
@@ -244,7 +249,7 @@ export function CromoJoyeria({
                 </Link>
               )}
               {mayorista && (
-                <Link href={`${basePath}#mayoristas`} className="joy-pildora-nav joy-tinta rounded-full border px-4 py-1.5 text-sm">
+                <Link href={hrefMayorista} className="joy-pildora-nav joy-tinta rounded-full border px-4 py-1.5 text-sm" aria-current={actual(enMayoristas)}>
                   Mayorista
                 </Link>
               )}
@@ -285,7 +290,7 @@ export function CromoJoyeria({
               Todo el catálogo
             </Link>
             {mayorista && (
-              <Link href={`${basePath}#mayoristas`} onClick={cerrarMenu} className="joy-fila-menu">
+              <Link href={hrefMayorista} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(enMayoristas)}>
                 Mayoristas
               </Link>
             )}

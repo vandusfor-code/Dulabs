@@ -17,7 +17,19 @@ const item = "flex h-14 flex-1 flex-col items-center justify-center gap-1 text-[
  * Carrito). Oculta en escritorio y en la ficha de producto (que tiene su
  * propia barra de compra).
  */
-export function NavInferior({ basePath, categoriasHref, ocultoEnInicio = false }: { basePath: string; categoriasHref: string; /** Vitrinas con tema propio: en el inicio las dibuja su propia navegación. */ ocultoEnInicio?: boolean }) {
+export function NavInferior({
+  basePath,
+  categoriasHref,
+  ocultoEnInicio = false,
+  rutasAparte,
+}: {
+  basePath: string;
+  categoriasHref: string;
+  /** Vitrinas con tema propio: en el inicio las dibuja su propia navegación. */
+  ocultoEnInicio?: boolean;
+  /** Páginas propias de la tienda (p. ej. «Mayoristas») que no son el inicio ni el catálogo: en ellas ninguna de las dos pestañas queda marcada como la actual. */
+  rutasAparte?: readonly string[];
+}) {
   const { abrirCarrito } = useTienda();
   const { items } = useCarrito();
   const pathname = usePathname();
@@ -26,6 +38,7 @@ export function NavInferior({ basePath, categoriasHref, ocultoEnInicio = false }
 
   const enInicio = pathname === basePath && !esListadoDeUrl(params);
   if (ocultoEnInicio && enInicio) return null;
+  const enCategorias = !enInicio && !rutasAparte?.includes(pathname);
   return (
     <nav
       aria-label="Navegación de la tienda"
@@ -36,8 +49,8 @@ export function NavInferior({ basePath, categoriasHref, ocultoEnInicio = false }
           <Home className="size-[22px]" strokeWidth={enInicio ? 2 : 1.6} aria-hidden />
           Inicio
         </Link>
-        <Link href={categoriasHref} className={cn(item, !enInicio ? "text-[var(--tienda-oro)]" : "text-mist")} aria-current={!enInicio ? "page" : undefined}>
-          <LayoutGrid className="size-[22px]" strokeWidth={!enInicio ? 2 : 1.6} aria-hidden />
+        <Link href={categoriasHref} className={cn(item, enCategorias ? "text-[var(--tienda-oro)]" : "text-mist")} aria-current={enCategorias ? "page" : undefined}>
+          <LayoutGrid className="size-[22px]" strokeWidth={enCategorias ? 2 : 1.6} aria-hidden />
           Categorías
         </Link>
         <button type="button" onClick={abrirCarrito} className={cn(item, "relative text-mist")} aria-label={items > 0 ? `Carrito (${items} productos)` : "Carrito"}>

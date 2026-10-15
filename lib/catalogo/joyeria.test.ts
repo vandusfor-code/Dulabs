@@ -3,11 +3,12 @@
  * (ni precios, ni descuentos, ni plazos, ni envíos). Solo presentación: ninguna de estas funciones toca precios, stock ni carrito.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { anunciosVisibles, digitosWhatsapp, enlaceWhatsapp, mayoristasVisible, rotuloDeDestacados } from "@/lib/catalogo/joyeria";
+import { anunciosVisibles, digitosWhatsapp, enlaceWhatsapp, hrefMayoristas, mayoristasVisible, RUTA_MAYORISTAS, rotuloDeDestacados } from "@/lib/catalogo/joyeria";
 import { joyeriaOf, storefrontConfigFor, temaDe, tecnologiaOf, type CatalogStorefrontConfig, type ConfigJoyeria } from "@/lib/catalogo/vitrina";
+import { TEXTOS_MIGRABLES } from "@/lib/cms-comercial/migracion-textos";
 
 const CONTENIDO: ConfigJoyeria = {
   anuncios: [
@@ -42,8 +43,8 @@ describe("tema de la vitrina: joyería", () => {
   it("el contenido de Delacour no inventa datos comerciales: ni precios, ni descuentos, ni plazos, ni envíos, ni garantías", () => {
     const j = joyeriaOf(storefrontConfigFor("delacour"));
     assert.ok(j);
-    // Solo los textos: los videos son archivos (rutas, medidas y un punto focal de CSS como «72% 46%»), no frases de la tienda.
-    const sinVideos = JSON.stringify(j, (clave, valor) => (clave === "video" ? undefined : valor));
+    // Solo los textos: los videos son archivos (rutas, medidas y un punto focal de CSS como «72% 46%») y la página de mayoristas solo lleva CÓDIGOS de entradas del CMS (de donde sale lo que dice), no frases de la tienda.
+    const sinVideos = JSON.stringify(j, (clave, valor) => (clave === "video" || clave === "pagina" ? undefined : valor));
     const todo = sinVideos;
     assert.doesNotMatch(todo, /\$\s?\d|\d+\s?%|\b\d+\s?(d[ií]as|horas)\b/i, "ni precios, ni descuentos, ni plazos");
     assert.doesNotMatch(todo, /env[ií]o|garant[ií]a|devoluci|gratis|m[aá]s vendid|descuento|oferta/i, "ni envíos, ni garantías, ni «más vendidos», ni promociones inventadas");
@@ -98,6 +99,46 @@ describe("anuncios y mayoristas visibles", () => {
     assert.equal("mensaje" in m, false, "el mensaje no es parte de lo que se dibuja");
     assert.equal(mayoristasVisible(CONTENIDO, null), null);
     assert.equal(mayoristasVisible({ anuncios: [] }, "573001112233"), null);
+  });
+});
+
+describe("página de mayoristas", () => {
+  const PAGINA = { intro: "venta-al-por-mayor", omitir: ["emprendimiento"], tambien: ["envios"] };
+
+  it("el acceso «Mayorista» lleva a la página propia si la tienda la tiene; si no, al bloque del inicio (como siempre); sin mayoristas, a ningún lado", () => {
+    const base = "/catalogo/tienda";
+    const sin = mayoristasVisible(CONTENIDO, "573001112233");
+    const con = mayoristasVisible({ ...CONTENIDO, mayoristas: { ...CONTENIDO.mayoristas!, pagina: PAGINA } }, "573001112233");
+    assert.equal(hrefMayoristas(base, sin), `${base}#mayoristas`);
+    assert.equal(hrefMayoristas(base, con), `${base}/${RUTA_MAYORISTAS}`);
+    assert.equal(hrefMayoristas(base, null), null);
+    assert.equal(RUTA_MAYORISTAS, "mayoristas");
+  });
+
+  it("la configuración de la página llega intacta a lo que se dibuja y sin ella no aparece la clave", () => {
+    const con = mayoristasVisible({ ...CONTENIDO, mayoristas: { ...CONTENIDO.mayoristas!, pagina: PAGINA } }, "573001112233");
+    assert.deepEqual(con?.pagina, PAGINA);
+    assert.equal("pagina" in (mayoristasVisible(CONTENIDO, "573001112233") ?? {}), false);
+    assert.equal(mayoristasVisible({ ...CONTENIDO, mayoristas: { ...CONTENIDO.mayoristas!, pagina: PAGINA } }, null), null, "sin WhatsApp no hay mayoristas, tampoco su página");
+  });
+
+  it("Delacour la tiene, y todo lo que enlaza existe en la tabla de textos del CMS (ni un código mal escrito): la introducción y lo omitido son del tema «Mayoristas»; lo demás, de otros temas", () => {
+    const pagina = joyeriaOf(storefrontConfigFor("delacour"))?.mayoristas?.pagina;
+    assert.ok(pagina, "Delacour tiene página de mayoristas");
+    const tabla = new Map(TEXTOS_MIGRABLES.map((t) => [t.clave, t]));
+    assert.equal(tabla.get(pagina.intro ?? "")?.tema, "mayoristas");
+    for (const clave of pagina.omitir ?? []) assert.equal(tabla.get(clave)?.tema, "mayoristas", `omitir: ${clave}`);
+    assert.ok((pagina.omitir ?? []).includes("emprendimiento"), "«Emprendimiento» está escrito como instrucción para ARIA: no es para clientes");
+    for (const clave of pagina.tambien ?? []) {
+      const t = tabla.get(clave);
+      assert.ok(t && t.tema !== "mayoristas" && t.audiencia === "todos", `tambien: ${clave}`);
+    }
+    const codigos = [pagina.intro, ...(pagina.omitir ?? []), ...(pagina.tambien ?? [])];
+    for (const c of codigos) assert.match(c ?? "", /^[a-z0-9]+(-[a-z0-9]+)*$/, "solo códigos de entradas, nunca frases");
+  });
+
+  it("la ruta existe: el acceso lleva a una página real (la carpeta de la ruta se llama como RUTA_MAYORISTAS)", () => {
+    assert.ok(existsSync(path.join(process.cwd(), "app", "catalogo", "[slug]", "(tienda)", RUTA_MAYORISTAS, "page.tsx")));
   });
 });
 

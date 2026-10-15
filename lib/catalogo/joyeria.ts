@@ -45,13 +45,24 @@ export interface MayoristasVisible extends Omit<MayoristasJoyeria, "mensaje"> {
   href: string;
 }
 
+/** Ruta de la página propia de mayoristas, bajo la tienda: /catalogo/{tienda}/mayoristas. */
+export const RUTA_MAYORISTAS = "mayoristas";
+
+/**
+ * A dónde lleva el acceso «Mayorista» (cabecera, menú y pie): la página propia si la tienda la tiene; si no, el bloque del inicio (como siempre). null si no hay mayoristas que mostrar.
+ */
+export function hrefMayoristas(basePath: string, m: MayoristasVisible | null): string | null {
+  if (!m) return null;
+  return m.pagina ? `${basePath}/${RUTA_MAYORISTAS}` : `${basePath}#mayoristas`;
+}
+
 /** El bloque de mayoristas solo existe si hay contenido Y un WhatsApp válido al que escribir. */
 export function mayoristasVisible(config: ConfigJoyeria, whatsapp: string | null | undefined): MayoristasVisible | null {
   const m = config.mayoristas;
   if (!m) return null;
   const href = enlaceWhatsapp(whatsapp, m.mensaje);
   if (!href) return null;
-  return { etiqueta: m.etiqueta, titulo: m.titulo, texto: m.texto, boton: m.boton, href, ...(m.video ? { video: m.video } : {}) };
+  return { etiqueta: m.etiqueta, titulo: m.titulo, texto: m.texto, boton: m.boton, href, ...(m.video ? { video: m.video } : {}), ...(m.pagina ? { pagina: m.pagina } : {}) };
 }
 
 export interface AcabadoVisible {

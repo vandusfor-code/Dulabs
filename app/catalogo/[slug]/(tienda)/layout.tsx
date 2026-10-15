@@ -10,7 +10,7 @@ import { CromoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/Cromo
 import { PieJoyeria } from "@/components/catalogo-publico/tienda/joyeria/PieJoyeria";
 import { HeaderTecnologia, HeaderTecnologiaEsqueleto } from "@/components/catalogo-publico/tienda/tecnologia/HeaderTecnologia";
 import { NavInferiorTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/NavInferiorTecnologia";
-import { anunciosVisibles, mayoristasVisible } from "@/lib/catalogo/joyeria";
+import { anunciosVisibles, hrefMayoristas, mayoristasVisible } from "@/lib/catalogo/joyeria";
 import { cargarTienda } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
 import { joyeriaOf, storefrontConfigFor, tecnologiaOf, temaDe } from "@/lib/catalogo/vitrina";
@@ -53,17 +53,18 @@ export default async function TiendaLayout({ children, params }: { children: Rea
   if (joyeria) {
     const anuncios = anunciosVisibles(joyeria, tienda.whatsapp);
     const mayoristas = mayoristasVisible(joyeria, tienda.whatsapp);
+    const mayoristaHref = hrefMayoristas(basePath, mayoristas) ?? undefined;
     return (
       <div className={`catalogo-tienda tienda-joyeria ${anuncios.length > 0 ? "joy-con-anuncio " : ""}${serifCatalogo.variable} min-h-screen w-full flex-1 bg-ink font-sans text-fg`}>
         <TiendaProvider slug={tienda.slug} context="retail" basePath={basePath} whatsapp={tienda.whatsapp} marcaReferencia={tienda.referenceMark}>
           <MarcadorLlegada />
           <Suspense fallback={null}>
-            <CromoJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} categoriasHref={categoriasHref} anuncios={anuncios} mayorista={Boolean(mayoristas)} />
+            <CromoJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} categoriasHref={categoriasHref} anuncios={anuncios} mayorista={Boolean(mayoristas)} mayoristaHref={mayoristaHref} />
           </Suspense>
           <main className="w-full">{children}</main>
-          <PieJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} whatsapp={tienda.whatsapp} descripcion={joyeria.descripcion} mayorista={Boolean(mayoristas)} />
+          <PieJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} whatsapp={tienda.whatsapp} descripcion={joyeria.descripcion} mayorista={Boolean(mayoristas)} mayoristaHref={mayoristaHref} />
           <Suspense fallback={null}>
-            <NavInferior basePath={basePath} categoriasHref={categoriasHref} />
+            <NavInferior basePath={basePath} categoriasHref={categoriasHref} rutasAparte={mayoristaHref ? [mayoristaHref] : undefined} />
           </Suspense>
           <HojaCarrito />
         </TiendaProvider>

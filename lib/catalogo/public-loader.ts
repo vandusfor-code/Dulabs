@@ -5,6 +5,8 @@ import type { PriceContext } from "@/lib/catalogo/domain";
 import { filtrosDeTexto } from "@/lib/catalogo/filtros";
 import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
+import type { OpcionesPaginaMayoristas } from "@/lib/cms-comercial/pagina-mayoristas";
+import { cargarPaginaMayoristas as cargarPaginaMayoristasPublica } from "@/lib/cms-comercial/pagina-mayoristas-publica";
 import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
 import { crearDepsPublicasCms } from "@/lib/cms-comercial/publico-supabase";
 import type { ContextoVitrina } from "@/lib/cms-comercial/vitrina";
@@ -38,6 +40,12 @@ export const cargarInicio = cache((slug: string) => servicio().getHome(slug));
  * apagado o ante cualquier problema, la de siempre. NUNCA lanza: la tienda no depende del CMS para verse. El negocio sale de la publicación (slug).
  */
 export const cargarVitrinaInicio = (registro: CatalogStorefrontConfig, ctx: Omit<ContextoVitrina, "ahora">) => cargarVitrinaPublica(crearDepsPublicasCms(), registro, ctx);
+
+/**
+ * Página «Mayoristas» del tema "joyeria": lo publicado en el CMS con tema «Mayoristas» para el público de la tienda al detal (las mismas reglas que ARIA). NUNCA lanza: sin CMS, sin nada publicado o ante
+ * cualquier problema devuelve null y la página se dibuja con el texto de la tienda y su botón de WhatsApp.
+ */
+export const cargarPaginaMayoristas = (slug: string, opciones: OpcionesPaginaMayoristas) => cargarPaginaMayoristasPublica(crearDepsPublicasCms(), slug, opciones);
 
 /** Inicio con lo que el CMS eligió (destacados, categorías, productos de la campaña). Sin opciones, igual que `cargarInicio`. */
 export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, opciones);

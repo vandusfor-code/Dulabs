@@ -641,3 +641,7 @@ components/catalogo-publico/tienda/joyeria/inicio-video.test.tsx
 components/catalogo-publico/tienda/joyeria/portada-video.dom.test.tsx
 # Fuentes propias (lib/fonts/): la compilación no depende de Google Fonts. Ningún código usa next/font/google, cada archivo declarado existe y es un woff2 liviano, no sobra ninguno y la carpeta documenta su origen y su licencia.
 lib/fuentes-propias.test.ts
+# Bloque 30, página «Mayoristas» (/catalogo/{tienda}/mayoristas): qué entradas del CMS la forman y lo que nunca llega (audiencia, vigencia, variables), su carga con respaldo y cómo se dibuja (HTML del servidor). Las pruebas del acceso (cabecera, menú y pie) están en joyeria.dom.test.tsx, inicio-joyeria.test.tsx y joyeria.test.ts.
+lib/cms-comercial/pagina-mayoristas.test.ts
+lib/cms-comercial/pagina-mayoristas-publica.test.ts
+components/catalogo-publico/tienda/joyeria/pagina-mayoristas.test.tsx
