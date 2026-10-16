@@ -22,6 +22,7 @@ export const NOMBRES_TIPO: Readonly<Record<TipoEntidad, { singular: string; plur
   contenido: { singular: "Contenido", plural: "Contenido", nuevo: "Nuevo contenido", nuevoEn: "New content", singularEn: "Content", pluralEn: "Content" },
   pie: { singular: "Pie de página", plural: "Pie de página", nuevo: "Crear el pie de página", nuevoEn: "Create the footer", singularEn: "Footer", pluralEn: "Footer" },
   pagina: { singular: "Página", plural: "Páginas", nuevo: "Nueva página", nuevoEn: "New page", singularEn: "Page", pluralEn: "Pages" },
+  multimedia: { singular: "Fotos y videos", plural: "Fotos y videos", nuevo: "Personalizar las fotos y los videos", nuevoEn: "Customize the photos and videos", singularEn: "Photos and videos", pluralEn: "Photos and videos" },
 };
 
 /** El texto de cada chip en inglés (los chips nacen en español, que es lo que prueba la lógica). */
@@ -78,11 +79,20 @@ export const ACCION_CORTA_EN: Readonly<Record<AccionAuditoria, string>> = {
   subir_imagen: "Uploaded an image",
 };
 
+/** ¿El registro es de un video? (el servicio de videos lo guarda como un archivo subido, con su tipo en el contenido). */
+const esRegistroDeVideo = (r: Pick<RegistroAuditoria, "accion" | "despues">) => r.accion === "subir_imagen" && typeof r.despues === "object" && r.despues !== null && !Array.isArray(r.despues) && (r.despues as Record<string, unknown>).mime_type === "video/mp4";
+
+/** Qué hizo la persona, en el idioma pedido: «Subió una imagen» o, si el archivo es un video, «Subió un video». */
+export function accionDeAuditoria(r: Pick<RegistroAuditoria, "accion" | "despues">, ingles = false): string {
+  if (esRegistroDeVideo(r)) return ingles ? "Uploaded a video" : "Subió un video";
+  return ingles ? ACCION_CORTA_EN[r.accion] : ACCION_CORTA[r.accion];
+}
+
 /** A qué se refiere un registro del historial general: «Oferta: Amor y amistad», «Página principal»… (vacío para las imágenes). */
 export function objetoDeAuditoria(r: Pick<RegistroAuditoria, "entidadTipo" | "antes" | "despues">): string {
   if (r.entidadTipo === "imagen") return "";
   const tipo = NOMBRES_TIPO[r.entidadTipo].singular;
-  if (r.entidadTipo === "home" || r.entidadTipo === "pie") return tipo;
+  if (r.entidadTipo === "home" || r.entidadTipo === "pie" || r.entidadTipo === "multimedia") return tipo;
   const contenido = [r.despues, r.antes].find((c): c is Record<string, unknown> => typeof c === "object" && c !== null && !Array.isArray(c));
   const nombre = contenido ? (r.entidadTipo === "contenido" || r.entidadTipo === "pagina" ? contenido.titulo : contenido.nombre) : undefined;
   return typeof nombre === "string" && nombre.trim() ? `${tipo}: ${nombre.trim()}` : tipo;
@@ -139,6 +149,16 @@ function simplificar(contenido: unknown): unknown {
   if (Array.isArray(contenido.componentes)) {
     copia.componentes = contenido.componentes.map((c) => (esObjeto(c) ? `${c.cantidad ?? 1} × ${c.referencia}` : String(c)));
   }
+  // Las imágenes de las categorías se comparan POR CATEGORÍA (no por su posición en la lista): así agregar una en medio no parece que cambiaron todas.
+  if (Array.isArray(contenido.categorias) && contenido.categorias.length > 0 && contenido.categorias.every((c) => esObjeto(c) && typeof c.categoria_id === "string")) {
+    const porCategoria: Record<string, unknown> = {};
+    for (const c of contenido.categorias as Array<Record<string, unknown>>) {
+      const imagen = esObjeto(c.imagen) ? c.imagen : {};
+      porCategoria[c.categoria_id as string] = imagen.asset ?? imagen.src ?? "";
+    }
+    delete copia.categorias;
+    copia.imagenes_categorias = porCategoria;
+  }
   return copia;
 }
 
@@ -164,7 +184,7 @@ function aplanar(valor: unknown, ruta: string, salida: Map<string, Hoja>) {
 
 const CAMPOS_PESOS = /(^|\.)(precio|detal|mayorista)$|^beneficio\.(detal|mayorista)$|^precio\.(detal|mayorista)$/;
 /** Datos técnicos de una imagen que a la administradora no le dicen nada (solo importa SI cambió la imagen y su descripción). */
-const RUIDO = /(^|\.)imagen\.(origen|src|ancho|alto)$/;
+const RUIDO = /(^|\.)imagen\.(origen|src|ancho|alto)$|(^|\.)poster$/;
 
 const VALORES: ReadonlyArray<[RegExp, Readonly<Record<string, string>>]> = [
   [/(^|\.)modalidad$/, { detal: "Detal", mayorista: "Mayorista", ambas: "Ambas" }],
@@ -227,12 +247,14 @@ export function resumirCambios(antes: unknown, despues: unknown, max = 6, opcion
     if (va === vd || (va === undefined && vd === "") || (va === "" && vd === undefined)) continue;
     // Una imagen recién puesta trae el punto focal por defecto (el centro): no es una decisión de la persona, no se cuenta.
     if (ruta.endsWith(".foco") && ((va === undefined && vd === "50% 50%") || (vd === undefined && va === "50% 50%"))) continue;
-    // Una imagen se identifica por un código interno: se dice «imagen anterior → imagen nueva», no el código.
-    const esImagen = ruta.endsWith(".asset");
+    // Una imagen o un video se identifican por un código interno: se dice «imagen anterior → imagen nueva» (o «video»), no el código.
+    const esCategoria = ruta.startsWith("imagenes_categorias.");
+    const esVideo = ruta.endsWith(".video");
+    const esImagen = ruta.endsWith(".asset") || esCategoria;
     cambios.push({
-      campo: etiquetaCampo(ruta),
-      antes: esImagen ? (va ? "imagen anterior" : "—") : formatoValor(ruta, va, categorias),
-      despues: esImagen ? (vd ? "imagen nueva" : "—") : formatoValor(ruta, vd, categorias),
+      campo: esCategoria ? `Imagen de la categoría «${categorias.get(ruta.slice("imagenes_categorias.".length)) ?? "categoría eliminada"}»` : etiquetaCampo(ruta),
+      antes: esVideo ? (va ? "video anterior" : "—") : esImagen ? (va ? "imagen anterior" : "—") : formatoValor(ruta, va, categorias),
+      despues: esVideo ? (vd ? "video nuevo" : "—") : esImagen ? (vd ? "imagen nueva" : "—") : formatoValor(ruta, vd, categorias),
     });
   }
   const texto = bloquesAntes !== null || bloquesDespues !== null ? resumenDeCambiosDeBloques(bloquesAntes, bloquesDespues) : null;

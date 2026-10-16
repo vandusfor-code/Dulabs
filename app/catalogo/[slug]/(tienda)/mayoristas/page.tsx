@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PaginaMayoristasJoyeria } from "@/components/catalogo-publico/tienda/joyeria/PaginaMayoristasJoyeria";
 import { mayoristasVisible } from "@/lib/catalogo/joyeria";
-import { cargarPaginaMayoristas, cargarTienda } from "@/lib/catalogo/public-loader";
+import { cargarMultimediaTienda, cargarPaginaMayoristas, cargarTienda } from "@/lib/catalogo/public-loader";
 import { joyeriaOf, storefrontConfigFor } from "@/lib/catalogo/vitrina";
+import { aplicarVideoMayoristas } from "@/lib/cms-comercial/multimedia-tienda";
 
 // Página de mayoristas de la tienda al detal: /catalogo/{slug}/mayoristas (el acceso «Mayorista» de la cabecera, el menú y el pie). Es del tema "joyeria" y solo existe si la tienda la configura
 // (`mayoristas.pagina`) y tiene un WhatsApp al que escribir: para cualquier otra tienda es un 404, nunca una página vacía (y su título tampoco delata una página que no tiene). Lo que muestra es lo
@@ -34,8 +35,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function MayoristasPage({ params }: Props) {
   const { slug } = await params;
-  const hallada = await resolver(slug);
+  // El video de la banda es el que la administradora publicó en «Fotos y videos» (o el de siempre); se lee a la vez que la tienda y nunca la demora ni la rompe.
+  const [hallada, multimedia] = await Promise.all([resolver(slug), cargarMultimediaTienda(slug)]);
   if (!hallada) notFound();
   const pagina = await cargarPaginaMayoristas(hallada.tienda.slug, hallada.opciones);
-  return <PaginaMayoristasJoyeria m={hallada.mayoristas} pagina={pagina} />;
+  return <PaginaMayoristasJoyeria m={aplicarVideoMayoristas(hallada.mayoristas, multimedia)} pagina={pagina} />;
 }

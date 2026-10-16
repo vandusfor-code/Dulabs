@@ -246,7 +246,7 @@ export function useUrlImagen(imagen: Imagen | undefined): string | null {
   return imagenPorId(imagen.asset)?.url ?? null;
 }
 
-export function SelectorImagen({ etiqueta, ayuda, imagen, onCambio, disabled, conFoco = false, requerida = false, problema }: { etiqueta: string; ayuda?: string; imagen: Imagen | undefined; onCambio: (nueva: Imagen | undefined) => void; disabled?: boolean; conFoco?: boolean; requerida?: boolean; problema?: string | null }) {
+export function SelectorImagen({ etiqueta, ayuda, imagen, onCambio, disabled, conFoco = false, requerida = false, problema, ladoMaximo, altSugerido, vertical = false }: { etiqueta: string; ayuda?: string; imagen: Imagen | undefined; onCambio: (nueva: Imagen | undefined) => void; disabled?: boolean; conFoco?: boolean; requerida?: boolean; problema?: string | null; /** Reducir las imágenes más grandes que esto (px, lado más largo) antes de subirlas. */ ladoMaximo?: number; /** Descripción con la que arranca una imagen recién elegida (se puede cambiar). */ altSugerido?: string; /** La vista previa tiene la forma vertical (4:5) de la tarjeta donde se verá (las categorías), para que se note cómo se recorta. */ vertical?: boolean }) {
   const { t } = useI18n();
   const { imagenes, errorImagenes, cargarImagenes, subirImagen } = useTienda();
   const url = useUrlImagen(imagen);
@@ -257,14 +257,14 @@ export function SelectorImagen({ etiqueta, ayuda, imagen, onCambio, disabled, co
   const alt = imagen?.alt ?? "";
 
   const elegir = (id: string) => {
-    onCambio({ origen: "cms", asset: id, alt: alt || "", ...(imagen?.foco ? { foco: imagen.foco } : {}) } as Imagen);
+    onCambio({ origen: "cms", asset: id, alt: alt || altSugerido || "", ...(imagen?.foco ? { foco: imagen.foco } : {}) } as Imagen);
     setGaleria(false);
   };
 
   const subir = async (archivo: File | undefined) => {
     if (!archivo) return;
     setError(null);
-    const r = await subirImagen(archivo, setEtapa);
+    const r = await subirImagen(archivo, setEtapa, ladoMaximo === undefined ? undefined : { ladoMaximo });
     setEtapa(null);
     if (!r.ok) {
       setError(r.error.message);
@@ -286,7 +286,7 @@ export function SelectorImagen({ etiqueta, ayuda, imagen, onCambio, disabled, co
         </p>
       )}
       <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="flex h-32 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg border border-edge bg-ink sm:w-52">
+        <div className={cn("flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-edge bg-ink", vertical ? "aspect-[4/5] w-36" : "h-32 w-full sm:w-52")}>
           {url ? (
             // eslint-disable-next-line @next/next/no-img-element -- vista previa de una imagen del negocio (URL pública de Storage o archivo estático)
             <img src={url} alt={alt} className="size-full object-cover" style={imagen?.foco ? { objectPosition: imagen.foco } : undefined} />

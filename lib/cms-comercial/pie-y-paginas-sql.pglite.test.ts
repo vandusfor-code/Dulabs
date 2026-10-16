@@ -37,7 +37,7 @@ async function huella(b: BaseCms) {
 describe("migración del pie de página y las páginas", () => {
   it("sobre la migración base: no crea ni cambia tablas, funciones, índices ni triggers; solo suma la regla de un único pie", async () => {
     const antes = await huella(await base({ conPie: false }));
-    const despues = await huella(await base());
+    const despues = await huella(await base({ conMultimedia: false }));
     assert.deepEqual(despues.tablas, antes.tablas);
     assert.deepEqual(despues.funciones, antes.funciones);
     assert.deepEqual(despues.indices, antes.indices);
@@ -47,8 +47,8 @@ describe("migración del pie de página y las páginas", () => {
   });
 
   it("es idempotente: aplicarla dos y tres veces no cambia nada ni falla", async () => {
-    const una = await huella(await base());
-    const tres = await huella(await base({ veces: 3 }));
+    const una = await huella(await base({ conMultimedia: false }));
+    const tres = await huella(await base({ conMultimedia: false, veces: 3 }));
     assert.deepEqual(tres, una);
   });
 
@@ -71,7 +71,7 @@ describe("migración del pie de página y las páginas", () => {
 
   it("una base que ya aplicó una versión anterior de esta migración (solo el pie) queda igual al volver a aplicarla", async () => {
     // La versión anterior solo dejaba entrar 'pie' en las dos restricciones: se simula y se vuelve a correr.
-    const b = await base();
+    const b = await base({ conMultimedia: false });
     await b.aplicarSql(`
       alter table public.dulabs_cms_entidades drop constraint dulabs_cms_entidades_tipo_ck;
       alter table public.dulabs_cms_entidades add constraint dulabs_cms_entidades_tipo_ck check (tipo in ('home', 'oferta', 'combo', 'campana', 'contenido', 'pie'));
@@ -94,7 +94,7 @@ describe("reversa de la migración del pie y las páginas (supabase/rollbacks)",
   const rollback = () => readFileSync(rutaRollback(ROLLBACK_PIE), "utf8").replace(/^\\set .*$/gm, "");
 
   it("sin ningún pie ni páginas vuelve las restricciones a como estaban: dejan de poder crearse y lo demás sigue igual; y se puede repetir", async () => {
-    const b = await base();
+    const b = await base({ conMultimedia: false });
     const completa = await huella(b);
     await b.aplicarSql(rollback());
     await b.aplicarSql(rollback());
@@ -111,7 +111,7 @@ describe("reversa de la migración del pie y las páginas (supabase/rollbacks)",
   });
 
   it("se NIEGA a correr si ya existe un pie (su historial es de solo añadir) y no cambia nada", async () => {
-    const b = await base();
+    const b = await base({ conMultimedia: false });
     assert.equal(await crear(b, "pie", "pie"), "ok");
     const antes = await huella(b);
     await assert.rejects(b.aplicarSql(rollback()), /ya existe un pie de página o una página/);
@@ -121,7 +121,7 @@ describe("reversa de la migración del pie y las páginas (supabase/rollbacks)",
   });
 
   it("se NIEGA a correr si ya existe una página, aunque no haya pie, y no cambia nada", async () => {
-    const b = await base();
+    const b = await base({ conMultimedia: false });
     assert.equal(await crear(b, "pagina", "politica-de-privacidad"), "ok");
     const antes = await huella(b);
     await assert.rejects(b.aplicarSql(rollback()), /ya existe un pie de página o una página \(1 elementos, 1 registros de historial\)/);

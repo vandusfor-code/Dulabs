@@ -9,9 +9,10 @@ import { TiendaInicioJoyeria } from "@/components/catalogo-publico/tienda/joyeri
 import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/TiendaInicioTecnologia";
 import { SIN_FILTROS, hayFiltros, leerFiltros, textoDeFiltros } from "@/lib/catalogo/filtros";
 import { esListado } from "@/lib/catalogo/inicio";
-import { cargarAcabados, cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
+import { cargarAcabados, cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarMultimediaTienda, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
 import { joyeriaOf, storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
+import { aplicarCategorias, aplicarMultimedia } from "@/lib/cms-comercial/multimedia-tienda";
 
 // Catálogo público con precios al DETAL: /catalogo/{slug}. Sin parámetros
 // muestra el INICIO de la tienda; con búsqueda, categoría, página o ?todo=1,
@@ -62,12 +63,19 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
       categorias: new Set(tienda.categories.map((c) => c.id)),
     });
     // Vitrina con tema "joyeria" (Bloque 30): las MISMAS secciones y datos, con el diseño editorial. El contenido sigue siendo el del CMS.
-    const joyeria = joyeriaOf(registro);
+    const joyeriaDeSiempre = joyeriaOf(registro);
     // La franja de acabados (solo del tema "joyeria") sale de los colores reales del catálogo; se lee a la vez que el inicio y, si falla o no hay, la franja no se dibuja.
-    const [home, acabados] = await Promise.all([cargarInicioElegido(slug, vitrina.opciones), joyeria?.acabados ? cargarAcabados(slug) : Promise.resolve(null)]);
+    // Lo mismo las fotos y videos que la administradora publicó (los videos del inicio y la imagen de cada categoría): sin nada publicado o ante cualquier problema, los de siempre.
+    const [home, acabados, multimedia] = await Promise.all([
+      cargarInicioElegido(slug, vitrina.opciones),
+      joyeriaDeSiempre?.acabados ? cargarAcabados(slug) : Promise.resolve(null),
+      joyeriaDeSiempre ? cargarMultimediaTienda(tienda.slug) : Promise.resolve(null),
+    ]);
     if (!home) notFound();
-    if (joyeria) {
-      return <TiendaInicioJoyeria home={home} config={vitrina.config} joyeria={joyeria} basePath={basePath} listPath={listPath} businessName={tienda.publicName} whatsapp={tienda.whatsapp} acabados={acabados} />;
+    if (joyeriaDeSiempre) {
+      const joyeria = aplicarMultimedia(joyeriaDeSiempre, multimedia);
+      const inicio = multimedia ? { ...home, categories: aplicarCategorias(home.categories, multimedia) } : home;
+      return <TiendaInicioJoyeria home={inicio} config={vitrina.config} joyeria={joyeria} basePath={basePath} listPath={listPath} businessName={tienda.publicName} whatsapp={tienda.whatsapp} acabados={acabados} />;
     }
     return <TiendaInicio home={home} config={vitrina.config} basePath={basePath} listPath={listPath} businessName={tienda.publicName} />;
   }

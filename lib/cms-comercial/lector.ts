@@ -44,6 +44,7 @@ export function construirInstantanea(tenantId: string, cruda: LecturaActivaCruda
   const paginas: PublicadaCms<"pagina">[] = [];
   let home: PublicadaCms<"home"> | null = null;
   let pie: PublicadaCms<"pie"> | null = null;
+  let multimedia: PublicadaCms<"multimedia"> | null = null;
 
   for (const e of cruda.entidades) {
     const descartar = (motivo: MotivoDescarte) => void descartados.push({ clave: e.clave, tipo: e.tipo, motivo });
@@ -80,6 +81,10 @@ export function construirInstantanea(tenantId: string, cruda: LecturaActivaCruda
         if (pie !== null) descartar("repetida");
         else pie = { ...base, contenido: parseo.data as PublicadaCms<"pie">["contenido"] };
         break;
+      case "multimedia":
+        if (multimedia !== null) descartar("repetida");
+        else multimedia = { ...base, contenido: parseo.data as PublicadaCms<"multimedia">["contenido"] };
+        break;
       case "pagina":
         paginas.push({ ...base, contenido: parseo.data as PublicadaCms<"pagina">["contenido"] });
         break;
@@ -99,7 +104,7 @@ export function construirInstantanea(tenantId: string, cruda: LecturaActivaCruda
   }
 
   const assets = new Map<string, AssetPublicoCms>(cruda.assets.map((a) => [a.id, { id: a.id, storagePath: a.storagePath, mimeType: a.mimeType, ancho: a.ancho, alto: a.alto }]));
-  return { snap: { ...instantaneaVacia(tenantId), home, pie, paginas, ofertas, combos, campanas, contenidos, assets }, descartados };
+  return { snap: { ...instantaneaVacia(tenantId), home, pie, paginas, multimedia, ofertas, combos, campanas, contenidos, assets }, descartados };
 }
 
 export function crearLector(repo: CmsRepositorio, opciones: { alDescartar?: (tenantId: string, descartados: Descartado[]) => void } = {}): CmsLector {

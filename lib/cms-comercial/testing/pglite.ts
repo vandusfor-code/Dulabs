@@ -19,6 +19,10 @@ export const PRUEBA_SQL_CMS = "20261210000000_dulabs_cms_comercial.test.sql";
 export const MIGRACION_PIE = "20261211000000_dulabs_cms_pie_y_paginas.sql";
 export const ROLLBACK_PIE = "20261211000000_dulabs_cms_pie_y_paginas.down.sql";
 export const PRUEBA_SQL_PIE = "20261211000000_dulabs_cms_pie_y_paginas.test.sql";
+/** Las fotos y videos del inicio como tipo del CMS y los videos MP4 como archivos (se aplica DESPUÉS de la del pie y las páginas). */
+export const MIGRACION_MULTIMEDIA = "20261212000000_dulabs_cms_multimedia.sql";
+export const ROLLBACK_MULTIMEDIA = "20261212000000_dulabs_cms_multimedia.down.sql";
+export const PRUEBA_SQL_MULTIMEDIA = "20261212000000_dulabs_cms_multimedia.test.sql";
 
 const raiz = () => process.cwd();
 export const rutaMigracion = (archivo = MIGRACION_CMS) => path.join(raiz(), "supabase", "migrations", archivo);
@@ -69,16 +73,22 @@ export interface BaseCms {
   cerrar(): Promise<void>;
 }
 
-/** `conPie: false` aplica solo la migración base (cómo estaba la base antes de la del pie y las páginas). */
-export async function crearBaseCms(opciones: { aplicarMigracion?: boolean; veces?: number; conPie?: boolean } = {}): Promise<BaseCms> {
+/**
+ * Por defecto aplica TODAS las migraciones del CMS, en orden. `conPie: false` aplica solo la migración base (cómo estaba la base antes de la del pie y las páginas, y por tanto
+ * también antes de la de fotos y videos, que la necesita); `conMultimedia: false` aplica la base y la del pie, sin la de fotos y videos.
+ */
+export async function crearBaseCms(opciones: { aplicarMigracion?: boolean; veces?: number; conPie?: boolean; conMultimedia?: boolean } = {}): Promise<BaseCms> {
   const db = new PGlite();
   await db.exec(PREPARACION);
   const migracion = readFileSync(rutaMigracion(), "utf8");
   const migracionPie = readFileSync(rutaMigracion(MIGRACION_PIE), "utf8");
+  const migracionMultimedia = readFileSync(rutaMigracion(MIGRACION_MULTIMEDIA), "utf8");
   if (opciones.aplicarMigracion !== false) {
     for (let i = 0; i < (opciones.veces ?? 1); i++) {
       await db.exec(migracion);
-      if (opciones.conPie !== false) await db.exec(migracionPie);
+      if (opciones.conPie === false) continue;
+      await db.exec(migracionPie);
+      if (opciones.conMultimedia !== false) await db.exec(migracionMultimedia);
     }
   }
 

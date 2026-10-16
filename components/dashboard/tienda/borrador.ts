@@ -82,6 +82,9 @@ export function borradorInicial(tipo: TipoEntidad): Draft {
     case "pagina":
       // El título lo pone quien la crea (ListaEntidades); el texto se escribe en el editor.
       return { bloques: [] };
+    case "multimedia":
+      // Sin nada elegido: la tienda se sigue viendo con sus videos y fotos de siempre hasta que la administradora cambie alguno.
+      return {};
   }
 }
 

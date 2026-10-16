@@ -18,10 +18,10 @@ import { PanelHistorial } from "@/components/dashboard/tienda/paneles";
 import { ListaPreguntas } from "@/components/dashboard/tienda/preguntas";
 import { actionBtn, Aviso, BotonCargando, Cargando, cn, primaryBtn } from "@/components/dashboard/tienda/ui";
 
-type TipoUnico = "home" | "pie";
+type TipoUnico = "home" | "pie" | "multimedia";
 type Pestana = TipoUnico | TipoLista | "preguntas" | "historial";
 
-const esUnica = (p: Pestana): p is TipoUnico => p === "home" || p === "pie";
+const esUnica = (p: Pestana): p is TipoUnico => p === "home" || p === "pie" || p === "multimedia";
 
 // ---------------------------------------------------------------------------
 // La página principal y el pie de página: hay uno solo por negocio; se editan directamente (sin lista)
@@ -37,6 +37,7 @@ function PestanaUnica({ tipo }: { tipo: TipoUnico }) {
   const [creando, setCreando] = useState(false);
   const [errorCrear, setErrorCrear] = useState<string | null>(null);
   const esPie = tipo === "pie";
+  const esMultimedia = tipo === "multimedia";
 
   useEffect(() => {
     let vivo = true;
@@ -56,7 +57,7 @@ function PestanaUnica({ tipo }: { tipo: TipoUnico }) {
   const crear = async () => {
     setCreando(true);
     setErrorCrear(null);
-    const borrador = esPie ? pieInicial({ mayoristas: contexto?.tienda?.mayoristas ?? false, descripcion: contexto?.tienda?.descripcion }) : borradorInicial("home");
+    const borrador = esPie ? pieInicial({ mayoristas: contexto?.tienda?.mayoristas ?? false, descripcion: contexto?.tienda?.descripcion }) : borradorInicial(esMultimedia ? "multimedia" : "home");
     const r = await client.crear(tipo, borrador);
     setCreando(false);
     if (!r.ok) {
@@ -76,7 +77,7 @@ function PestanaUnica({ tipo }: { tipo: TipoUnico }) {
   if (estado.fase === "error") {
     return (
       <div className="px-4 pt-6 md:px-8">
-        <Aviso tono="danger" titulo={esPie ? t("No pudimos cargar el pie de página", "We couldn't load the footer") : t("No pudimos cargar la página principal", "We couldn't load the home page")}>
+        <Aviso tono="danger" titulo={esPie ? t("No pudimos cargar el pie de página", "We couldn't load the footer") : esMultimedia ? t("No pudimos cargar las fotos y los videos", "We couldn't load the photos and videos") : t("No pudimos cargar la página principal", "We couldn't load the home page")}>
           {estado.mensaje}
           <button type="button" onClick={() => setRecarga((n) => n + 1)} className="mt-2 block text-sm underline underline-offset-2">
             {t("Reintentar", "Retry")}
@@ -89,13 +90,15 @@ function PestanaUnica({ tipo }: { tipo: TipoUnico }) {
     return (
       <div className="px-4 pt-6 md:px-8">
         <div className="rounded-2xl border border-dashed border-edge bg-card px-6 py-14 text-center">
-          <p className="text-base font-semibold text-fg">{esPie ? t("Todavía no personalizaste el pie de página", "You haven't customized the footer yet") : t("Todavía no configuraste la página principal", "You haven't set up the home page yet")}</p>
+          <p className="text-base font-semibold text-fg">{esPie ? t("Todavía no personalizaste el pie de página", "You haven't customized the footer yet") : esMultimedia ? t("Todavía no cambiaste las fotos ni los videos", "You haven't changed the photos or videos yet") : t("Todavía no configuraste la página principal", "You haven't set up the home page yet")}</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-mist">
             {canWrite
-              ? esPie
+              ? esMultimedia
+                ? t("Tu tienda ya muestra sus videos y la foto de cada categoría. Aquí los cambias por los tuyos: antes de subir un video te decimos si sirve, con sus medidas y su peso. Se guarda como borrador hasta que lo publiques.", "Your store already shows its videos and each category's photo. Here you replace them with your own: before uploading a video we tell you whether it works, with its size and weight. It is saved as a draft until you publish it.")
+                : esPie
                 ? t("Tu tienda ya muestra un pie. Aquí lo personalizas: las columnas de enlaces, el contacto, las redes sociales y la frase que salen al final de cada página. Parte del pie de hoy y se guarda como borrador hasta que lo publiques.", "Your store already shows a footer. Here you customize it: the link columns, contact, social networks and the line shown at the bottom of every page. It starts from today's footer and is saved as a draft until you publish it.")
                 : t("Aquí eliges la portada, el banner, las categorías y los productos destacados. Se guarda como borrador hasta que la publiques.", "Here you choose the cover, banner, featured categories and products. It is saved as a draft until you publish it.")
-              : esPie
+              : esPie || esMultimedia
                 ? t("Cuando un administrador lo personalice, lo verás aquí.", "When an administrator customizes it, you'll see it here.")
                 : t("Cuando un administrador la configure, la verás aquí.", "When an administrator sets it up, you'll see it here.")}
           </p>
@@ -106,7 +109,7 @@ function PestanaUnica({ tipo }: { tipo: TipoUnico }) {
           )}
           {canWrite && (
             <BotonCargando type="button" cargando={creando} disabled={!contextoListo} onClick={() => void crear()} className={cn(primaryBtn, "mx-auto mt-5")}>
-              {esPie ? t("Personalizar el pie de página", "Customize the footer") : t("Crear la página principal", "Create the home page")}
+              {esPie ? t("Personalizar el pie de página", "Customize the footer") : esMultimedia ? t("Personalizar las fotos y los videos", "Customize the photos and videos") : t("Crear la página principal", "Create the home page")}
             </BotonCargando>
           )}
         </div>
@@ -128,6 +131,7 @@ function Contenido() {
   const tienda = contexto?.tienda ?? null;
   const pestanas: Array<{ id: Pestana; etiqueta: string }> = [
     { id: "home", etiqueta: t("Página principal", "Home page") },
+    ...(tienda?.tema === "joyeria" ? [{ id: "multimedia" as const, etiqueta: t("Fotos y videos", "Photos and videos") }] : []),
     { id: "oferta", etiqueta: t("Ofertas", "Offers") },
     { id: "combo", etiqueta: t("Combos", "Combos") },
     { id: "campana", etiqueta: t("Campañas", "Campaigns") },

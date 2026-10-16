@@ -386,6 +386,33 @@ export const paginaSchema = z
 export type Pagina = z.infer<typeof paginaSchema>;
 
 // ---------------------------------------------------------------------------
+// Fotos y videos del inicio de la tienda (uno por negocio)
+// ---------------------------------------------------------------------------
+
+/** Un archivo de video subido al CMS y su imagen fija (el primer fotograma), que se ve mientras el video carga, con ahorro de datos o con «movimiento reducido». */
+export const archivoVideoSchema = z.strictObject({ video: uuid("El video"), poster: uuid("La imagen fija del video") });
+export type ArchivoVideoCms = z.infer<typeof archivoVideoSchema>;
+
+/** Portada y colección llevan un video horizontal (obligatorio si el espacio se personaliza) y, opcional, uno vertical para el celular. */
+const videoHorizontalYVertical = z.strictObject({ horizontal: archivoVideoSchema, vertical: archivoVideoSchema.optional() });
+/** La marca y los mayoristas llevan un solo archivo. */
+const videoUnico = z.strictObject({ horizontal: archivoVideoSchema });
+
+export const MAX_CATEGORIAS_CON_IMAGEN = 60;
+
+export const multimediaSchema = z.strictObject({
+  /** Los videos de los espacios del inicio. Un espacio que no está aquí conserva el video que trae la tienda (el original de DuLabs). */
+  videos: z.strictObject({ portada: videoHorizontalYVertical.optional(), coleccion: videoHorizontalYVertical.optional(), marca: videoUnico.optional(), mayoristas: videoUnico.optional() }).optional(),
+  /** La imagen de presentación de cada categoría que la administradora eligió. Una categoría que no está aquí usa la foto de uno de sus productos (como siempre). */
+  categorias: z
+    .array(z.strictObject({ categoria_id: uuid("La categoría"), imagen: imagenSchema }))
+    .max(MAX_CATEGORIAS_CON_IMAGEN, { message: `Máximo ${MAX_CATEGORIAS_CON_IMAGEN} categorías con imagen.` })
+    .refine((c) => sinRepetidos(c.map((x) => x.categoria_id)), { message: "Una categoría no puede repetirse." })
+    .optional(),
+});
+export type Multimedia = z.infer<typeof multimediaSchema>;
+
+// ---------------------------------------------------------------------------
 // Por tipo
 // ---------------------------------------------------------------------------
 
@@ -397,6 +424,7 @@ export interface ContenidoPorTipo {
   contenido: Contenido;
   pie: Pie;
   pagina: Pagina;
+  multimedia: Multimedia;
 }
 
 export const ESQUEMA_POR_TIPO = {
@@ -407,6 +435,7 @@ export const ESQUEMA_POR_TIPO = {
   contenido: contenidoSchema,
   pie: pieSchema,
   pagina: paginaSchema,
+  multimedia: multimediaSchema,
 } as const satisfies Record<TipoEntidad, z.ZodType>;
 
 /** Claves de primer nivel permitidas en el borrador de cada tipo. */
@@ -418,6 +447,7 @@ const CLAVES_PERMITIDAS: Readonly<Record<TipoEntidad, readonly string[]>> = {
   contenido: Object.keys(contenidoSchema.shape),
   pie: Object.keys(pieSchema.shape),
   pagina: Object.keys(paginaSchema.shape),
+  multimedia: Object.keys(multimediaSchema.shape),
 };
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ import { precioConBeneficio } from "@/lib/cms-comercial/evaluacion";
 import { ESQUEMA_POR_TIPO, type Beneficio } from "@/lib/cms-comercial/esquemas";
 import { contieneEnlaceMayorista, ordenAlAsistente, pareceSecreto } from "@/lib/cms-comercial/texto-seguro";
 import { finExclusivoMs } from "@/lib/cms-comercial/tiempo";
+import { ARCHIVOS_VIDEO, ESPECIFICACIONES, comprobarArchivoGuardado, type ArchivoVideoId } from "@/lib/cms-comercial/video-requisitos";
 import { VARIABLES, escribioMontoAMano, esVariable, formatearPesos, variablesEn, type ValoresVariables } from "@/lib/cms-comercial/variables";
 
 export interface ProductoValidacion {
@@ -33,8 +34,11 @@ export interface ContextoValidacion {
   /** Productos que EXISTEN en el catálogo del negocio, por referencia. Una referencia ausente del mapa no existe. */
   productos: ReadonlyMap<string, ProductoValidacion>;
   categorias: ReadonlyMap<string, { id: string; nombre: string }>;
-  /** Imágenes del negocio por id. */
-  assets: ReadonlyMap<string, { id: string; estado: "pendiente" | "listo" }>;
+  /**
+   * Imágenes y videos del negocio por id. Tipo, medidas y peso son lo que la base de datos conoce del archivo (opcionales: quien no los informa solo valida que exista y esté lista);
+   * con ellos, publicar comprueba que un video sea de verdad un video y que sus medidas y su peso sirvan para el espacio donde se usa.
+   */
+  assets: ReadonlyMap<string, { id: string; estado: "pendiente" | "listo"; mime?: string; ancho?: number; alto?: number; bytes?: number }>;
   /** Otros elementos del negocio, con llave `tipo:clave` (para validar campañas y destinos de botones). */
   elementos: ReadonlyMap<string, { estado: EstadoEntidad; archivada: boolean; nombre: string }>;
   /** Valores configurados de las variables del negocio. */
@@ -61,6 +65,8 @@ export interface Dependencias {
   referencias: Array<{ valor: string; campo: string }>;
   categorias: Array<{ valor: string; campo: string }>;
   assets: Array<{ valor: string; campo: string }>;
+  /** Los videos subidos que el borrador usa (cada uno con el archivo, o sea el espacio, donde se usa). */
+  videos: Array<{ valor: string; campo: string; archivo: ArchivoVideoId }>;
   elementos: Array<{ tipo: TipoReferenciado; clave: string; campo: string }>;
 }
 
@@ -79,7 +85,7 @@ function imagen(i: unknown, campo: string, dep: Dependencias) {
 /** Todo lo que el borrador menciona y hay que consultar (productos, categorías, imágenes y otros elementos), con la ruta del campo para los mensajes. */
 export function dependenciasDe(tipo: TipoEntidad, borrador: unknown): Dependencias {
   const b = objeto(borrador);
-  const dep: Dependencias = { referencias: [], categorias: [], assets: [], elementos: [] };
+  const dep: Dependencias = { referencias: [], categorias: [], assets: [], videos: [], elementos: [] };
   const refs = (v: unknown, campo: string) => lista(v).forEach((r, i) => typeof r === "string" && dep.referencias.push({ valor: r, campo: `${campo}.${i}` }));
   const cats = (v: unknown, campo: string) => lista(v).forEach((c, i) => typeof c === "string" && dep.categorias.push({ valor: c, campo: `${campo}.${i}` }));
   if (tipo === "home") {
@@ -112,6 +118,20 @@ export function dependenciasDe(tipo: TipoEntidad, borrador: unknown): Dependenci
     refs(b.productos_destacados, "productos_destacados");
   } else if (tipo === "pie") {
     lista(b.columnas).forEach((columna, i) => lista(objeto(columna).enlaces).forEach((enlace, j) => destino(objeto(enlace).destino, "columnas." + i + ".enlaces." + j + ".destino", dep)));
+  } else if (tipo === "multimedia") {
+    const videos = objeto(b.videos);
+    for (const archivo of ARCHIVOS_VIDEO) {
+      const [espacio, orientacion] = archivo.split(".");
+      const ref = objeto(objeto(videos[espacio])[orientacion]);
+      const campo = `videos.${espacio}.${orientacion}`;
+      if (cadena(ref.video)) dep.videos.push({ valor: ref.video as string, campo: `${campo}.video`, archivo });
+      if (cadena(ref.poster)) dep.assets.push({ valor: ref.poster as string, campo: `${campo}.poster` });
+    }
+    lista(b.categorias).forEach((c, i) => {
+      const item = objeto(c);
+      if (cadena(item.categoria_id)) dep.categorias.push({ valor: item.categoria_id as string, campo: `categorias.${i}.categoria_id` });
+      imagen(item.imagen, `categorias.${i}.imagen`, dep);
+    });
   }
   return dep;
 }
@@ -120,7 +140,31 @@ export function dependenciasDe(tipo: TipoEntidad, borrador: unknown): Dependenci
 // Mensajes en español
 // ---------------------------------------------------------------------------
 
+/** Los nombres de los campos de las fotos y videos: cada archivo de video y su imagen fija se llaman como el espacio donde se usan. */
+const ETIQUETAS_MULTIMEDIA: Readonly<Record<string, string>> = {
+  videos: "Videos de la tienda",
+  "videos.portada": "Video de la portada",
+  "videos.coleccion": "Video de la colección",
+  "videos.marca": "Video de la marca",
+  "videos.mayoristas": "Video de mayoristas",
+  categorias: "Imágenes de las categorías",
+  "categorias.categoria_id": "Categoría",
+  "categorias.imagen": "Imagen de la categoría",
+  ...Object.fromEntries(
+    ARCHIVOS_VIDEO.flatMap((archivo) => {
+      const [espacio, orientacion] = archivo.split(".");
+      const titulo = ESPECIFICACIONES[archivo].titulo;
+      return [
+        [`videos.${espacio}.${orientacion}`, titulo],
+        [`videos.${espacio}.${orientacion}.video`, `Video · ${titulo}`],
+        [`videos.${espacio}.${orientacion}.poster`, `Imagen fija · ${titulo}`],
+      ];
+    }),
+  ),
+};
+
 const ETIQUETAS: Readonly<Record<string, string>> = {
+  ...ETIQUETAS_MULTIMEDIA,
   nombre: "Nombre",
   descripcion: "Descripción",
   imagen: "Imagen",
@@ -257,6 +301,9 @@ export function validar(tipo: TipoEntidad, borrador: unknown, ctx: ContextoValid
       case "pie":
         revisarPie(parseo.data as never, adv);
         break;
+      case "multimedia":
+        revisarMultimedia(parseo.data as never, adv);
+        break;
       default:
         break;
     }
@@ -311,6 +358,18 @@ function revisarDependencias(tipo: TipoEntidad, borrador: unknown, ctx: Contexto
     const a = ctx.assets.get(valor);
     if (!a) err("imagen_inexistente", campo, "La imagen elegida ya no existe. Sube otra.");
     else if (a.estado !== "listo") err("imagen_pendiente", campo, "La imagen todavía no terminó de subirse. Espera un momento y vuelve a intentar.");
+    else if (a.mime !== undefined && !a.mime.startsWith("image/")) err("imagen_invalida", campo, "El archivo elegido no es una imagen. Sube una imagen.");
+  }
+  for (const { valor, campo, archivo } of dep.videos) {
+    const nombre = ESPECIFICACIONES[archivo].titulo;
+    const v = ctx.assets.get(valor);
+    if (!v) err("video_inexistente", campo, `El video de «${nombre}» ya no existe. Sube otro.`);
+    else if (v.estado !== "listo") err("video_pendiente", campo, `El video de «${nombre}» todavía no terminó de subirse. Espera un momento y vuelve a intentar.`);
+    else if (v.mime !== undefined && v.mime !== "video/mp4") err("video_invalido", campo, `El archivo elegido para «${nombre}» no es un video. Sube un video MP4.`);
+    else if (v.ancho !== undefined && v.alto !== undefined && v.bytes !== undefined) {
+      // La red de seguridad al publicar: el peso y las medidas que la base conoce del video tienen que servir para ESTE espacio (también si alguien lo cambió de lugar).
+      for (const f of comprobarArchivoGuardado({ ancho: v.ancho, alto: v.alto, bytes: v.bytes }, archivo)) err("video_no_cumple", campo, `El video de «${nombre}» no cumple: ${f.detalle} ${f.arreglo ?? ""}`.trim());
+    }
   }
   for (const { tipo: t, clave, campo } of dep.elementos) {
     const el = ctx.elementos.get(llaveElemento(t, clave));
@@ -342,6 +401,12 @@ function revisarPie(p: { descripcion?: string; columnas: unknown[]; mostrar_cate
   if (contactoVacio) adv("contacto_vacio", "contacto", "El bloque de contacto no tiene nada que mostrar: no aparecerá en la tienda.");
   const hayAlgo = Boolean(p.descripcion) || p.columnas.length > 0 || p.mostrar_categorias || (c !== undefined && !contactoVacio) || p.redes.length > 0;
   if (!hayAlgo) adv("pie_vacio", "", "El pie no tiene descripción, enlaces, contacto ni redes: solo se verá el nombre de tu marca.");
+}
+
+function revisarMultimedia(m: { videos?: Record<string, unknown>; categorias?: unknown[] }, adv: Reportar) {
+  const hayVideos = m.videos !== undefined && Object.values(m.videos).some((v) => v !== undefined);
+  const hayCategorias = (m.categorias?.length ?? 0) > 0;
+  if (!hayVideos && !hayCategorias) adv("multimedia_vacia", "", "No elegiste ningún video ni ninguna imagen de categoría: publicar esto no cambia nada en tu tienda (se siguen viendo los originales).");
 }
 
 function revisarHome(h: { portada: { visible: boolean; imagen?: unknown }; banner?: { visible: boolean }; secciones: Array<{ tipo: string; visible: boolean }>; categorias_destacadas: string[]; productos_destacados: string[] }, adv: Reportar) {

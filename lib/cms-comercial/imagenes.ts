@@ -59,7 +59,10 @@ export interface ImagenesDeps {
 /** Rutas de una imagen: la final (WebP verificado) y la temporal de subida, ambas bajo `{negocio}/cms/{id}/`. */
 export const rutasDeImagen = (tenantId: string, id: string) => ({ final: `${tenantId}/cms/${id}/imagen.webp`, temporal: `${tenantId}/cms/${id}/subida` });
 
-function nombreSeguro(nombre: string | null | undefined): string | null {
+/** Los archivos del CMS son imágenes o videos (el servicio de videos es lib/cms-comercial/videos.ts): la galería de imágenes y su tope solo cuentan imágenes. */
+const esImagen = (a: Pick<AssetCms, "mimeType">) => a.mimeType.startsWith("image/");
+
+export function nombreSeguro(nombre: string | null | undefined): string | null {
   if (nombre === null || nombre === undefined) return null;
   const sinRuta = normalizarTexto(nombre).split(/[\\/]/).pop() ?? "";
   const limpio = sinRuta.replace(/[<>:"|?*]/g, "").trim().slice(0, 120);
@@ -85,7 +88,7 @@ export function crearServicioImagenes(deps: ImagenesDeps): ServicioImagenes {
       if (!(TIPOS_SUBIDA as readonly string[]).includes(input.mimeType)) throw new CmsError("VALIDATION_ERROR", "Usa una imagen JPG, PNG o WebP.");
       if (!Number.isInteger(input.bytes) || input.bytes < 1) throw new CmsError("VALIDATION_ERROR", "La imagen está vacía.");
       if (input.bytes > MAX_BYTES_SUBIDA) throw new CmsError("VALIDATION_ERROR", "La imagen supera el tamaño máximo permitido (6 MB).");
-      if ((await repo.listarAssets(actor.tenantId, 500)).length >= LIMITE_IMAGENES) {
+      if ((await repo.listarAssets(actor.tenantId, 500)).filter(esImagen).length >= LIMITE_IMAGENES) {
         throw new CmsError("VALIDATION_ERROR", `Llegaste al máximo de ${LIMITE_IMAGENES} imágenes. Quita alguna que ya no uses.`);
       }
       const id = nuevoId();
@@ -100,7 +103,8 @@ export function crearServicioImagenes(deps: ImagenesDeps): ServicioImagenes {
     async confirmar(actor, id) {
       exigirEscritura(actor);
       const asset = await repo.obtenerAsset(actor.tenantId, id);
-      if (!asset) throw new CmsError("NOT_FOUND", "No encontramos esa imagen.");
+      // Un video no se confirma por la ruta de las imágenes (ni al revés): cada archivo se verifica con las reglas de su tipo.
+      if (!asset || !esImagen(asset)) throw new CmsError("NOT_FOUND", "No encontramos esa imagen.");
       if (asset.estado === "listo") return vista(asset); // confirmar dos veces es idempotente
       // Las rutas se recalculan desde el negocio de la sesión y el id: nunca de lo que mande el navegador.
       const { final, temporal } = rutasDeImagen(actor.tenantId, asset.id);
@@ -135,7 +139,7 @@ export function crearServicioImagenes(deps: ImagenesDeps): ServicioImagenes {
 
     async listar(actor) {
       exigirLectura(actor);
-      return (await repo.listarAssets(actor.tenantId, 200)).map(vista);
+      return (await repo.listarAssets(actor.tenantId, 500)).filter(esImagen).slice(0, 200).map(vista);
     },
   };
 }

@@ -72,6 +72,10 @@ const nextConfig: NextConfig = {
               // origen externo. Sin esto, las miniaturas del preview de la
               // carga masiva no se veían (hallazgo de la QA de la fase 5).
               "img-src 'self' data: blob: https://*.supabase.co",
+              // Videos: el panel de la tienda previsualiza el video que la administradora acaba de elegir (blob: local, antes de subirlo) y el que ya subió y aún no
+              // publicó (Storage de Supabase, el mismo dominio ya confiado para imágenes y conexiones). La tienda pública sirve sus videos desde su propio origen
+              // (/catalogo/{tienda}/vitrina/{id}.mp4), así que no abre nada más: sin esta línea los videos caerían en default-src 'self' y la vista previa no se vería.
+              "media-src 'self' blob: https://*.supabase.co",
               "font-src 'self'",
               // connect.facebook.net (Embedded Signup), Supabase (auth), y
               // Wompi (tokenización de tarjeta directo desde el navegador en

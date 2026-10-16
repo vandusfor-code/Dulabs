@@ -1,7 +1,7 @@
 /**
  * CMS comercial — CONTRATO COMPARTIDO (tipos y constantes). PURO.
  *
- * El CMS administra contenido comercial ESTRUCTURADO de un negocio (portada y página principal, pie de página, páginas propias de la tienda como la política de privacidad, ofertas, combos,
+ * El CMS administra contenido comercial ESTRUCTURADO de un negocio (portada y página principal, pie de página, páginas propias de la tienda como la política de privacidad, fotos y videos del inicio, ofertas, combos,
  * campañas y contenido como preguntas frecuentes o políticas para ARIA) con un ciclo único: BORRADOR → VALIDACIÓN → PUBLICAR → VERSIÓN ACTIVA (+ historial y restauración). Lo único que ven la
  * tienda, el carrito/pedido y ARIA es lo PUBLICADO, vigente y aplicable al canal del cliente; los borradores solo los lee el editor del Dashboard.
  *
@@ -12,7 +12,7 @@ import type { Rol } from "@/lib/team";
 /** Módulo por negocio (dulabs_tenant_modulos). Sin él, el CMS no existe para el negocio: ni API, ni menú, ni lectura publicada. */
 export const CMS_MODULE = "cms_comercial" as const;
 
-export const TIPOS_ENTIDAD = ["home", "oferta", "combo", "campana", "contenido", "pie", "pagina"] as const;
+export const TIPOS_ENTIDAD = ["home", "oferta", "combo", "campana", "contenido", "pie", "pagina", "multimedia"] as const;
 export type TipoEntidad = (typeof TIPOS_ENTIDAD)[number];
 
 /**
@@ -188,6 +188,7 @@ export interface ResultadoValidacion {
 export function nombreDeEntidad(tipo: TipoEntidad, contenido: Record<string, unknown> | null | undefined): string {
   if (tipo === "home") return "Página principal";
   if (tipo === "pie") return "Pie de página";
+  if (tipo === "multimedia") return "Fotos y videos";
   const c = contenido ?? {};
   const valor = tipo === "contenido" || tipo === "pagina" ? c.titulo : c.nombre;
   return typeof valor === "string" && valor.trim() ? valor.trim() : "Sin nombre";

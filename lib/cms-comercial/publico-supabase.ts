@@ -11,6 +11,8 @@ import { productoParaCombo } from "@/lib/cms-comercial/consulta";
 import { createSupabaseCatalogRepository } from "@/lib/catalogo/repository";
 import { createPublicCatalogService } from "@/lib/catalogo/service";
 import { crearPuertoVariablesSupabase } from "@/lib/cms-comercial/adaptadores-supabase";
+import { crearAlmacenSupabase } from "@/lib/cms-comercial/almacen";
+import { abrirVideoDeStorage } from "@/lib/cms-comercial/video-publico";
 import type { ProductoParaCombo } from "@/lib/cms-comercial/evaluacion";
 import { leerPublicado } from "@/lib/cms-comercial/lectura-publicada";
 import { repositorioConPrecios } from "@/lib/cms-comercial/precios-supabase";
@@ -41,6 +43,8 @@ export function crearDepsPublicasCms() {
     // La configuración del negocio de ARIA (el mínimo mayorista…): una lectura pequeña por visita a la página de mayoristas.
     negocio: (tenantId: string) => crearPuertoVariablesSupabase(dep().supabase).valores(tenantId),
     abrir: (path: string) => dep().repo.openImage(path),
+    // Los videos se leen por la dirección pública de Storage, reenviando el rango que pidió el navegador (Safari lo exige).
+    abrirVideo: (path: string, rango: string | null) => abrirVideoDeStorage(crearAlmacenSupabase(dep().supabase).urlPublica(path), rango),
     /**
      * Los datos reales de los productos de los combos, con el precio EFECTIVO detal (lo que el cliente pagaría hoy por separado: así «precio normal» y «ahorro»
      * nunca prometen un descuento que ya no existe). Solo uso interno: el stock exacto no sale de aquí hacia el navegador.
