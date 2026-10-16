@@ -680,3 +680,18 @@ app/api/dashboard/tienda/rutas-videos.test.ts
 components/catalogo-publico/tienda/joyeria/inicio-multimedia.test.tsx
 components/dashboard/tienda/multimedia-formato.test.ts
 components/dashboard/tienda/multimedia.dom.test.tsx
+
+# Cobros manuales: recordatorio de pago por WhatsApp (plantilla pendiente_pago desde el número de Dulabs) + suspensión del bot por falta de pago.
+# La prueba de la ruta del Panel vive en lib/cobros (no junto a la ruta) porque el corredor lee los corchetes de «[idTenant]» como un comodín y correría 0 pruebas.
+lib/cobros/plantilla.test.ts
+lib/cobros/enviar-recordatorio.test.ts
+lib/cobros/suspension.test.ts
+lib/cobros/procesar-cobros-manuales.test.ts
+lib/cobros/cobros-supabase.test.ts
+lib/cobros/cobros-sql.pglite.test.ts
+lib/cobros/pipeline-suspension.test.ts
+lib/cobros/activar-manual-cobro.test.ts
+lib/cobros/admin-cobro-route.test.ts
+app/webhook-dulabs/suspension-pago-orden.test.ts
+app/api/cron/cobros-manuales/route.test.ts
+components/admin/cliente/SeccionCobro.dom.test.tsx

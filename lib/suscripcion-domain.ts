@@ -141,6 +141,13 @@ export async function activarSuscripcionManual(
     correo: string;
     operador?: string | null;
     motivo?: string | null;
+    /**
+     * Cobros manuales (lib/cobros): a quién se le avisa el día de pago (solo dígitos con indicativo), cómo se le saluda y su día de cobro. Opcionales: si no vienen NO se tocan los que
+     * ya tuviera la suscripción (reactivar a mano no borra el teléfono de cobro). Sin la migración 20261213000000 se descartan en silencio, igual que activada_manualmente_*.
+     */
+    telefonoCobro?: string | null;
+    nombreCobro?: string | null;
+    diaCobro?: number | null;
   },
 ): Promise<ResultadoDominio<{ suscripcion: Record<string, unknown> }>> {
   const { idTenant, plan, precioCop, correo } = params;
@@ -171,10 +178,16 @@ export async function activarSuscripcionManual(
     updated_at: new Date().toISOString(),
   };
 
+  // Solo los datos de cobro que se pidieron: un upsert con `undefined` los dejaría igual, pero con `null` borraría los que ya hubiera.
+  const datosCobro: Record<string, unknown> = {};
+  if (params.telefonoCobro) datosCobro.telefono_cobro = params.telefonoCobro;
+  if (params.nombreCobro) datosCobro.nombre_cobro = params.nombreCobro;
+  if (params.diaCobro) datosCobro.dia_cobro = params.diaCobro;
+
   let { data: suscripcion, error: upsertError } = await supabase
     .from("dulabs_suscripciones")
     .upsert(
-      { ...filaBase, activada_manualmente_por: params.operador ?? null, activada_manualmente_motivo: params.motivo ?? null },
+      { ...filaBase, activada_manualmente_por: params.operador ?? null, activada_manualmente_motivo: params.motivo ?? null, ...datosCobro },
       { onConflict: "id_tenant" },
     )
     .select("*")

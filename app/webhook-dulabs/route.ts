@@ -32,6 +32,7 @@ import {
 } from "@/lib/whatsapp-outbound";
 import { descifrarSecreto } from "@/lib/crypto";
 import { esTelefonoBloqueado } from "@/lib/blacklist-du";
+import { tenantSuspendidoPorPago } from "@/lib/cobros/suspension";
 import { recibirPedidoWhatsapp } from "@/lib/catalogo/pedidos/intake";
 import { productionIntakeDeps } from "@/lib/catalogo/pedidos/produccion";
 import { createSupabaseAgentConfigStore, loadAgentConfig, type AgentRuntimeConfig } from "@/lib/agente/config";
@@ -947,6 +948,14 @@ async function atenderMensaje(
   // quedado configurada. Gateado EXCLUSIVAMENTE por phone_number_id -- ningún
   // otro tenant/número se ve afectado.
   if (await atenderMensajeMigracionAmore(cliente, telefonoRemitente, destinoWhatsApp)) return;
+
+  // Cobros manuales (lib/cobros, cron /api/cron/cobros-manuales): si el negocio no pagó el día de cobro, el bot NO responde -- ni encuestas, ni campañas, ni onboarding, ni IA,
+  // ni Flow. Va DESPUÉS del aviso de migración de AMORE (ese aviso no es el bot) y ANTES de todo lo demás. El mensaje queda igual registrado arriba. FALLA ABIERTO: si no se puede
+  // consultar (p. ej. la migración todavía no corrió) el bot sigue respondiendo.
+  if (cliente.id_tenant && (await tenantSuspendidoPorPago(supabaseAdmin(), cliente.id_tenant))) {
+    console.log(`[webhook-dulabs] bot suspendido por falta de pago para "${cliente.nombre_negocio}", ignorando`);
+    return;
+  }
 
   // Bot de encuestas: SOLO toma el turno si este contacto ya tiene una sesión
   // de encuesta activa (fue invitado explícitamente vía /dashboard/surveys).

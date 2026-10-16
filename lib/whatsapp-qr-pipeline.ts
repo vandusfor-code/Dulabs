@@ -5,6 +5,7 @@
  * tests de conversación llaman a esta misma función; el orden y el comportamiento son idénticos a los de antes.
  *
  * Orden (el primero que maneja el mensaje corta):
+ *   0. suspendido por pago       -- si el negocio no pagó el día de cobro (lib/cobros) el bot NO responde, ni siquiera el saludo; falla abierto
  *   1. atención humana (AMORE)   -- silencio total mientras una persona atiende / solicitud explícita de humano
  *   2. registro de cliente (AMORE) -- un registro en curso nunca se puede saltar
  *   3. compra de producto (AMORE)  -- intención inequívoca de compra
@@ -29,13 +30,16 @@ import {
   type InterceptarCompraProductoDeps,
   type SaludoInicialDeps,
 } from "@/lib/amore-entrada-router";
+import { tenantSuspendidoPorPago } from "@/lib/cobros/suspension";
 
-export type CapaPipeline = "atencion_humana" | "registro_cliente" | "compra_producto" | "agenda_v2" | "entrada_amore" | "flow_engine";
+export type CapaPipeline = "suspendido_por_pago" | "atencion_humana" | "registro_cliente" | "compra_producto" | "agenda_v2" | "entrada_amore" | "flow_engine";
 
 export type ResultadoPipelineWhatsAppQR = { ok: true; manejadoPor: CapaPipeline } | { ok: false; motivo: string };
 
 /** Inyectables SOLO para tests -- en producción cada capa usa sus dependencias reales. */
 export interface DepsPipelineWhatsAppQR {
+  /** ¿Bot suspendido por falta de pago? Por defecto consulta la base (lib/cobros/suspension: con caché corta y que falla abierto). */
+  suspendidoPorPago?: (supabase: SupabaseClient, idTenant: string) => Promise<boolean>;
   atencionHumana?: InterceptarAtencionHumanaDeps;
   registroCliente?: InterceptarRegistroClienteDeps;
   compraProducto?: InterceptarCompraProductoDeps;
@@ -49,6 +53,8 @@ export async function atenderMensajeWhatsAppQR(
   params: { supabase: SupabaseClient; idTenant: string; telefono: string; texto: string; wamid: string },
   deps: DepsPipelineWhatsAppQR = {},
 ): Promise<ResultadoPipelineWhatsAppQR> {
+  // Cobros manuales: el negocio no pagó el día de cobro => el bot calla del todo (el worker ya guardó el mensaje de la clienta en el Inbox: worker/src/chats/persistir-mensaje.ts). Una persona del negocio puede seguir escribiendo a mano.
+  if (await (deps.suspendidoPorPago ?? tenantSuspendidoPorPago)(params.supabase, params.idTenant)) return { ok: true, manejadoPor: "suspendido_por_pago" };
   if ((await interceptarAtencionHumanaAmore(params, deps.atencionHumana)).manejado) return { ok: true, manejadoPor: "atencion_humana" };
   if ((await interceptarRegistroClienteAmore(params, deps.registroCliente)).manejado) return { ok: true, manejadoPor: "registro_cliente" };
   if ((await interceptarCompraProductoAmore(params, deps.compraProducto)).manejado) return { ok: true, manejadoPor: "compra_producto" };
