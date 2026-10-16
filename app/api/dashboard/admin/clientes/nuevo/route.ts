@@ -5,6 +5,7 @@ import { activarSuscripcionManual } from "@/lib/suscripcion-domain";
 import { PLANES, type PlanId } from "@/lib/planes";
 import { normalizarTelefono } from "@/lib/marketplace-store";
 import { respuestaSiLimiteTasaExcedido } from "@/lib/rate-limit";
+import { WHATSAPP_VENTAS_NUMERO } from "@/lib/site-contact";
 
 export const runtime = "nodejs";
 
@@ -100,6 +101,8 @@ export async function POST(request: NextRequest) {
       correo: email,
       operador: null,
       motivo: body.observacion ?? "Alta manual desde el Panel de Operaciones",
+      // Cobros manuales: el WhatsApp del formulario es al que se le avisará el día de pago. Solo si es un número válido (la base lo exige) y no es el de Dulabs, que es el que ENVÍA.
+      telefonoCobro: telefono && /^\d{10,15}$/.test(telefono) && telefono !== WHATSAPP_VENTAS_NUMERO ? telefono : null,
     });
     if (r.ok) suscripcionCreada = r.data.suscripcion;
   }

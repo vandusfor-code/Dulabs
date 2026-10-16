@@ -17,6 +17,7 @@ import { SeccionOnboarding, type OnboardingDetalle } from "@/components/admin/cl
 import { SeccionMensajesMasivos, type CreditosMasivos } from "@/components/admin/cliente/SeccionMensajesMasivos";
 import { SeccionSoluciones } from "@/components/admin/cliente/SeccionSoluciones";
 import { SeccionAgente } from "@/components/admin/cliente/SeccionAgente";
+import { SeccionCobro } from "@/components/admin/cliente/SeccionCobro";
 
 type Detalle = {
   cliente: { idTenant: string; nombre: string | null; correo: string | null; telefono: string | null; plan: string; fechaCompra: string; estadoPago: string };
@@ -331,6 +332,10 @@ export default function AdminClienteDetallePage() {
             </div>
           )}
         </Seccion>
+
+        <div className="md:col-span-2">
+          <SeccionCobro idTenant={idTenant} accessToken={session?.access_token ?? ""} onCambio={cargarTodo} />
+        </div>
 
         <Seccion titulo="WhatsApp">
           {numerosWA.length === 0 && <p className="text-sm text-mist">Sin números conectados.</p>}

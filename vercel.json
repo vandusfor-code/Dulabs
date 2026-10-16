@@ -10,6 +10,10 @@
       "schedule": "0 14 * * *"
     },
     {
+      "path": "/api/cron/cobros-manuales",
+      "schedule": "0 14 * * *"
+    },
+    {
       "path": "/api/developer/billing/cobro-recurrente",
       "schedule": "0 15 * * *"
     },
