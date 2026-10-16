@@ -6,6 +6,8 @@ import { z } from "zod";
 import { ESTADOS_ENTIDAD, TIPOS_ENTIDAD } from "@/lib/cms-comercial/contrato";
 import { MAX_BYTES_SUBIDA } from "@/lib/cms-comercial/imagen-servidor";
 import { TIPOS_SUBIDA } from "@/lib/cms-comercial/imagenes";
+import { TIPO_VIDEO } from "@/lib/cms-comercial/videos";
+import { ARCHIVOS_VIDEO, MAX_BYTES_VIDEO, pesoLegible } from "@/lib/cms-comercial/video-requisitos";
 
 const contenido = z.record(z.string(), z.unknown(), { message: "El contenido debe ser un objeto." });
 const rev = z.number({ message: "Falta la revisión del elemento." }).int().min(1, { message: "La revisión no es válida." });
@@ -38,6 +40,19 @@ export const cuerpoSubidaImagen = z.strictObject({
   bytes: z.number({ message: "Falta el tamaño de la imagen." }).int().min(1, { message: "La imagen está vacía." }).max(MAX_BYTES_SUBIDA, { message: "La imagen supera el tamaño máximo permitido (6 MB)." }),
   nombreOriginal: z.string({ message: "El nombre del archivo debe ser un texto." }).max(200, { message: "El nombre del archivo es demasiado largo." }).nullish(),
 });
+
+export const cuerpoSubidaVideo = z.strictObject({
+  mimeType: z.literal(TIPO_VIDEO, { message: "Usa un video MP4 (con video H.264)." }),
+  bytes: z
+    .number({ message: "Falta el tamaño del video." })
+    .int()
+    .min(1, { message: "El video está vacío." })
+    .max(MAX_BYTES_VIDEO, { message: `El video supera el tamaño máximo permitido (${pesoLegible(MAX_BYTES_VIDEO)}).` }),
+  nombreOriginal: z.string({ message: "El nombre del archivo debe ser un texto." }).max(200, { message: "El nombre del archivo es demasiado largo." }).nullish(),
+});
+
+/** Al confirmar, el espacio donde se va a usar el video: de él dependen las medidas y la proporción que se le exigen. */
+export const cuerpoConfirmarVideo = z.strictObject({ archivo: z.enum(ARCHIVOS_VIDEO, { message: "El espacio del video no es válido." }) });
 
 export const consultaProductos = z.object({
   q: z.string().max(80, { message: "La búsqueda es demasiado larga." }).optional(),

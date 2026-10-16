@@ -81,10 +81,20 @@ describe("GET /contexto — qué tienda es el negocio", () => {
     assert.equal(r.json.data?.rutaTienda, "/catalogo/delacour");
   });
 
+  it("la tienda de joyería cuenta con qué videos se ve hoy en cada espacio (lo que el panel muestra como «el de siempre»)", async () => {
+    publicacion(TA, "delacour", "Delacour");
+    const v = (await contexto("t-admin-a")).json.data?.tienda.videosDeSiempre;
+    assert.deepEqual(Object.keys(v).sort(), ["coleccion", "marca", "mayoristas", "portada"]);
+    assert.deepEqual(v.portada.horizontal, { src: "/catalogo/delacour/video/portada-h.mp4", poster: "/catalogo/delacour/video/portada-h.webp", width: 1280, height: 720 });
+    assert.deepEqual(v.portada.vertical, { src: "/catalogo/delacour/video/portada-v.mp4", poster: "/catalogo/delacour/video/portada-v.webp", width: 720, height: 1280 });
+    assert.equal(v.marca.vertical, undefined, "la marca solo tiene un archivo");
+    assert.equal(v.mayoristas.horizontal.width, 1280);
+  });
+
   it("una tienda sin tema propio: no hay pie ni preguntas que ofrecer (mayoristas false, sin página, sin frase)", async () => {
     publicacion(TA, "tienda-a", "Tienda A");
     const t = (await contexto("t-admin-a")).json.data?.tienda;
-    assert.deepEqual(t, { slug: "tienda-a", nombre: "Tienda A", tema: "clasico", mayoristas: false, paginaMayoristas: null, descripcion: null });
+    assert.deepEqual(t, { slug: "tienda-a", nombre: "Tienda A", tema: "clasico", mayoristas: false, paginaMayoristas: null, descripcion: null, videosDeSiempre: {} });
   });
 
   it("sin tienda publicada (o con la tienda sin publicar) no hay información de tienda, y el resto del contexto sigue llegando", async () => {

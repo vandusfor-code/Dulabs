@@ -36,6 +36,8 @@ export interface InstantaneaCms {
   pie: PublicadaCms<"pie"> | null;
   /** Las páginas propias de la tienda (política de privacidad, términos…) que hoy están publicadas. */
   paginas: readonly PublicadaCms<"pagina">[];
+  /** Los videos y las imágenes de categoría que la administradora eligió para el inicio de la tienda (uno por negocio). */
+  multimedia: PublicadaCms<"multimedia"> | null;
   ofertas: readonly PublicadaCms<"oferta">[];
   combos: readonly PublicadaCms<"combo">[];
   campanas: readonly PublicadaCms<"campana">[];
@@ -44,4 +46,4 @@ export interface InstantaneaCms {
 }
 
 /** Instantánea sin nada publicado (negocio con el CMS encendido pero sin contenido). */
-export const instantaneaVacia = (tenantId: string): InstantaneaCms => ({ tenantId, home: null, pie: null, paginas: [], ofertas: [], combos: [], campanas: [], contenidos: [], assets: new Map() });
+export const instantaneaVacia = (tenantId: string): InstantaneaCms => ({ tenantId, home: null, pie: null, paginas: [], multimedia: null, ofertas: [], combos: [], campanas: [], contenidos: [], assets: new Map() });

@@ -33,9 +33,28 @@ import { estadoDeVigencia, relojReal, type EstadoVigencia, type Reloj } from "@/
 import { dependenciasDe, llaveElemento, validar, type ContextoValidacion } from "@/lib/cms-comercial/validacion";
 
 /** Tope de elementos por negocio y tipo (incluye archivados): protege la base de un uso desbordado. */
-export const LIMITE_POR_TIPO: Readonly<Record<TipoEntidad, number>> = { home: 1, oferta: 200, combo: 100, campana: 50, contenido: 500, pie: 1, pagina: 30 };
+export const LIMITE_POR_TIPO: Readonly<Record<TipoEntidad, number>> = { home: 1, oferta: 200, combo: 100, campana: 50, contenido: 500, pie: 1, pagina: 30, multimedia: 1 };
 
-const NOMBRE_TIPO: Readonly<Record<TipoEntidad, string>> = { home: "la página principal", oferta: "las ofertas", combo: "los combos", campana: "las campañas", contenido: "los contenidos", pie: "el pie de página", pagina: "las páginas" };
+const NOMBRE_TIPO: Readonly<Record<TipoEntidad, string>> = {
+  home: "la página principal",
+  oferta: "las ofertas",
+  combo: "los combos",
+  campana: "las campañas",
+  contenido: "los contenidos",
+  pie: "el pie de página",
+  pagina: "las páginas",
+  multimedia: "las fotos y videos",
+};
+
+/** Los elementos ÚNICOS por negocio (su código es siempre el nombre del tipo) y lo que se le dice a la administradora cuando ya existe. */
+const YA_EXISTE: Readonly<Partial<Record<TipoEntidad, string>>> = { home: "La página principal ya existe.", pie: "El pie de página ya existe.", multimedia: "Las fotos y videos ya existen." };
+
+/** Los tipos que llegaron con una migración posterior a la del CMS: si la base todavía no la tiene, crearlos avisa con claridad (en lugar de «el contenido no es válido»). */
+const NO_DISPONIBLE: Readonly<Partial<Record<TipoEntidad, string>>> = {
+  pie: "El pie de página todavía no está disponible",
+  pagina: "Las páginas todavía no están disponibles",
+  multimedia: "Las fotos y videos todavía no están disponibles",
+};
 
 export interface EntidadResumen {
   id: string;
@@ -141,7 +160,7 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
     const dep = dependenciasDe(tipo, contenido);
     const referencias = unicos(dep.referencias.map((r) => r.valor));
     const categorias = unicos(dep.categorias.map((c) => c.valor));
-    const assets = unicos(dep.assets.map((a) => a.valor));
+    const assets = unicos([...dep.assets.map((a) => a.valor), ...dep.videos.map((v) => v.valor)]);
     const tiposElementos = unicos(dep.elementos.map((e) => e.tipo));
     const [productos, cats, listaAssets, listasElementos, vars] = await Promise.all([
       referencias.length > 0 ? catalogo.productosPorReferencia(tenantId, referencias) : Promise.resolve([]),
@@ -153,7 +172,7 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
     const elementos = new Map<string, { estado: EstadoEntidad; archivada: boolean; nombre: string }>();
     for (const lista of listasElementos) {
       for (const e of lista) {
-        if (e.tipo === "home" || e.tipo === "contenido" || e.tipo === "pie") continue;
+        if (e.tipo === "home" || e.tipo === "contenido" || e.tipo === "pie" || e.tipo === "multimedia") continue;
         elementos.set(llaveElemento(e.tipo, e.clave), { estado: e.estado, archivada: e.archivadaAt !== null, nombre: nombreDeEntidad(e.tipo, e.borrador ?? e.contenidoActivo) });
       }
     }
@@ -161,7 +180,7 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
       ahora: reloj(),
       productos: new Map(productos.map((p) => [p.referencia, p])),
       categorias: new Map(cats.map((c) => [c.id, c])),
-      assets: new Map(listaAssets.flatMap((a) => (a ? [[a.id, { id: a.id, estado: a.estado }] as const] : []))),
+      assets: new Map(listaAssets.flatMap((a) => (a ? [[a.id, { id: a.id, estado: a.estado, mime: a.mimeType, ancho: a.ancho, alto: a.alto, bytes: a.bytes }] as const] : []))),
       elementos,
       variables: vars.variables,
       minimoMayorista: vars.minimoMayorista,
@@ -230,10 +249,10 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
       if (!norm.ok) throw new CmsError("VALIDATION_ERROR", norm.mensaje);
       const existentes = await repo.listar(actor.tenantId, { tipo: input.tipo, incluirArchivadas: true });
       if (existentes.length >= LIMITE_POR_TIPO[input.tipo]) {
-        throw new CmsError("VALIDATION_ERROR", input.tipo === "home" ? "La página principal ya existe." : input.tipo === "pie" ? "El pie de página ya existe." : `Llegaste al máximo de ${NOMBRE_TIPO[input.tipo]} (${LIMITE_POR_TIPO[input.tipo]}). Archiva alguno que ya no uses.`);
+        throw new CmsError("VALIDATION_ERROR", YA_EXISTE[input.tipo] ?? `Llegaste al máximo de ${NOMBRE_TIPO[input.tipo]} (${LIMITE_POR_TIPO[input.tipo]}). Archiva alguno que ya no uses.`);
       }
-      // La página principal y el pie son únicos por negocio: su código es siempre el nombre del tipo.
-      const unico = input.tipo === "home" || input.tipo === "pie";
+      // La página principal, el pie y las fotos y videos son únicos por negocio: su código es siempre el nombre del tipo.
+      const unico = YA_EXISTE[input.tipo] !== undefined;
       let base: string = input.tipo;
       if (!unico) {
         const nombre = nombreDeEntidad(input.tipo, norm.borrador);
@@ -245,11 +264,12 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
         const r = await repo.crear(actor.tenantId, { tipo: input.tipo, clave, borrador: norm.borrador, actor });
         if (r.resultado === "ok") return detalle(r.entidad);
         if (r.resultado === "invalido") {
-          // Con un borrador que ya pasó la normalización, lo único que la base rechaza del pie y de las páginas es el TIPO: su migración todavía no se aplicó en esa base.
-          if (input.tipo === "pie" || input.tipo === "pagina") throw new CmsError("FEATURE_UNAVAILABLE", `${input.tipo === "pie" ? "El pie de página todavía no está disponible" : "Las páginas todavía no están disponibles"} para tu tienda. Avísale al equipo de DuLabs para que lo active.`);
+          // Con un borrador que ya pasó la normalización, lo único que la base rechaza de estos tipos es el TIPO: su migración todavía no se aplicó en esa base.
+          const noDisponible = NO_DISPONIBLE[input.tipo];
+          if (noDisponible) throw new CmsError("FEATURE_UNAVAILABLE", `${noDisponible} para tu tienda. Avísale al equipo de DuLabs para que lo active.`);
           throw new CmsError("VALIDATION_ERROR", "El contenido no es válido.");
         }
-        if (unico) throw new CmsError("CONFLICT", input.tipo === "home" ? "La página principal ya existe." : "El pie de página ya existe.");
+        if (unico) throw new CmsError("CONFLICT", YA_EXISTE[input.tipo] ?? "Este elemento ya existe.");
       }
       throw new CmsError("CONFLICT", "No se pudo generar un código único para este elemento. Cambia el nombre e inténtalo de nuevo.");
     },

@@ -2,7 +2,7 @@
  * CMS comercial — fixtures de prueba compartidos (datos sintéticos; nunca de un negocio real).
  */
 import type { TipoEntidad } from "@/lib/cms-comercial/contrato";
-import type { Campana, Combo, Contenido, ContenidoPorTipo, Home, Oferta, Pagina, Pie } from "@/lib/cms-comercial/esquemas";
+import type { Campana, Combo, Contenido, ContenidoPorTipo, Home, Multimedia, Oferta, Pagina, Pie } from "@/lib/cms-comercial/esquemas";
 import type { AssetPublicoCms, InstantaneaCms, PublicadaCms } from "@/lib/cms-comercial/publicado";
 import { instantaneaVacia } from "@/lib/cms-comercial/publicado";
 
@@ -25,6 +25,7 @@ export function publicada(clave: string, contenido: Contenido, extra?: Partial<O
 export function publicada(clave: string, contenido: Home, extra?: Partial<Omit<PublicadaCms<"home">, "contenido" | "clave">>): PublicadaCms<"home">;
 export function publicada(clave: string, contenido: Pie, extra?: Partial<Omit<PublicadaCms<"pie">, "contenido" | "clave">>): PublicadaCms<"pie">;
 export function publicada(clave: string, contenido: Pagina, extra?: Partial<Omit<PublicadaCms<"pagina">, "contenido" | "clave">>): PublicadaCms<"pagina">;
+export function publicada(clave: string, contenido: Multimedia, extra?: Partial<Omit<PublicadaCms<"multimedia">, "contenido" | "clave">>): PublicadaCms<"multimedia">;
 export function publicada(clave: string, contenido: ContenidoPorTipo[TipoEntidad], extra: Partial<Omit<PublicadaCms, "contenido" | "clave">> = {}): PublicadaCms {
   serie += 1;
   return { id: `00000000-0000-4000-8000-${String(serie).padStart(12, "0")}`, clave, version: 1, publicadaAt: "2026-10-20T12:00:00.000Z", creadaAt: "2026-10-01T12:00:00.000Z", contenido, ...extra } as PublicadaCms;
@@ -86,6 +87,9 @@ export const pagina = (over: Partial<Pagina> = {}): Pagina => ({
   ],
   ...over,
 });
+
+/** Las fotos y videos del inicio, sin nada elegido todavía (la tienda se ve con sus originales). */
+export const multimedia = (over: Partial<Multimedia> = {}): Multimedia => ({ ...over });
 
 export const home = (over: Partial<Home> = {}): Home => ({
   portada: { visible: true, titulo: "Historias que brillan contigo", imagen: { origen: "estatico", src: "/catalogo/prueba/portada.png", ancho: 1600, alto: 900, alt: "Portada de prueba" } },

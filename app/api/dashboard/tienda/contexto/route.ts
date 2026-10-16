@@ -7,6 +7,7 @@ import type { NextRequest } from "next/server";
 import { apiOk } from "@/lib/agent-compiler/api/http";
 import { joyeriaOf, storefrontConfigFor, temaDe } from "@/lib/catalogo/vitrina";
 import { withCms } from "@/lib/cms-comercial/http";
+import { videosDeSiempre } from "@/lib/cms-comercial/multimedia-tienda";
 import { ZONA_NEGOCIO } from "@/lib/cms-comercial/tiempo";
 import { ETIQUETAS_VARIABLE, VARIABLES } from "@/lib/cms-comercial/variables";
 
@@ -35,6 +36,8 @@ export async function GET(request: NextRequest) {
             // Cómo arma la tienda su página de mayoristas (solo CÓDIGOS de contenidos del CMS: la introducción, lo que no se muestra y lo que se suma al final).
             paginaMayoristas: pagina ? { intro: pagina.intro ?? null, omitir: [...(pagina.omitir ?? [])], tambien: [...(pagina.tambien ?? [])] } : null,
             descripcion: joyeria?.descripcion ?? null,
+            // Los videos con los que se ve la tienda hoy en cada espacio (solo los espacios que tiene): el panel los muestra como «el de siempre» y permite volver a ellos.
+            videosDeSiempre: videosDeSiempre(joyeria),
           }
         : null;
     return apiOk({

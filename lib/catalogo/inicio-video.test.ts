@@ -233,10 +233,13 @@ describe("guardas de la fuente del inicio con video (CSS y código)", () => {
     assert.match(bloque("@media (min-width: 768px) {\n  .tienda-joyeria .joy-video-control[data-control=\"pildora\"]"), /bottom: 1\.5rem;/);
   });
 
-  it("los videos y sus imágenes fijas se guardan un día en el navegador (y siguen sirviéndose mientras se revalidan); el CSP no necesita cambios porque son del mismo origen", () => {
+  it("los videos y sus imágenes fijas se guardan un día en el navegador (y siguen sirviéndose mientras se revalidan); los de la tienda son del mismo origen y el CSP solo suma lo que necesita la vista previa del panel", () => {
     const config = fuente("next.config.ts");
     assert.match(config, /source: "\/catalogo\/delacour\/video\/:path\*",\n\s+headers: \[\{ key: "Cache-Control", value: "public, max-age=86400, stale-while-revalidate=604800" \}\]/);
-    assert.doesNotMatch(config, /media-src/, "sin media-src el video cae en default-src 'self': solo del mismo origen");
+    // media-src: el propio origen, blob: (vista previa local del panel) y el Storage de Supabase (el mismo dominio ya confiado para imágenes): nada más.
+    const media = [...config.matchAll(/"(media-src [^"]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(media, ["media-src 'self' blob: https://*.supabase.co"], "una sola línea, sin comodines");
+    assert.ok(!/media-src[^"]*(\*\s|\*"| \*$|http:|data:|'unsafe-)/.test(media[0]), "sin comodín total, sin http ni data:");
     for (const [, v] of videosDeDelacour()) for (const a of archivosDe(v)) assert.ok(a.src.startsWith("/") && !a.src.startsWith("//"), `${a.src} es del mismo origen`);
   });
 });

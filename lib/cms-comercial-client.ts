@@ -11,6 +11,9 @@ import type { ImagenVista, TicketSubida } from "@/lib/cms-comercial/imagenes";
 import type { ProductoVista } from "@/lib/cms-comercial/puertos";
 import type { EntidadDetalle, EntidadResumen } from "@/lib/cms-comercial/servicio";
 import type { VariableId } from "@/lib/cms-comercial/variables";
+import type { ArchivoVideoId, EspacioVideo } from "@/lib/cms-comercial/video-requisitos";
+import type { VideoConfirmado, VideoVista } from "@/lib/cms-comercial/videos";
+import type { ArchivoVideo } from "@/lib/catalogo/vitrina";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 export interface CmsClientError {
@@ -23,6 +26,9 @@ export interface CmsClientError {
 
 export type CmsResult<T> = { ok: true; data: T } | { ok: false; error: CmsClientError };
 
+/** Los videos con los que la tienda se ve hoy en cada espacio (antes de que la administradora suba los suyos). Solo los espacios que la tienda tiene. */
+export type VideosDeSiempre = Partial<Record<EspacioVideo, { horizontal: ArchivoVideo; vertical?: ArchivoVideo }>>;
+
 export interface ContextoTienda {
   variables: Array<{ id: VariableId; etiqueta: string; valor: string | null }>;
   minimoMayorista: number | null;
@@ -30,7 +36,7 @@ export interface ContextoTienda {
   /** Ruta pública de la tienda (`/catalogo/{tienda}`) si está publicada; null si no se pudo resolver. */
   rutaTienda?: string | null;
   /** Qué tienda es el negocio (null si no se pudo resolver): del tema depende si se dibujan el pie y la página de mayoristas. */
-  tienda?: { slug: string; nombre: string; tema: "clasico" | "tecnologia" | "joyeria"; mayoristas: boolean; paginaMayoristas: { intro: string | null; omitir: string[]; tambien: string[] } | null; descripcion: string | null } | null;
+  tienda?: { slug: string; nombre: string; tema: "clasico" | "tecnologia" | "joyeria"; mayoristas: boolean; paginaMayoristas: { intro: string | null; omitir: string[]; tambien: string[] } | null; descripcion: string | null; videosDeSiempre?: VideosDeSiempre } | null;
   zona: string;
   ahora: string;
 }
@@ -42,8 +48,10 @@ export interface FiltroListadoCliente {
 }
 
 export type EtapaSubida = "preparando" | "subiendo" | "confirmando";
+/** Las etapas de subir un video: su imagen fija, el video y la verificación del servidor. */
+export type EtapaSubidaVideo = "imagen-fija" | "subiendo" | "verificando";
 
-export type { AccionAuditoria, EntidadDetalle, EntidadResumen, ImagenVista, ProductoVista, RegistroAuditoria, ResultadoValidacion, VersionCms };
+export type { AccionAuditoria, EntidadDetalle, EntidadResumen, ImagenVista, ProductoVista, RegistroAuditoria, ResultadoValidacion, VersionCms, VideoConfirmado, VideoVista };
 
 const BASE = "/api/dashboard/tienda";
 
@@ -54,7 +62,7 @@ export const TIPOS_IMAGEN_PERMITIDOS = ["image/jpeg", "image/png", "image/webp"]
 export interface OpcionesCliente {
   fetch?: typeof fetch;
   /** Prepara el archivo antes de subirlo (por defecto: lo deja igual si es liviano y lo comprime si no). */
-  preparar?: (archivo: File) => Promise<{ blob: Blob; mimeType: string }>;
+  preparar?: (archivo: File, opciones?: { ladoMaximo?: number }) => Promise<{ blob: Blob; mimeType: string }>;
   /** Sube el archivo a la URL firmada (por defecto: Storage de Supabase desde el navegador). */
   subir?: (ticket: TicketSubida, blob: Blob, mimeType: string) => Promise<CmsResult<null>>;
 }
@@ -89,13 +97,24 @@ async function llamar<T>(f: typeof fetch, accessToken: string, ruta: string, ini
   };
 }
 
-/** Respaldo cuando no hay preparación propia: lo liviano sube tal cual (el servidor lo re-codifica). Lo pesado se reduce con un canvas. */
-async function prepararPorDefecto(archivo: File): Promise<{ blob: Blob; mimeType: string }> {
+/**
+ * Respaldo cuando no hay preparación propia: lo liviano sube tal cual (el servidor lo re-codifica). Lo pesado se reduce con un canvas. Con `ladoMaximo` (por ejemplo, las imágenes de las
+ * categorías, que se ven pequeñas) también se reduce lo que sea más grande que eso, aunque pese poco: una foto de 4000 px no tiene por qué viajar al celular de quien visita la tienda.
+ */
+async function prepararPorDefecto(archivo: File, opciones: { ladoMaximo?: number } = {}): Promise<{ blob: Blob; mimeType: string }> {
   if (!(TIPOS_IMAGEN_PERMITIDOS as readonly string[]).includes(archivo.type)) throw new Error("Usa una imagen JPG, PNG o WebP.");
-  if (archivo.size <= MAX_BYTES_SIN_COMPRIMIR) return { blob: archivo, mimeType: archivo.type };
-  if (typeof createImageBitmap !== "function" || typeof document === "undefined") throw new Error("La imagen pesa demasiado. Redúcela e intenta de nuevo.");
+  const liviana = archivo.size <= MAX_BYTES_SIN_COMPRIMIR;
+  if (liviana && opciones.ladoMaximo === undefined) return { blob: archivo, mimeType: archivo.type };
+  if (typeof createImageBitmap !== "function" || typeof document === "undefined") {
+    if (liviana) return { blob: archivo, mimeType: archivo.type }; // no se puede reducir aquí: el servidor la limita de todos modos
+    throw new Error("La imagen pesa demasiado. Redúcela e intenta de nuevo.");
+  }
   const bitmap = await createImageBitmap(archivo);
-  const escala = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+  const escala = Math.min(1, (opciones.ladoMaximo ?? 2400) / Math.max(bitmap.width, bitmap.height));
+  if (liviana && escala === 1) {
+    bitmap.close?.();
+    return { blob: archivo, mimeType: archivo.type };
+  }
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(bitmap.width * escala));
   canvas.height = Math.max(1, Math.round(bitmap.height * escala));
@@ -107,7 +126,7 @@ async function prepararPorDefecto(archivo: File): Promise<{ blob: Blob; mimeType
 
 async function subirPorDefecto(ticket: TicketSubida, blob: Blob, mimeType: string): Promise<CmsResult<null>> {
   const { error } = await supabaseBrowser().storage.from(ticket.bucket).uploadToSignedUrl(ticket.path, ticket.token, blob, { contentType: mimeType });
-  if (error) return { ok: false, error: { code: "UPLOAD_FAILED", message: "No se pudo subir la imagen. Revisa tu conexión e intenta de nuevo.", status: 0 } };
+  if (error) return { ok: false, error: { code: "UPLOAD_FAILED", message: `No se pudo subir ${mimeType.startsWith("video/") ? "el video" : "la imagen"}. Revisa tu conexión e intenta de nuevo.`, status: 0 } };
   return { ok: true, data: null };
 }
 
@@ -116,6 +135,24 @@ export function createCmsClient(accessToken: string, opciones: OpcionesCliente =
   const get = <T>(ruta: string) => llamar<T>(f, accessToken, ruta);
   const post = <T>(ruta: string, cuerpo?: unknown) => llamar<T>(f, accessToken, ruta, { method: "POST", ...(cuerpo === undefined ? {} : { body: JSON.stringify(cuerpo) }) });
   const accion = (id: string, nombre: "pausar" | "reanudar" | "despublicar" | "archivar" | "desarchivar") => post<{ entidad: EntidadDetalle }>(`/entidades/${encodeURIComponent(id)}/${nombre}`);
+
+  /** Sube una imagen en 3 etapas: preparar (reducir si hace falta) → pedir la URL firmada → subir DIRECTO a Storage → confirmar. `ladoMaximo`: reducirla antes de subir si es más grande. */
+  const subirImagen = async (archivo: File, opts: { onEtapa?: (e: EtapaSubida) => void; ladoMaximo?: number } = {}): Promise<CmsResult<{ imagen: ImagenVista }>> => {
+    opts.onEtapa?.("preparando");
+    let preparada: { blob: Blob; mimeType: string };
+    try {
+      preparada = await (opciones.preparar ?? prepararPorDefecto)(archivo, opts.ladoMaximo === undefined ? undefined : { ladoMaximo: opts.ladoMaximo });
+    } catch (err) {
+      return { ok: false, error: { code: "IMAGE_INVALID", message: err instanceof Error && err.message ? err.message : "No pudimos procesar esta imagen.", status: 0 } };
+    }
+    opts.onEtapa?.("subiendo");
+    const ticket = await post<{ subida: TicketSubida }>("/imagenes/upload-url", { mimeType: preparada.mimeType, bytes: preparada.blob.size, nombreOriginal: archivo.name });
+    if (!ticket.ok) return ticket;
+    const subida = await (opciones.subir ?? subirPorDefecto)(ticket.data.subida, preparada.blob, preparada.mimeType);
+    if (!subida.ok) return subida;
+    opts.onEtapa?.("confirmando");
+    return post(`/imagenes/${encodeURIComponent(ticket.data.subida.id)}/confirmar`);
+  };
 
   return {
     listar(filtro: FiltroListadoCliente = {}): Promise<CmsResult<{ items: EntidadResumen[] }>> {
@@ -153,22 +190,28 @@ export function createCmsClient(accessToken: string, opciones: OpcionesCliente =
       return get(`/productos${qs.size > 0 ? `?${qs.toString()}` : ""}`);
     },
     imagenes: () => get<{ items: ImagenVista[] }>("/imagenes"),
+    videos: () => get<{ items: VideoVista[] }>("/videos"),
 
-    async subirImagen(archivo: File, opts: { onEtapa?: (e: EtapaSubida) => void } = {}): Promise<CmsResult<{ imagen: ImagenVista }>> {
-      opts.onEtapa?.("preparando");
-      let preparada: { blob: Blob; mimeType: string };
-      try {
-        preparada = await (opciones.preparar ?? prepararPorDefecto)(archivo);
-      } catch (err) {
-        return { ok: false, error: { code: "IMAGE_INVALID", message: err instanceof Error && err.message ? err.message : "No pudimos procesar esta imagen.", status: 0 } };
-      }
+    subirImagen,
+
+    /**
+     * Sube un video para un espacio de la tienda en tres etapas: su imagen fija (la que se ve mientras el video carga; ya tomada en el navegador), el video DIRECTO a Storage y la verificación
+     * del servidor, que vuelve a analizarlo con las reglas del espacio. Si el servidor lo rechaza, el error trae `problemas` (qué regla falla y cómo arreglarla).
+     */
+    async subirVideo(archivo: File, destino: ArchivoVideoId, imagenFija: Blob, opts: { onEtapa?: (e: EtapaSubidaVideo) => void } = {}): Promise<CmsResult<VideoConfirmado & { imagen: ImagenVista }>> {
+      opts.onEtapa?.("imagen-fija");
+      const foto = new File([imagenFija], `imagen-fija-${destino.replace(".", "-")}.jpg`, { type: imagenFija.type || "image/jpeg" });
+      const imagen = await subirImagen(foto, { ladoMaximo: 1280 });
+      if (!imagen.ok) return imagen;
       opts.onEtapa?.("subiendo");
-      const ticket = await post<{ subida: TicketSubida }>("/imagenes/upload-url", { mimeType: preparada.mimeType, bytes: preparada.blob.size, nombreOriginal: archivo.name });
+      const ticket = await post<{ subida: TicketSubida }>("/videos/upload-url", { mimeType: "video/mp4", bytes: archivo.size, nombreOriginal: archivo.name });
       if (!ticket.ok) return ticket;
-      const subida = await (opciones.subir ?? subirPorDefecto)(ticket.data.subida, preparada.blob, preparada.mimeType);
+      const subida = await (opciones.subir ?? subirPorDefecto)(ticket.data.subida, archivo, "video/mp4");
       if (!subida.ok) return subida;
-      opts.onEtapa?.("confirmando");
-      return post(`/imagenes/${encodeURIComponent(ticket.data.subida.id)}/confirmar`);
+      opts.onEtapa?.("verificando");
+      const confirmado = await post<VideoConfirmado>(`/videos/${encodeURIComponent(ticket.data.subida.id)}/confirmar`, { archivo: destino });
+      if (!confirmado.ok) return confirmado;
+      return { ok: true, data: { ...confirmado.data, imagen: imagen.data.imagen } };
     },
   };
 }

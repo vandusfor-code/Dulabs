@@ -14,6 +14,7 @@ import { textoDerechos } from "@/lib/cms-comercial/pie";
 import type { Destino, Imagen } from "@/lib/cms-comercial/esquemas";
 import type { MotivoComboNoDisponible } from "@/lib/cms-comercial/evaluacion";
 import { previaCombo, previaContenido, previaOferta, textoAlcance, type ProductoPrevia } from "@/lib/cms-comercial/previa";
+import { ESPACIOS_VIDEO, type EspacioVideo } from "@/lib/cms-comercial/video-requisitos";
 import type { EstadoVigencia } from "@/lib/cms-comercial/tiempo";
 import { formatearPesos, type ValoresVariables, type VariableId } from "@/lib/cms-comercial/variables";
 import { Pill } from "@/components/dashboard/shell/ui";
@@ -596,6 +597,62 @@ function PreviaPagina({ borrador }: { borrador: Draft }) {
 }
 
 // ---------------------------------------------------------------------------
+// Fotos y videos del inicio
+// ---------------------------------------------------------------------------
+
+function PreviaMultimedia({ borrador }: { borrador: Draft }) {
+  const { t } = useI18n();
+  const { contexto } = useTienda();
+  const siempre = contexto?.tienda?.videosDeSiempre ?? {};
+  const espacios = ESPACIOS_VIDEO.filter((e) => siempre[e]);
+  const refDe = (e: EspacioVideo): { video: string; poster: string } | undefined => {
+    const v = leer(borrador, `videos.${e}.horizontal`);
+    return typeof v === "object" && v !== null && typeof (v as { poster?: unknown }).poster === "string" ? (v as { video: string; poster: string }) : undefined;
+  };
+  const eligidas = lista2(leer(borrador, "categorias")).length;
+  const total = contexto?.categorias.length ?? 0;
+  return (
+    <Marco titulo={t("Así quedaría tu inicio", "How your home page would look")}>
+      {espacios.length === 0 && eligidas === 0 ? <NoLista motivo={t("Todavía no elegiste nada: tu tienda se ve como siempre.", "You haven't picked anything yet: your store looks as usual.")} /> : null}
+      <ul className="space-y-2">
+        {espacios.map((e) => {
+          const propio = refDe(e);
+          const usual = siempre[e]?.horizontal;
+          return (
+            <li key={e} className="flex items-center gap-3" data-testid={`previa-${e}`}>
+              <div className="h-12 w-20 shrink-0 overflow-hidden rounded-md border border-edge bg-ink">
+                {propio ? (
+                  <Foto imagen={{ origen: "cms", asset: propio.poster, alt: "" } as Imagen} className="size-full" />
+                ) : usual ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- imagen fija del video de siempre de la tienda (archivo estático)
+                  <img src={usual.poster} alt="" className="size-full object-cover" loading="lazy" />
+                ) : null}
+              </div>
+              <div className="min-w-0 text-sm">
+                <p className="font-medium text-fg">{t(TITULOS_PREVIA[e].es, TITULOS_PREVIA[e].en)}</p>
+                <p className={cn("text-xs", propio ? "text-lime-text" : "text-mist")}>{propio ? t("Tu video", "Your video") : t("El video de siempre", "The usual video")}</p>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-xs text-mist" data-testid="previa-categorias">
+        {total > 0 ? t(`Categorías con imagen propia: ${eligidas} de ${total}.`, `Categories with their own image: ${eligidas} of ${total}.`) : t("Tu catálogo todavía no tiene categorías.", "Your catalog has no categories yet.")}
+      </p>
+      <p className="text-[11px] text-mist/80">{t("Los videos se ven en la tienda cuando publiques. Mira el resultado con «Ver mi tienda».", "The videos show in the store once you publish. Check the result with “View my store”.")}</p>
+    </Marco>
+  );
+}
+
+const TITULOS_PREVIA: Readonly<Record<EspacioVideo, { es: string; en: string }>> = {
+  portada: { es: "Portada", en: "Cover" },
+  coleccion: { es: "Colección", en: "Collection" },
+  marca: { es: "Marca", en: "Brand" },
+  mayoristas: { es: "Mayoristas", en: "Wholesale" },
+};
+const lista2 = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+// ---------------------------------------------------------------------------
 
 export function PanelPrevia({ tipo, borrador }: { tipo: TipoEntidad; borrador: Draft }) {
   switch (tipo) {
@@ -613,5 +670,7 @@ export function PanelPrevia({ tipo, borrador }: { tipo: TipoEntidad; borrador: D
       return <PreviaPie borrador={borrador} />;
     case "pagina":
       return <PreviaPagina borrador={borrador} />;
+    case "multimedia":
+      return <PreviaMultimedia borrador={borrador} />;
   }
 }

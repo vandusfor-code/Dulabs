@@ -18,6 +18,9 @@ import { GET as imagenesGET } from "@/app/api/dashboard/tienda/imagenes/route";
 import { POST as confirmarPOST } from "@/app/api/dashboard/tienda/imagenes/[id]/confirmar/route";
 import { POST as subidaPOST } from "@/app/api/dashboard/tienda/imagenes/upload-url/route";
 import { GET as productosGET } from "@/app/api/dashboard/tienda/productos/route";
+import { GET as videosGET } from "@/app/api/dashboard/tienda/videos/route";
+import { POST as confirmarVideoPOST } from "@/app/api/dashboard/tienda/videos/[id]/confirmar/route";
+import { POST as subidaVideoPOST } from "@/app/api/dashboard/tienda/videos/upload-url/route";
 
 const PREFIJO = "/api/dashboard/tienda";
 
@@ -45,6 +48,11 @@ export function crearFetchRutas(): FetchRutas {
       if (partes.length === 1) return imagenesGET(request);
       if (partes[1] === "upload-url") return subidaPOST(request);
       return confirmarPOST(request, conId(partes[1]));
+    }
+    if (partes[0] === "videos") {
+      if (partes.length === 1) return videosGET(request);
+      if (partes[1] === "upload-url") return subidaVideoPOST(request);
+      return confirmarVideoPOST(request, conId(partes[1]));
     }
     if (partes[0] === "entidades") {
       if (partes.length === 1) return metodo === "GET" ? listarGET(request) : crearPOST(request);

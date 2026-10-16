@@ -623,7 +623,7 @@ describe("LÍMITES y estados derivados", () => {
   });
 
   it("hay un tope por tipo de elemento", () => {
-    assert.deepEqual({ ...LIMITE_POR_TIPO }, { home: 1, oferta: 200, combo: 100, campana: 50, contenido: 500, pie: 1, pagina: 30 });
+    assert.deepEqual({ ...LIMITE_POR_TIPO }, { home: 1, oferta: 200, combo: 100, campana: 50, contenido: 500, pie: 1, pagina: 30, multimedia: 1 });
   });
 });
 

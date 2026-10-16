@@ -14,6 +14,7 @@
 import type { Destino, Imagen } from "@/lib/cms-comercial/esquemas";
 import { campanasActivas, combosActivos, ofertasActivas, vistaCombo, vistaOferta, type ContextoEvaluacion, type ProductoParaCombo, type VistaOferta } from "@/lib/cms-comercial/evaluacion";
 import type { AssetPublicoCms, InstantaneaCms } from "@/lib/cms-comercial/publicado";
+import { usosDeVideo } from "@/lib/cms-comercial/video-requisitos";
 import {
   ORDEN_INICIO_CLASICO,
   SECCIONES_DIBUJADAS,
@@ -50,6 +51,9 @@ export interface ContextoVitrina {
 /** Ruta pública de una imagen del CMS: el servidor la resuelve (negocio, imagen lista y usada en contenido publicado) y la reenvía; nunca la URL de Storage. */
 export const rutaImagenCms = (slug: string, assetId: string): string => `/catalogo/${slug}/vitrina/${assetId}.webp`;
 
+/** Ruta pública de un video del CMS: igual que las imágenes, el servidor la resuelve (negocio, video listo y usado en contenido publicado) y la reenvía por pedazos; nunca la URL de Storage. */
+export const rutaVideoCms = (slug: string, assetId: string): string => `/catalogo/${slug}/vitrina/${assetId}.mp4`;
+
 /** Una imagen del CMS lista para la tienda, o null si no se puede mostrar (asset ausente o sin terminar de subir). */
 export function imagenDeVitrina(imagen: Imagen | undefined, assets: ReadonlyMap<string, AssetPublicoCms>, slug: string): (StorefrontImage & { focus?: string }) | null {
   if (!imagen) return null;
@@ -59,7 +63,7 @@ export function imagenDeVitrina(imagen: Imagen | undefined, assets: ReadonlyMap<
   return { src: rutaImagenCms(slug, asset.id), width: asset.ancho, height: asset.alto, alt: imagen.alt, ...(imagen.foco ? { focus: imagen.foco } : {}) };
 }
 
-/** Todas las imágenes del CMS que el contenido PUBLICADO usa (la ruta pública solo sirve estas). */
+/** Todas las imágenes del CMS que el contenido PUBLICADO usa (la ruta pública solo sirve estas): incluye las de las categorías y las imágenes fijas de los videos. */
 export function assetsReferenciados(snap: InstantaneaCms): Set<string> {
   const ids = new Set<string>();
   const ver = (imagen: Imagen | undefined) => {
@@ -69,6 +73,10 @@ export function assetsReferenciados(snap: InstantaneaCms): Set<string> {
     ver(snap.home.contenido.portada.imagen);
     ver(snap.home.contenido.banner?.imagen);
   }
+  if (snap.multimedia) {
+    for (const c of snap.multimedia.contenido.categorias ?? []) ver(c.imagen);
+    for (const u of usosDeVideo(snap.multimedia.contenido)) ids.add(u.poster);
+  }
   for (const o of snap.ofertas) ver(o.contenido.imagen);
   for (const c of snap.combos) ver(c.contenido.imagen);
   for (const c of snap.campanas) {
@@ -76,6 +84,11 @@ export function assetsReferenciados(snap: InstantaneaCms): Set<string> {
     ver(c.contenido.portada?.imagen);
   }
   return ids;
+}
+
+/** Todos los videos del CMS que el contenido PUBLICADO usa (la ruta pública de videos solo sirve estos). */
+export function videosReferenciados(snap: InstantaneaCms): Set<string> {
+  return new Set(snap.multimedia ? usosDeVideo(snap.multimedia.contenido).map((u) => u.video) : []);
 }
 
 /** Los dígitos de un número de WhatsApp válido (8 o más, como el resto de la tienda), o null. */

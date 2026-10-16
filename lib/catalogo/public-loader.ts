@@ -5,6 +5,7 @@ import type { PriceContext } from "@/lib/catalogo/domain";
 import { filtrosDeTexto } from "@/lib/catalogo/filtros";
 import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
+import { cargarMultimediaPublica } from "@/lib/cms-comercial/multimedia-publica";
 import type { OpcionesPaginaMayoristas } from "@/lib/cms-comercial/pagina-mayoristas";
 import { cargarPaginaMayoristas as cargarPaginaMayoristasPublica } from "@/lib/cms-comercial/pagina-mayoristas-publica";
 import { cargarPaginaPublica } from "@/lib/cms-comercial/pagina-publica";
@@ -60,6 +61,12 @@ export const cargarPieTienda = (slug: string) => cargarPiePublico(crearDepsPubli
  * leer o tardó más de 2,5 s; la tienda lo dice en vez de fingir que la página no existe).
  */
 export const cargarPaginaTienda = cache((slug: string, clave: string) => cargarPaginaPublica(crearDepsPublicasCms(), slug, clave));
+
+/**
+ * Fotos y videos publicados de la tienda (tema "joyeria"): los videos del inicio y la imagen de presentación de cada categoría que la administradora eligió, ya listos para dibujar. NUNCA lanza ni
+ * tarda de más: sin CMS, sin nada publicado, ante un error o pasados 2 s devuelve null y la tienda se ve con sus videos de siempre.
+ */
+export const cargarMultimediaTienda = cache((slug: string) => cargarMultimediaPublica(crearDepsPublicasCms(), slug));
 
 /** Inicio con lo que el CMS eligió (destacados, categorías, productos de la campaña). Sin opciones, igual que `cargarInicio`. */
 export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, opciones);

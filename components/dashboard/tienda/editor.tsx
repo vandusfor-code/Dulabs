@@ -17,6 +17,7 @@ import { useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { mismoContenido, poner as ponerEn, type Draft } from "@/components/dashboard/tienda/borrador";
 import { useTienda } from "@/components/dashboard/tienda/contexto";
 import { NOMBRES_TIPO, chipsDe, fechaHora, resumirCambios } from "@/components/dashboard/tienda/formato";
+import { FormMultimedia } from "@/components/dashboard/tienda/formulario-multimedia";
 import { FormPagina } from "@/components/dashboard/tienda/formulario-pagina";
 import { FormPie } from "@/components/dashboard/tienda/formulario-pie";
 import { FormCampana, FormCombo, FormContenido, FormHome, FormOferta, type FormProps } from "@/components/dashboard/tienda/formularios";
@@ -32,6 +33,7 @@ const FORMULARIOS: Record<TipoEntidad, (p: FormProps) => React.ReactNode> = {
   contenido: FormContenido,
   pie: FormPie,
   pagina: FormPagina,
+  multimedia: FormMultimedia,
 };
 
 type Ocupado = "guardar" | "revisar" | "publicar" | "estado" | null;
@@ -270,7 +272,7 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
   const problemas: Problema[] = validacion ? [...validacion.errores, ...validacion.advertencias] : [];
   const trabajando = ocupado !== null;
   const nombre = detalle.nombre;
-  const claveVisible = tipo !== "home" && tipo !== "pie" ? detalle.clave : null;
+  const claveVisible = tipo !== "home" && tipo !== "pie" && tipo !== "multimedia" ? detalle.clave : null;
 
   const estadoGuardado = ocupado === "guardar" ? t("Guardando…", "Saving…") : sucio ? t("Cambios sin guardar", "Unsaved changes") : detalle.tieneCambios ? t("Borrador guardado · sin publicar", "Draft saved · not published") : haGuardado ? t("Todo guardado", "All saved") : "";
 
@@ -458,7 +460,7 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
                           {t("Despublicar", "Unpublish")}
                         </button>
                       )}
-                      {detalle.estado === "borrador" && tipo !== "home" && (
+                      {detalle.estado === "borrador" && tipo !== "home" && tipo !== "pie" && tipo !== "multimedia" && (
                         <button type="button" disabled={trabajando} onClick={() => setDialogo("archivar")} className={actionBtn}>
                           <Archive className="size-4" aria-hidden /> {t("Archivar", "Archive")}
                         </button>

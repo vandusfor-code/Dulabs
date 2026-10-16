@@ -15,6 +15,7 @@ import { requireCms, type CmsAccessMode } from "@/lib/cms-comercial/auth";
 import type { ActorCms } from "@/lib/cms-comercial/contrato";
 import { isCmsError } from "@/lib/cms-comercial/errores";
 import { crearServicioImagenes, type ServicioImagenes } from "@/lib/cms-comercial/imagenes";
+import { crearServicioVideos, type ServicioVideos } from "@/lib/cms-comercial/videos";
 import type { PuertoCatalogo, PuertoVariables } from "@/lib/cms-comercial/puertos";
 import type { CmsRepositorio } from "@/lib/cms-comercial/repositorio";
 import { crearRepositorioSupabaseCms } from "@/lib/cms-comercial/repositorio-supabase";
@@ -23,6 +24,7 @@ import { crearServicioCms, type CmsServicio } from "@/lib/cms-comercial/servicio
 export interface CmsHandlerContext {
   servicio: CmsServicio;
   imagenes: ServicioImagenes;
+  videos: ServicioVideos;
   catalogo: PuertoCatalogo;
   variables: PuertoVariables;
   repo: CmsRepositorio;
@@ -46,9 +48,11 @@ export async function withCms(request: NextRequest, mode: CmsAccessMode, handler
   const catalogo = crearPuertoCatalogoSupabase(supabase);
   const variables = crearPuertoVariablesSupabase(supabase);
   const servicio = crearServicioCms({ repo, catalogo, variables });
-  const imagenes = crearServicioImagenes({ repo, almacen: crearAlmacenSupabase(supabase) });
+  const almacen = crearAlmacenSupabase(supabase);
+  const imagenes = crearServicioImagenes({ repo, almacen });
+  const videos = crearServicioVideos({ repo, almacen });
   try {
-    return await handler({ servicio, imagenes, catalogo, variables, repo, actor, supabase });
+    return await handler({ servicio, imagenes, videos, catalogo, variables, repo, actor, supabase });
   } catch (err) {
     return cmsErrorResponse(err);
   }

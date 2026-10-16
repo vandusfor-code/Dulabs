@@ -5,7 +5,8 @@
  * las categorías y variables del negocio, una caché de productos por referencia y la galería de imágenes.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { CmsClient, CmsResult, ContextoTienda, EtapaSubida, ImagenVista, ProductoVista } from "@/lib/cms-comercial-client";
+import type { CmsClient, CmsResult, ContextoTienda, EtapaSubida, EtapaSubidaVideo, ImagenVista, ProductoVista, VideoConfirmado, VideoVista } from "@/lib/cms-comercial-client";
+import type { ArchivoVideoId } from "@/lib/cms-comercial/video-requisitos";
 
 export interface TiendaContextValue {
   client: CmsClient;
@@ -20,8 +21,16 @@ export interface TiendaContextValue {
   imagenes: ImagenVista[] | null;
   errorImagenes: string | null;
   cargarImagenes: () => Promise<void>;
-  subirImagen: (archivo: File, onEtapa?: (e: EtapaSubida) => void) => Promise<CmsResult<{ imagen: ImagenVista }>>;
+  /** `ladoMaximo`: reducir la imagen antes de subirla si es más grande (por ejemplo, las de las categorías, que se ven pequeñas). */
+  subirImagen: (archivo: File, onEtapa?: (e: EtapaSubida) => void, opciones?: { ladoMaximo?: number }) => Promise<CmsResult<{ imagen: ImagenVista }>>;
   imagenPorId: (id: string) => ImagenVista | undefined;
+  /** Los videos que el negocio ya subió (null = todavía no se cargaron). */
+  videos: VideoVista[] | null;
+  errorVideos: string | null;
+  cargarVideos: () => Promise<void>;
+  /** Sube un video para un espacio: su imagen fija, el video y la verificación del servidor (ver createCmsClient().subirVideo). */
+  subirVideo: (archivo: File, destino: ArchivoVideoId, imagenFija: Blob, onEtapa?: (e: EtapaSubidaVideo) => void) => Promise<CmsResult<VideoConfirmado & { imagen: ImagenVista }>>;
+  videoPorId: (id: string) => VideoVista | undefined;
 }
 
 const TiendaContext = createContext<TiendaContextValue | null>(null);
@@ -40,10 +49,13 @@ export function TiendaProvider({ client, canWrite, children }: { client: CmsClie
   const [versionProductos, setVersionProductos] = useState(0);
   const [imagenes, setImagenes] = useState<ImagenVista[] | null>(null);
   const [errorImagenes, setErrorImagenes] = useState<string | null>(null);
+  const [videos, setVideos] = useState<VideoVista[] | null>(null);
+  const [errorVideos, setErrorVideos] = useState<string | null>(null);
   const cache = useRef(new Map<string, ProductoVista>());
   /** Referencias ya pedidas (existan o no): no se vuelven a pedir. */
   const pedidas = useRef(new Set<string>());
   const cargandoImagenes = useRef(false);
+  const cargandoVideos = useRef(false);
 
   useEffect(() => {
     let vivo = true;
@@ -98,9 +110,32 @@ export function TiendaProvider({ client, canWrite, children }: { client: CmsClie
   }, [client]);
 
   const subirImagen = useCallback(
-    async (archivo: File, onEtapa?: (e: EtapaSubida) => void) => {
-      const r = await client.subirImagen(archivo, { onEtapa });
+    async (archivo: File, onEtapa?: (e: EtapaSubida) => void, opciones: { ladoMaximo?: number } = {}) => {
+      const r = await client.subirImagen(archivo, { onEtapa, ...(opciones.ladoMaximo === undefined ? {} : { ladoMaximo: opciones.ladoMaximo }) });
       if (r.ok) setImagenes((lista) => [r.data.imagen, ...(lista ?? []).filter((i) => i.id !== r.data.imagen.id)]);
+      return r;
+    },
+    [client],
+  );
+
+  const cargarVideos = useCallback(async () => {
+    if (cargandoVideos.current) return;
+    cargandoVideos.current = true;
+    const r = await client.videos();
+    cargandoVideos.current = false;
+    if (r.ok) {
+      setVideos(r.data.items);
+      setErrorVideos(null);
+    } else setErrorVideos(r.error.message);
+  }, [client]);
+
+  const subirVideo = useCallback(
+    async (archivo: File, destino: ArchivoVideoId, imagenFija: Blob, onEtapa?: (e: EtapaSubidaVideo) => void) => {
+      const r = await client.subirVideo(archivo, destino, imagenFija, { onEtapa });
+      if (r.ok) {
+        setVideos((lista) => [r.data.video, ...(lista ?? []).filter((v) => v.id !== r.data.video.id)]);
+        setImagenes((lista) => [r.data.imagen, ...(lista ?? []).filter((i) => i.id !== r.data.imagen.id)]);
+      }
       return r;
     },
     [client],
@@ -121,8 +156,13 @@ export function TiendaProvider({ client, canWrite, children }: { client: CmsClie
       cargarImagenes,
       subirImagen,
       imagenPorId: (id) => imagenes?.find((i) => i.id === id),
+      videos,
+      errorVideos,
+      cargarVideos,
+      subirVideo,
+      videoPorId: (id) => videos?.find((v) => v.id === id),
     }),
-    [client, canWrite, contexto, errorContexto, asegurarProductos, buscarProductos, versionProductos, imagenes, errorImagenes, cargarImagenes, subirImagen],
+    [client, canWrite, contexto, errorContexto, asegurarProductos, buscarProductos, versionProductos, imagenes, errorImagenes, cargarImagenes, subirImagen, videos, errorVideos, cargarVideos, subirVideo],
   );
 
   return <TiendaContext.Provider value={valor}>{children}</TiendaContext.Provider>;

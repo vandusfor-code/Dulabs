@@ -10,7 +10,7 @@ import type { Problema, RegistroAuditoria, VersionCms } from "@/lib/cms-comercia
 import type { EntidadDetalle } from "@/lib/cms-comercial-client";
 import { Pill } from "@/components/dashboard/shell/ui";
 import { useTienda } from "@/components/dashboard/tienda/contexto";
-import { ACCION_CORTA, ACCION_CORTA_EN, fechaHora, objetoDeAuditoria, resumirCambios, type CambioResumido } from "@/components/dashboard/tienda/formato";
+import { accionDeAuditoria, fechaHora, objetoDeAuditoria, resumirCambios, type CambioResumido } from "@/components/dashboard/tienda/formato";
 import { Aviso, BotonCargando, CampoTexto, Cargando, Dialogo, actionBtn, cn, primaryBtn } from "@/components/dashboard/tienda/ui";
 
 // ---------------------------------------------------------------------------
@@ -276,7 +276,7 @@ export function PanelHistorial({ entidadId }: { entidadId?: string }) {
             <li key={r.id} className="px-4 py-3">
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <span className="text-sm text-fg">
-                  <span className="font-medium">{r.actorEtiqueta ?? t("Alguien del equipo", "Someone on the team")}</span> · {t(ACCION_CORTA[r.accion], ACCION_CORTA_EN[r.accion])}
+                  <span className="font-medium">{r.actorEtiqueta ?? t("Alguien del equipo", "Someone on the team")}</span> · {t(accionDeAuditoria(r), accionDeAuditoria(r, true))}
                   {r.version !== null && ` · v${r.version}`}
                 </span>
                 <span className="ml-auto text-xs text-mist">{fechaHora(r.createdAt)}</span>
