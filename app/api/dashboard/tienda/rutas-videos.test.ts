@@ -137,8 +137,9 @@ describe("videos por HTTP", () => {
   it("la entrada se valida antes de tocar nada: tipo, tamaño, claves de más y JSON", async () => {
     puente.llamadas.length = 0;
     const malos: Array<[unknown, RegExp]> = [
-      [{ mimeType: "video/quicktime", bytes: 100 }, /video MP4/],
-      [{ mimeType: "image/png", bytes: 100 }, /video MP4/],
+      // El mensaje EXACTO de la API (el del servicio, que es más largo, no debe ser el que llegue: la API rechaza primero).
+      [{ mimeType: "video/quicktime", bytes: 100 }, /^Usa un video MP4 \(con video H\.264\)\.$/],
+      [{ mimeType: "image/png", bytes: 100 }, /^Usa un video MP4 \(con video H\.264\)\.$/],
       [{ mimeType: "video/mp4", bytes: 0 }, /vacío/],
       [{ mimeType: "video/mp4", bytes: 4 * 1024 * 1024 }, /supera el tamaño máximo permitido \(3 MB\)/],
       [{ mimeType: "video/mp4" }, /tamaño/],

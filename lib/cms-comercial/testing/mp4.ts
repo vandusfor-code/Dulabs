@@ -29,6 +29,8 @@ export interface OpcionesMp4 {
   co64?: boolean;
   /** Corta el archivo en este largo (para probar archivos truncados). */
   cortarEn?: number;
+  /** Un índice (moov) sin ninguna pista: un archivo que no tiene ni video ni audio. */
+  sinPistas?: boolean;
 }
 
 const texto = (s: string) => Uint8Array.from(Array.from(s, (c) => c.charCodeAt(0)));
@@ -151,9 +153,9 @@ export function crearMp4(opciones: OpcionesMp4 = {}): Uint8Array {
       ceros(24),
       u32(opciones.audio ? 3 : 2),
     );
-    const pistas = [pista(o, { tipo: "vide", id: 1, formato: o.formato, muestras: muestrasVideo, escala, duracion, desplazamiento: desplazamientoDatos })];
-    if (o.audio) pistas.push(pista(o, { tipo: "soun", id: 2, formato: "mp4a", muestras: Math.round(o.duracionSeg * 43), escala, duracion, desplazamiento: desplazamientoDatos + 500 }));
-    for (let i = 0; i < o.otrasPistas; i++) pistas.push(pista(o, { tipo: "text", id: 3 + i, formato: "tx3g", muestras: 1, escala, duracion, desplazamiento: desplazamientoDatos + 600 }));
+    const pistas = opciones.sinPistas ? [] : [pista(o, { tipo: "vide", id: 1, formato: o.formato, muestras: muestrasVideo, escala, duracion, desplazamiento: desplazamientoDatos })];
+    if (o.audio && !opciones.sinPistas) pistas.push(pista(o, { tipo: "soun", id: 2, formato: "mp4a", muestras: Math.round(o.duracionSeg * 43), escala, duracion, desplazamiento: desplazamientoDatos + 500 }));
+    for (let i = 0; i < (opciones.sinPistas ? 0 : o.otrasPistas); i++) pistas.push(pista(o, { tipo: "text", id: 3 + i, formato: "tx3g", muestras: 1, escala, duracion, desplazamiento: desplazamientoDatos + 600 }));
     return caja("moov", mvhd, ...pistas, ...(o.fragmentado ? [caja("mvex", completa("trex", 0, u32(1), u32(1), u32(0), u32(0), u32(0)))] : []));
   };
 
@@ -164,6 +166,17 @@ export function crearMp4(opciones: OpcionesMp4 = {}): Uint8Array {
     : unir(ftyp, moov(ftyp.byteLength + medida + 8), datos);
   const conFragmentos = o.fragmentado ? unir(todo, caja("moof", completa("mfhd", 0, u32(1))), caja("mdat", ceros(10))) : todo;
   return opciones.cortarEn !== undefined ? conFragmentos.slice(0, opciones.cortarEn) : conFragmentos;
+}
+
+/** El mismo archivo con una caja más al final (por ejemplo, un fragmento `moof` o un relleno `free`), con `bytesDelCuerpo` ceros adentro. */
+export function conCajaAlFinal(bytes: Uint8Array, tipo: string, bytesDelCuerpo = 8): Uint8Array {
+  return unir(bytes, caja(tipo, ceros(bytesDelCuerpo)));
+}
+
+/** Un índice mínimo con UNA tabla de desplazamientos de 64 bits (co64) con las posiciones dadas: para probar `ajustarDesplazamientos` con valores que un video real de pocos megas nunca tiene. */
+export function moovConCo64(desplazamientos: readonly number[]): Uint8Array {
+  const tabla = caja("co64", u8(0, 0, 0, 0), u32(desplazamientos.length), ...desplazamientos.map(u64));
+  return caja("moov", caja("trak", caja("mdia", caja("minf", caja("stbl", tabla)))));
 }
 
 /** Parte el archivo en sus cajas de primer nivel (solo lee cabeceras: independiente del analizador). */

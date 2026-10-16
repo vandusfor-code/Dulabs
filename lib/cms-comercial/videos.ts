@@ -66,6 +66,8 @@ export interface VideosDeps {
   repo: CmsRepositorio;
   almacen: AlmacenImagenes;
   nuevoId?: () => string;
+  /** Mueve el índice de reproducción al principio (por defecto, `optimizarParaWeb`). Se puede reemplazar para probar que el resultado se comprueba antes de usarlo. */
+  optimizar?: (bytes: Uint8Array) => Uint8Array | null;
 }
 
 /** Rutas de un video: la final (MP4 verificado) y la temporal de subida, ambas bajo `{negocio}/cms/{id}/`. */
@@ -78,6 +80,7 @@ const DEMASIADO_PESADO = (bytes: number) => `El video pesa ${pesoDicho(bytes)} y
 export function crearServicioVideos(deps: VideosDeps): ServicioVideos {
   const { repo, almacen } = deps;
   const nuevoId = deps.nuevoId ?? randomUUID;
+  const optimizar = deps.optimizar ?? optimizarParaWeb;
 
   const exigirEscritura = (actor: ActorCms) => {
     if (!CMS_ROLES_ESCRITURA.includes(actor.rol)) throw new CmsError("FORBIDDEN", "Solo un administrador puede modificar la tienda.");
@@ -140,7 +143,7 @@ export function crearServicioVideos(deps: VideosDeps): ServicioVideos {
       let bytes: Uint8Array = origen;
       const seCorrigio: string[] = [];
       if (!analisis.indiceAlPrincipio) {
-        const movido = optimizarParaWeb(origen);
+        const movido = optimizar(origen);
         const reanalisis = movido && movido !== origen ? analizarMp4(movido) : null;
         // El resultado se comprueba antes de usarlo: mismo tamaño, legible, con el índice al principio y con las mismas medidas y duración. Si algo no cuadra, se descarta.
         if (

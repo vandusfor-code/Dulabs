@@ -4,6 +4,7 @@
  * idempotencia, reintentos y límites. Las imágenes y los videos conviven en la misma tabla: cada servicio solo ve y confirma lo suyo.
  */
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -11,12 +12,12 @@ import sharp from "sharp";
 import type { Rol } from "@/lib/team";
 import type { ActorCms } from "@/lib/cms-comercial/contrato";
 import { isCmsError } from "@/lib/cms-comercial/errores";
-import { crearServicioImagenes } from "@/lib/cms-comercial/imagenes";
+import { LIMITE_IMAGENES, crearServicioImagenes } from "@/lib/cms-comercial/imagenes";
 import { crearRepositorioSupabaseCms } from "@/lib/cms-comercial/repositorio-supabase";
 import { crearAlmacenMemoria, type AlmacenMemoria } from "@/lib/cms-comercial/testing/almacen-memoria";
 import { crearMp4, moverIndiceAlFinal } from "@/lib/cms-comercial/testing/mp4";
 import { crearBaseCms, type BaseCms } from "@/lib/cms-comercial/testing/pglite";
-import { analizarMp4 } from "@/lib/cms-comercial/video-mp4";
+import { analizarMp4, optimizarParaWeb as optimizarParaWebReal } from "@/lib/cms-comercial/video-mp4";
 import { MAX_BYTES_VIDEO } from "@/lib/cms-comercial/video-requisitos";
 import { LIMITE_VIDEOS, crearServicioVideos, rutasDeVideo } from "@/lib/cms-comercial/videos";
 
@@ -247,6 +248,17 @@ describe("CONFIRMAR: el servidor analiza lo subido y solo deja pasar lo que sirv
     assert.equal((await servicio.confirmar(a, otro.id, { archivo: "portada.vertical" })).video.alto, 1280);
   });
 
+  it("una fila cuya ruta no es la que le toca (las rutas las decide el servidor) no se confirma ni toca el almacén", async () => {
+    const t = await negocio();
+    const id = randomUUID();
+    await base.sql("select public.dulabs_cms_asset_crear($1, $2, $3, 'video/mp4', 1000, 16, 16, 'x.mp4', null)", [t, id, `${t}/cms/${id}/otro-nombre.mp4`]);
+    almacen.subirComoNavegador(rutasDeVideo(t, id).temporal, real("marca.mp4"), "video/mp4");
+    const antes = almacen.llamadas.length;
+    await falla(servicio.confirmar(actor(t), id, { archivo: "marca.horizontal" }), "INTERNAL_ERROR", /No se pudo verificar el video/);
+    assert.equal(almacen.llamadas.length, antes, "ni se leyó ni se escribió ni se borró nada");
+    assert.equal((await estadoDe(id)).estado, "pendiente");
+  });
+
   it("un espacio que no existe se rechaza antes de tocar nada", async () => {
     const a = actor(await negocio());
     const ticket = await subir(a, real("marca.mp4"));
@@ -307,6 +319,129 @@ describe("CONFIRMAR: el servidor analiza lo subido y solo deja pasar lo que sirv
     assert.deepEqual(await servicio.listar(actor(t2)), []);
     assert.equal((await estadoDe(ticket.id)).estado, "pendiente", "no se tocó");
     await falla(servicio.confirmar(actor(t1), "00000000-0000-4000-8000-0000000000ff", { archivo: "marca.horizontal" }), "NOT_FOUND");
+  });
+});
+
+describe("EL ÍNDICE AL PRINCIPIO: lo que devuelve el reordenamiento se comprueba antes de usarse", () => {
+  /** Un video real con el índice al final (como lo dejan muchos celulares) y su versión ya reordenada de verdad. */
+  const alFinal = moverIndiceAlFinal(real("coleccion-h.mp4"));
+  const bien = real("coleccion-h.mp4");
+  const buscar = (b: Uint8Array, caja: string) => {
+    const texto = Buffer.from(b).toString("latin1");
+    const i = texto.indexOf(caja);
+    assert.ok(i >= 0, `el archivo no tiene «${caja}»`);
+    return i + 4; // el contenido de la caja empieza justo después de su tipo
+  };
+  /** El mismo video reordenado, con un número de 32 bits cambiado en `donde` (de la misma longitud: solo cambia lo que dice de sí mismo). */
+  const conNumero = (caja: string, desde: number, valor: number) => {
+    const copia = bien.slice();
+    new DataView(copia.buffer, copia.byteOffset, copia.byteLength).setUint32(buscar(copia, caja) + desde, valor);
+    return copia;
+  };
+
+  async function confirmarCon(optimizar: (b: Uint8Array) => Uint8Array | null) {
+    const t = await negocio();
+    const a = actor(t);
+    const conOptimizador = crearServicioVideos({ repo, almacen, optimizar });
+    const ticket = await conOptimizador.solicitarSubida(a, { mimeType: "video/mp4", bytes: alFinal.byteLength });
+    almacen.subirComoNavegador(ticket.path, alFinal, "video/mp4");
+    const r = await conOptimizador.confirmar(a, ticket.id, { archivo: "coleccion.horizontal" });
+    return { r, guardado: almacen.objetos.get(rutasDeVideo(t, ticket.id).final)?.bytes, id: ticket.id };
+  }
+  const original = () => alFinal;
+
+  it("sanidad: con el reordenamiento de verdad se guarda el video reordenado y se avisa", async () => {
+    const { r, guardado } = await confirmarCon((b) => optimizarParaWebReal(b));
+    assert.equal(r.seCorrigio.length, 1);
+    assert.deepEqual(guardado, bien);
+  });
+
+  it("si no se puede reordenar (null) o devuelve lo mismo, se guarda el original y el video queda listo igual", async () => {
+    for (const optimizar of [() => null, (b: Uint8Array) => b]) {
+      const { r, guardado, id } = await confirmarCon(optimizar);
+      assert.deepEqual(r.seCorrigio, []);
+      assert.deepEqual(guardado, original());
+      assert.equal((await estadoDe(id)).estado, "listo");
+    }
+  });
+
+  it("un resultado que no deja el índice al principio (una copia del original) se descarta", async () => {
+    const { r, guardado } = await confirmarCon((b) => b.slice());
+    assert.deepEqual(r.seCorrigio, []);
+    assert.deepEqual(guardado, original());
+  });
+
+  it("un resultado de otro tamaño se descarta (aunque se vea bien)", async () => {
+    const { r, guardado } = await confirmarCon((b) => {
+      const movido = optimizarParaWebReal(b);
+      return movido && Uint8Array.from([...movido, 0]);
+    });
+    assert.deepEqual(r.seCorrigio, []);
+    assert.deepEqual(guardado, original());
+  });
+
+  it("un resultado que no se puede leer como MP4 se descarta", async () => {
+    const { r, guardado } = await confirmarCon((b) => new Uint8Array(b.byteLength));
+    assert.deepEqual(r.seCorrigio, []);
+    assert.deepEqual(guardado, original());
+  });
+
+  it("un resultado sin la parte de datos (mdat) se descarta aunque conserve el largo, las medidas, la duración y el índice al principio", async () => {
+    // Igual de largo y con las mismas medidas, pero la caja de datos ya no es de datos: el archivo no se puede reproducir.
+    const sinDatos = bien.slice();
+    sinDatos.set(Buffer.from("free", "latin1"), buscar(sinDatos, "mdat") - 4);
+    const a = analizarMp4(sinDatos);
+    assert.equal(a.legible, false, "el archivo falso no se puede leer");
+    assert.equal(a.indiceAlPrincipio, true, "pero dice tener el índice al principio");
+    assert.equal(a.video?.ancho, 1280);
+    assert.equal(a.video?.alto, 720);
+    assert.equal(sinDatos.byteLength, original().byteLength, "y pesa lo mismo que el original");
+    const { r, guardado } = await confirmarCon(() => sinDatos);
+    assert.deepEqual(r.seCorrigio, []);
+    assert.deepEqual(guardado, original());
+  });
+
+  it("un resultado con otras medidas o con otra duración que el video original se descarta", async () => {
+    // El ancho y el alto de la pista (16.16) y la duración del índice, cambiados sin tocar el largo del archivo.
+    const otroAncho = conNumero("tkhd", 76, 640 * 0x10000);
+    const otroAlto = conNumero("tkhd", 80, 360 * 0x10000);
+    const otraDuracion = conNumero("mvhd", 16, 9_999_999);
+    for (const [nombre, falso] of [
+      ["ancho", otroAncho],
+      ["alto", otroAlto],
+      ["duración", otraDuracion],
+    ] as const) {
+      const a = analizarMp4(falso);
+      assert.equal(a.legible, true, `${nombre}: el archivo falso se lee bien`);
+      assert.equal(a.indiceAlPrincipio, true, `${nombre}: y tiene el índice al principio`);
+      const { r, guardado } = await confirmarCon(() => falso);
+      assert.deepEqual(r.seCorrigio, [], nombre);
+      assert.deepEqual(guardado, original(), nombre);
+    }
+  });
+});
+
+describe("TOPES: las imágenes y los videos no se gastan el uno al otro", () => {
+  it("los videos no gastan el tope de imágenes: con 299 imágenes y 5 videos todavía cabe una imagen más, y con 300 ya no", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    await base.sql(
+      `insert into public.dulabs_cms_assets (id, id_tenant, storage_path, mime_type, bytes, ancho, alto, estado)
+       select ('d' || lpad(g::text, 7, '0') || '-0000-4000-8000-000000000000')::uuid, $1::uuid, $1 || '/cms/d' || lpad(g::text, 7, '0') || '-0000-4000-8000-000000000000/imagen.webp', 'image/webp', 1000, 800, 800, 'listo' from generate_series(1, $2::int) g`,
+      [t, LIMITE_IMAGENES - 1],
+    );
+    await base.sql(
+      `insert into public.dulabs_cms_assets (id, id_tenant, storage_path, mime_type, bytes, ancho, alto, estado)
+       select ('c' || lpad(g::text, 7, '0') || '-0000-4000-8000-000000000000')::uuid, $1::uuid, $1 || '/cms/c' || lpad(g::text, 7, '0') || '-0000-4000-8000-000000000000/video.mp4', 'video/mp4', 1000, 1280, 720, 'listo' from generate_series(1, 5) g`,
+      [t],
+    );
+    assert.ok((await imagenes.solicitarSubida(a, { mimeType: "image/png", bytes: 1000 })).id, "299 imágenes y 5 videos: cabe una imagen más");
+    await base.sql(
+      `insert into public.dulabs_cms_assets (id, id_tenant, storage_path, mime_type, bytes, ancho, alto, estado) values ('d9999999-0000-4000-8000-000000000000', $1::uuid, $1 || '/cms/d9999999-0000-4000-8000-000000000000/imagen.webp', 'image/webp', 1000, 800, 800, 'listo')`,
+      [t],
+    );
+    await falla(imagenes.solicitarSubida(a, { mimeType: "image/png", bytes: 1000 }), "VALIDATION_ERROR", new RegExp(`máximo de ${LIMITE_IMAGENES} imágenes`));
+    assert.ok((await servicio.solicitarSubida(a, { mimeType: "video/mp4", bytes: 1000 })).id, "con el tope de imágenes lleno todavía se pueden subir videos");
   });
 });
 

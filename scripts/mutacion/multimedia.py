@@ -72,7 +72,6 @@ M = [
     ("V19", "al mover el índice los desplazamientos se corrigen al revés", MP4, "const nuevo = datos.getUint32(pos) + delta;", "const nuevo = datos.getUint32(pos) - delta;", T_MP4),
     ("V20", "los desplazamientos de 64 bits pierden su parte alta", MP4, "datos.setUint32(pos, Math.floor(nuevo / 0x1_0000_0000));", "datos.setUint32(pos, 0);", T_MP4),
     ("V21", "un desplazamiento que se sale de rango se acepta", MP4, "if (nuevo < 0 || nuevo > 0xffff_ffff) return false;", "if (false) return false;", T_MP4),
-    ("V22", "el archivo reordenado no se compara con el original en tamaño", MP4, "return o === bytes.byteLength ? salida : null;", "return salida;", T_MP4),
     ("V23", "un archivo cortado o fragmentado también se intenta reordenar", MP4, 'if (raiz.some((c) => c.truncada || c.tipo === "moof")) return null;', "if (false) return null;", T_MP4),
     # --- video-requisitos.ts: las reglas ---
     ("V30", "el peso máximo sube a 30 MB", REQ, "export const MAX_BYTES_VIDEO = 3 * MB;", "export const MAX_BYTES_VIDEO = 30 * MB;", T_REQ),
@@ -125,6 +124,12 @@ M = [
     ("V86", "las medidas reales no llegan a la base", VID, "ancho: medidas.ancho, alto: medidas.alto, actor", "ancho: 16, alto: 16, actor", T_VID),
     ("V87", "la lista de videos incluye las imágenes", VID, ".filter(esVideo).map(vista)", ".map(vista)", T_VID),
     ("V88", "el archivo subido no se borra del almacén al confirmar", VID, "      await almacen.borrar([temporal]);\n\n      const r = await repo.confirmarAsset(", "      const r = await repo.confirmarAsset(", T_VID),
+    ("V93", "se acepta el archivo reordenado aunque no se pueda leer como MP4", VID, "reanalisis.legible &&", "true &&", T_VID),
+    ("V94", "se acepta el archivo reordenado aunque tenga otro ancho", VID, "reanalisis.video?.ancho === medidas.ancho &&", "true &&", T_VID),
+    ("V95", "se acepta el archivo reordenado aunque tenga otro alto", VID, "reanalisis.video?.alto === medidas.alto &&", "true &&", T_VID),
+    ("V96", "se acepta el archivo reordenado aunque dure otra cosa", VID, "reanalisis.duracionSeg === analisis.duracionSeg", "true", T_VID),
+    # Sin mutantes a propósito (EQUIVALENTES: lo que se quitaría lo vuelve a exigir otra capa con el mismo resultado): el cinturón de tamaño de optimizarParaWeb (las cajas siempre suman el archivo)
+    # y, en las rutas de la API, el modo de acceso, el tipo y el espacio del video, que el servicio de videos vuelve a exigir con el MISMO mensaje.
     # --- imagenes.ts: las imágenes y los videos no se mezclan ---
     ("V90", "por la ruta de las imágenes se puede confirmar un video", IMG, "if (!asset || !esImagen(asset)) throw", "if (!asset) throw", T_VID),
     ("V91", "la galería de imágenes muestra los videos", IMG, ".filter(esImagen).slice(0, 200).map(vista)", ".slice(0, 200).map(vista)", T_VID),
@@ -187,9 +192,6 @@ M = [
     # --- http-esquemas.ts y las rutas de la API ---
     ("V180", "la API acepta pedir la subida de un video de cualquier peso", HTTPESQ, ".max(MAX_BYTES_VIDEO, { message:", ".max(MAX_BYTES_VIDEO * 100, { message:", T_RUTAS),
     ("V181", "la API acepta pedir la subida de cualquier tipo", HTTPESQ, 'z.literal(TIPO_VIDEO, { message: "Usa un video MP4 (con video H.264)." })', "z.string()", T_RUTAS),
-    ("V182", "la API acepta cualquier espacio al confirmar", HTTPESQ, 'z.enum(ARCHIVOS_VIDEO, { message: "El espacio del video no es válido." })', "z.string()", T_RUTAS),
-    ("V183", "cualquier rol pide la subida de un video", RUTA_SUBIDA, 'withCms(request, "write",', 'withCms(request, "read",', T_RUTAS),
-    ("V184", "cualquier rol confirma un video", RUTA_CONFIRMAR, 'withCms(request, "write",', 'withCms(request, "read",', T_RUTAS),
     ("V185", "solo un administrador ve la lista de videos", RUTA_LISTA, 'withCms(request, "read",', 'withCms(request, "write",', T_RUTAS),
     ("V186", "un id que no es UUID llega hasta la base", RUTA_CONFIRMAR, "    if (!id.ok) return id.response;\n", "", T_RUTAS),
     ("V187", "el panel no se entera de los videos de siempre de la tienda", RUTA_CTX, "videosDeSiempre: videosDeSiempre(joyeria),", "videosDeSiempre: {},", T_CTX),

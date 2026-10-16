@@ -91,6 +91,18 @@ describe("cliente de la API de tienda — subir un video en etapas", () => {
     assert.equal((llamadas[0].cuerpo as { nombreOriginal: string }).nombreOriginal, "imagen-fija-portada-horizontal.jpg");
   });
 
+  it("el video se declara SIEMPRE como video/mp4 (lo que dice el navegador del archivo no cuenta: un MP4 puede llegar sin tipo o como QuickTime); lo que manda es su contenido", async () => {
+    for (const tipo of ["", "video/quicktime", "application/octet-stream", "video/x-m4v"]) {
+      const { f, llamadas } = servidor();
+      const subidas: string[] = [];
+      const c = createCmsClient("t", { fetch: f, preparar: async (a) => ({ blob: a, mimeType: a.type }), subir: async (tk, _blob, mime) => (subidas.push(`${tk.path}|${mime}`), { ok: true, data: null }) });
+      const r = await c.subirVideo(new File([new Uint8Array(900_000)], "mi-video.mov", { type: tipo }), "marca.horizontal", fija());
+      assert.equal(r.ok, true, `tipo «${tipo}»`);
+      assert.equal((llamadas[2].cuerpo as { mimeType: string }).mimeType, "video/mp4", `la API recibe video/mp4 aunque el archivo diga «${tipo}»`);
+      assert.deepEqual(subidas[1], "t/cms/vid-1/subida|video/mp4", `y a Storage sube como video/mp4`);
+    }
+  });
+
   it("el video NO pasa por el servidor de la aplicación: a la API solo van sus datos, nunca el archivo", async () => {
     const { f, llamadas } = servidor();
     const c = createCmsClient("t", { fetch: f, preparar: async (a) => ({ blob: a, mimeType: a.type }), subir: async () => ({ ok: true, data: null }) });

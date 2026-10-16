@@ -366,9 +366,49 @@ describe("elegir un video: se revisa antes de subir", () => {
     await elegir(usuario, "marca.horizontal", real("marca.mp4"), "bueno.mp4");
     assert.ok(await within(slot("marca.horizontal")).findByText("«bueno.mp4» cumple todos los requisitos."));
   });
+
+  it("si se elige otro video mientras el anterior todavía se revisa, manda el último aunque el primero termine después", async () => {
+    publicar("delacour");
+    const lento: HerramientasVideo = {
+      ...navegador(),
+      sondear: async (archivo) => {
+        // El primero tarda en abrirse en el navegador; el segundo, no.
+        if (archivo.name === "primero.mp4") await new Promise((resolver) => setTimeout(resolver, 500));
+        return { reproducible: true, ancho: 720, alto: 900, duracionSeg: 8, imagenFija: IMAGEN_FIJA() };
+      },
+    };
+    const { usuario } = montar({ herramientas: lento });
+    await abrirPestana(usuario);
+    await elegir(usuario, "marca.horizontal", real("marca.mp4"), "primero.mp4");
+    await elegir(usuario, "marca.horizontal", real("marca.mp4"), "segundo.mp4");
+    assert.ok(await within(slot("marca.horizontal")).findByText("«segundo.mp4» cumple todos los requisitos."));
+    await new Promise((resolver) => setTimeout(resolver, 900)); // el primero termina ahora: no puede pisar al segundo
+    assert.ok(within(slot("marca.horizontal")).getByText("«segundo.mp4» cumple todos los requisitos."));
+    assert.equal(within(slot("marca.horizontal")).queryByText(/primero\.mp4/), null);
+  });
 });
 
 describe("un espacio con dos videos (portada y colección)", () => {
+  it("«Volver al video de siempre» quita el espacio ENTERO, también el video vertical que ya se había elegido", async () => {
+    publicar("delacour");
+    const { usuario } = montar();
+    await abrirPestana(usuario);
+    await elegir(usuario, "portada.horizontal", real("portada-h.mp4"));
+    await usuario.click(await within(slot("portada.horizontal")).findByRole("button", { name: "Usar este video" }));
+    await within(slot("portada.horizontal")).findByText("Listo: este es tu video");
+    await elegir(usuario, "portada.vertical", real("portada-v.mp4"));
+    await usuario.click(await within(slot("portada.vertical")).findByRole("button", { name: "Usar este video" }));
+    await within(slot("portada.vertical")).findByText("Listo: este es tu video");
+    await usuario.click(boton(/^Guardar/));
+    await waitFor(async () => assert.deepEqual(Object.keys((((await entidades("multimedia"))[0].borrador ?? {}) as { videos?: { portada?: object } }).videos?.portada ?? {}).sort(), ["horizontal", "vertical"]));
+
+    await usuario.click(boton("Volver al video de siempre"));
+    await usuario.click(boton(/^Guardar/));
+    await waitFor(async () => assert.deepEqual((await entidades("multimedia"))[0].borrador, {}));
+    assert.ok(within(slot("portada.horizontal")).getByText("El video de siempre"));
+    assert.ok(within(slot("portada.vertical")).getByText(/Primero elige el video horizontal/), "el vertical vuelve a quedar a la espera del horizontal");
+  });
+
   it("el vertical se habilita cuando ya hay horizontal; quitar el vertical deja el horizontal; volver al video de siempre quita todo el espacio", async () => {
     publicar("delacour");
     const { usuario } = montar();

@@ -7,7 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { ajustarDesplazamientos, analizarMp4, optimizarParaWeb } from "@/lib/cms-comercial/video-mp4";
-import { cajasDeArchivo, crearMp4, moverIndiceAlFinal } from "@/lib/cms-comercial/testing/mp4";
+import { cajasDeArchivo, conCajaAlFinal, crearMp4, moovConCo64, moverIndiceAlFinal } from "@/lib/cms-comercial/testing/mp4";
 
 const CARPETA = path.join(process.cwd(), "public", "catalogo", "delacour", "video");
 const reales = readdirSync(CARPETA).filter((f) => f.endsWith(".mp4")).sort();
@@ -293,5 +293,57 @@ describe("optimizar para la web (mover el índice al principio)", () => {
     const copia = alFinal.slice();
     optimizarParaWeb(alFinal);
     assert.deepEqual(alFinal, copia);
+  });
+
+  it("un fragmento (moof) o una caja cortada al final impiden reordenar aunque todo lo demás esté bien (un solo mdat, índice al principio)", () => {
+    const sano = crearMp4();
+    assert.equal(optimizarParaWeb(sano), sano, "sin nada raro devuelve los mismos bytes");
+    assert.equal(optimizarParaWeb(conCajaAlFinal(sano, "moof")), null, "con un fragmento");
+    const cortada = conCajaAlFinal(sano, "free", 40);
+    assert.equal(optimizarParaWeb(cortada.slice(0, cortada.byteLength - 10)), null, "con una caja cortada al final");
+    const conRelleno = conCajaAlFinal(sano, "free", 40);
+    assert.equal(optimizarParaWeb(conRelleno), conRelleno, "un relleno completo al final no es un problema");
+  });
+});
+
+describe("lo que el análisis dice de archivos que sirven de poco", () => {
+  it("un fragmento (moof) marca el MP4 como fragmentado aunque el índice no tenga la caja mvex", () => {
+    const solo = conCajaAlFinal(crearMp4(), "moof");
+    const a = analizarMp4(solo);
+    assert.equal(a.fragmentado, true);
+    assert.equal(analizarMp4(crearMp4()).fragmentado, false, "sin fragmentos, no");
+  });
+
+  it("un índice sin ninguna pista no es un MP4 legible (no hay nada que mostrar) y lo dice", () => {
+    const a = analizarMp4(crearMp4({ sinPistas: true }));
+    assert.equal(a.legible, false);
+    assert.ok(a.problemas.includes("sin_pistas"));
+    assert.equal(a.video, null);
+    assert.deepEqual(a.pistas, []);
+  });
+});
+
+describe("desplazamientos de 64 bits (co64) al mover el índice", () => {
+  const leer64 = (b: Uint8Array, desde: number) => {
+    const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    return v.getUint32(desde) * 0x1_0000_0000 + v.getUint32(desde + 4);
+  };
+  // moov(8) › trak(8) › mdia(8) › minf(8) › stbl(8) › co64: cabecera (8) + versión (4) + cantidad (4) = las posiciones empiezan en el byte 56.
+  const PRIMERA = 56;
+
+  it("suman el desplazamiento completo, también la parte alta (más de 4 GB)", () => {
+    const moov = moovConCo64([0x1_0000_0010, 0xffff_ffff, 100]);
+    assert.equal(ajustarDesplazamientos(moov, 100), true);
+    assert.equal(leer64(moov, PRIMERA), 0x1_0000_0074);
+    assert.equal(leer64(moov, PRIMERA + 8), 0x1_0000_0063, "cruza los 4 GB: la parte baja da la vuelta y la alta sube");
+    assert.equal(leer64(moov, PRIMERA + 16), 200);
+  });
+
+  it("restan igual de bien al bajar de los 4 GB, y uno que quedaría negativo se rechaza", () => {
+    const moov = moovConCo64([0x1_0000_0010, 0x1_0000_0020]);
+    assert.equal(ajustarDesplazamientos(moov, -0x10), true);
+    assert.equal(leer64(moov, PRIMERA), 0x1_0000_0000);
+    assert.equal(leer64(moov, PRIMERA + 8), 0x1_0000_0010);
+    assert.equal(ajustarDesplazamientos(moovConCo64([5]), -10), false);
   });
 });
