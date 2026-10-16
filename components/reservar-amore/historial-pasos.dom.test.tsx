@@ -5,24 +5,48 @@ import "@/lib/test-helpers/jsdom-setup";
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { useState } from "react";
-import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup, act, configure } from "@testing-library/react";
 import { useHistorialPasos } from "@/components/reservar-amore/useHistorialPasos";
 import PortalReservasAmorePage from "@/app/reservar/amore/page";
 
+// Tope de TODAS las esperas de este archivo (`waitFor`, `findBy*` y el aviso del historial de abajo). Es solo el límite para no colgar la prueba si lo esperado nunca ocurre: en cuanto
+// ocurre se sigue, así que no alarga las corridas buenas. Debe ser generoso: con la suite completa en paralelo la máquina se carga y 1 s (el valor por defecto) se queda corto.
+const TOPE_ESPERA_MS = 6000;
+configure({ asyncUtilTimeout: TOPE_ESPERA_MS });
+
 const marcaActual = () => (window.history.state as { amorePasos?: { paso: string; idx: number } } | null)?.amorePasos ?? null;
-/** Retrocede UNA entrada del historial, como el botón «atrás» del celular, y espera a que el navegador avise (popstate). */
-async function atras() {
+
+/**
+ * Pide un cambio de entrada del historial (`history.back()` / `history.forward()`) y espera a que el navegador AVISE con `popstate`, con su efecto ya en pantalla.
+ *
+ * jsdom no avisa al instante: el cambio solo se ENCOLA (dos `setTimeout(0)` encadenados) y el `popstate` llega después. Por eso no hay un tiempo fijo que sea seguro: con 30 ms la
+ * prueba fallaba de vez en cuando, cuando el proceso se pausaba más que eso (máquina cargada, recolector de basura) y miraba la pantalla antes del cambio. Se espera el EVENTO mismo;
+ * el tope solo evita colgar la prueba si no llega (jsdom no lo dispara al pedir retroceder desde la primera entrada ni avanzar desde la última).
+ *
+ * Espera UN `popstate`. Si el hook responde pidiendo otro cambio (salta un paso sin datos, o reinicia tras un paso final) esa cadena sigue después: se espera con `waitFor` a lo que
+ * debe quedar (el paso mostrado o la marca del historial), nunca con un tiempo, y no se sigue hasta que termine (un `popstate` rezagado se colaría en lo que venga después).
+ */
+async function cambiarEntrada(pedir: () => void) {
   await act(async () => {
-    window.history.back();
-    await new Promise((r) => setTimeout(r, 30));
+    await new Promise<void>((resolver, rechazar) => {
+      const tope = setTimeout(() => {
+        window.removeEventListener("popstate", alAvisar);
+        rechazar(new Error(`el navegador no avisó (popstate) en ${TOPE_ESPERA_MS} ms`));
+      }, TOPE_ESPERA_MS);
+      function alAvisar() {
+        clearTimeout(tope);
+        window.removeEventListener("popstate", alAvisar);
+        resolver();
+      }
+      window.addEventListener("popstate", alAvisar); // antes de pedir el cambio: así el aviso no se puede escapar
+      pedir();
+    });
   });
 }
-async function adelante() {
-  await act(async () => {
-    window.history.forward();
-    await new Promise((r) => setTimeout(r, 30));
-  });
-}
+/** Retrocede UNA entrada del historial, como el botón «atrás» del celular. */
+const atras = () => cambiarEntrada(() => window.history.back());
+/** Avanza UNA entrada del historial, como el botón «adelante» del navegador. */
+const adelante = () => cambiarEntrada(() => window.history.forward());
 
 beforeEach(() => {
   window.scrollTo = () => {};
@@ -75,11 +99,15 @@ describe("useHistorialPasos", () => {
     assert.equal(pasoMostrado(), "a");
   });
 
-  it("la flecha de volver de la pantalla hace lo mismo que el botón «atrás»; en el paso inicial no hace nada", async () => {
+  it("la flecha de volver de la pantalla hace lo mismo que el botón «atrás»; en el paso inicial no hace nada", async (t) => {
     render(<Pantalla />);
+    // En el paso inicial «volver» no debe ni PEDIR cambiar de entrada. Se comprueba la llamada misma, que ocurre dentro del clic: así no hay tiempo que esperar (una espera fija solo
+    // vería lo que pasara en ese lapso, y un `popstate` que llegara más tarde se le escaparía). Los espías dejan pasar la llamada, solo la cuentan.
+    const pedidas = [t.mock.method(window.history, "back"), t.mock.method(window.history, "go")];
     fireEvent.click(screen.getByText("volver"));
-    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual(pedidas.map((p) => p.mock.callCount()), [0, 0], "no pidió retroceder en el historial");
     assert.equal(pasoMostrado(), "a");
+    pedidas.forEach((p) => p.mock.restore());
     fireEvent.click(screen.getByText("ir a b"));
     fireEvent.click(screen.getByText("volver"));
     await waitFor(() => assert.equal(pasoMostrado(), "a"));
@@ -119,8 +147,9 @@ describe("useHistorialPasos", () => {
     fireEvent.click(screen.getByText("ir a c"));
     await atras(); // en b; «adelante» llevaría a c
     fireEvent.click(screen.getByText("perder datos"));
-    await adelante();
-    await waitFor(() => assert.equal(pasoMostrado(), "b"));
+    await adelante(); // el navegador va a c, que ya no tiene datos: el hook se queda en b y le pide al historial regresar (otro `popstate`)
+    await waitFor(() => assert.deepEqual(marcaActual(), { paso: "b", idx: 1 })); // espera ESE regreso: mientras no ocurra el historial sigue en c
+    assert.equal(pasoMostrado(), "b");
   });
 
   it("tras un paso FINAL, «atrás» no regresa a los pasos viejos: retrocede hasta el inicio y reinicia", async () => {
@@ -262,8 +291,8 @@ describe("Portal de reservas: el botón «atrás» del celular", () => {
     await atras();
     await encabezado("Elige tus servicios");
     fireEvent.click(screen.getByRole("checkbox", { name: /Manos Semi/ })); // quita uno: otra combinación
-    await adelante();
-    await new Promise((r) => setTimeout(r, 50));
+    await adelante(); // el navegador va a «Profesional», pero esa lista era de la combinación anterior: el hook se queda y pide regresar (otro `popstate`)
+    await waitFor(() => assert.deepEqual(marcaActual(), { paso: "servicio", idx: 1 })); // espera ESE regreso, en vez de un rato fijo
     await encabezado("Elige tus servicios"); // se queda: la lista de profesionales era de la combinación anterior
   });
 
