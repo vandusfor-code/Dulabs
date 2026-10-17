@@ -24,6 +24,18 @@ import type { AnuncioVisible } from "@/lib/catalogo/joyeria";
 const CICLO_MS = 5000;
 const FUNDIDO_MS = 280;
 
+/**
+ * Las clases que cambian según haya o no páginas propias en el menú. Sin páginas, EXACTAMENTE lo de siempre: la cabecera de escritorio empieza en lg (1024 px) y reparte el ancho en tres partes
+ * iguales. A 1024 px la cabecera de hoy ya está al límite (el nombre de la marca casi toca «Inicio»), así que con páginas la de escritorio empieza en xl (1280 px; por debajo se usa el menú lateral,
+ * que tiene lugar para todo) y las columnas de los lados son tan anchas como su contenido (el nombre de la marca y los iconos): el menú sigue centrado mientras cabe y, si no, se corre un poco en
+ * lugar de apretar la marca. Si ni así cabe en una fila (4 páginas con textos largos), pasa a dos filas centradas: nunca se parte un enlace ni se empujan los iconos fuera de la pantalla. Las clases
+ * van completas, no armadas por pedazos, para que Tailwind las encuentre.
+ */
+const CABECERA = {
+  normal: { grid: "lg:grid-cols-[1fr_auto_1fr] lg:px-8", boton: "lg:hidden", marca: "lg:col-start-1 lg:items-start lg:text-left", nombre: "lg:text-[26px]", descriptor: "lg:text-[10px]", nav: "lg:flex xl:gap-9", iconos: "lg:gap-1" },
+  ancha: { grid: "xl:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)] xl:gap-x-6 xl:px-8", boton: "xl:hidden", marca: "xl:col-start-1 xl:items-start xl:text-left", nombre: "xl:text-[26px]", descriptor: "xl:text-[10px]", nav: "xl:flex xl:flex-wrap xl:justify-center xl:gap-x-9 xl:gap-y-1", iconos: "xl:gap-1" },
+} as const;
+
 function cn(...cls: Array<string | false | null | undefined>) {
   return cls.filter(Boolean).join(" ");
 }
@@ -145,6 +157,7 @@ export function CromoJoyeria({
   anuncios,
   mayorista,
   mayoristaHref,
+  paginas = [],
 }: {
   marca: { name: string; descriptor?: string };
   basePath: string;
@@ -156,6 +169,8 @@ export function CromoJoyeria({
   mayorista: boolean;
   /** A dónde lleva el acceso «Mayorista»: la página propia o, sin ella, el bloque del inicio (`#mayoristas`, como siempre). */
   mayoristaHref?: string;
+  /** Las páginas propias que la administradora puso en el menú (publicadas hoy), ya en orden: van después de «Categorías» y antes de «Mayorista». Sin ninguna, el menú es el de siempre. */
+  paginas?: ReadonlyArray<{ texto: string; href: string }>;
 }) {
   const { whatsapp } = useTienda();
   const pathname = usePathname();
@@ -174,6 +189,7 @@ export function CromoJoyeria({
   const digits = (whatsapp ?? "").replace(/\D/g, "");
   const hrefMayorista = mayoristaHref ?? `${basePath}#mayoristas`;
   const enMayoristas = pathname === hrefMayorista;
+  const cab = paginas.length > 0 ? CABECERA.ancha : CABECERA.normal;
 
   // ¿Lo claro del contenido (o, sin marca, la cortina que sube sobre la portada) ya llegó a la cabecera? Se mide en un fotograma, nunca en cada evento de scroll.
   useEffect(() => {
@@ -218,8 +234,8 @@ export function CromoJoyeria({
       <div ref={cromo} className="joy-cromo" data-estado={estado}>
         {anuncios.length > 0 && <BarraAnuncios anuncios={anuncios} />}
         <header className="joy-cab" aria-label="Navegación principal">
-          <div className="mx-auto grid h-16 max-w-7xl grid-cols-[96px_minmax(0,1fr)_96px] items-center px-2 sm:px-6 md:h-20 lg:grid-cols-[1fr_auto_1fr] lg:px-8">
-            <div className="col-start-1 row-start-1 flex items-center lg:hidden">
+          <div className={cn("mx-auto grid h-16 max-w-7xl grid-cols-[96px_minmax(0,1fr)_96px] items-center px-2 sm:px-6 md:h-20", cab.grid)}>
+            <div className={cn("col-start-1 row-start-1 flex items-center", cab.boton)}>
               <button type="button" onClick={() => setMenuAbierto(true)} className="joy-icono size-11" aria-label="Abrir menú" aria-haspopup="dialog">
                 <Menu className="size-[22px]" strokeWidth={1.5} aria-hidden />
               </button>
@@ -227,16 +243,16 @@ export function CromoJoyeria({
 
             <Link
               href={basePath}
-              className="joy-marca col-start-2 row-start-1 flex min-w-0 flex-col items-center justify-center rounded-sm text-center leading-none lg:col-start-1 lg:items-start lg:text-left"
+              className={cn("joy-marca col-start-2 row-start-1 flex min-w-0 flex-col items-center justify-center rounded-sm text-center leading-none", cab.marca)}
               aria-label={`${marca.name}, inicio`}
             >
-              <span className="font-serif-tienda joy-tinta max-w-full truncate text-[14px] font-semibold uppercase tracking-[0.12em] min-[360px]:text-[16px] min-[420px]:text-lg sm:tracking-[0.16em] md:text-xl lg:text-[26px]">
+              <span className={cn("font-serif-tienda joy-tinta max-w-full truncate text-[14px] font-semibold uppercase tracking-[0.12em] min-[360px]:text-[16px] min-[420px]:text-lg sm:tracking-[0.16em] md:text-xl", cab.nombre)}>
                 {marca.name}
               </span>
-              {marca.descriptor && <span className="joy-tinta mt-1 text-[9px] font-medium uppercase tracking-[0.42em] opacity-80 lg:text-[10px]">{marca.descriptor}</span>}
+              {marca.descriptor && <span className={cn("joy-tinta mt-1 text-[9px] font-medium uppercase tracking-[0.42em] opacity-80", cab.descriptor)}>{marca.descriptor}</span>}
             </Link>
 
-            <nav className="col-start-2 row-start-1 hidden items-center gap-7 lg:flex xl:gap-9" aria-label="Menú principal">
+            <nav className={cn("col-start-2 row-start-1 hidden items-center gap-7", cab.nav)} aria-label="Menú principal">
               <Link href={basePath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esInicio)}>
                 Inicio
               </Link>
@@ -248,6 +264,11 @@ export function CromoJoyeria({
                   Categorías
                 </Link>
               )}
+              {paginas.map((p) => (
+                <Link key={p.href} href={p.href} className="joy-enlace joy-tinta whitespace-nowrap text-[15px]" aria-current={actual(pathname === p.href)}>
+                  {p.texto}
+                </Link>
+              ))}
               {mayorista && (
                 <Link href={hrefMayorista} className="joy-pildora-nav joy-tinta rounded-full border px-4 py-1.5 text-sm" aria-current={actual(enMayoristas)}>
                   Mayorista
@@ -255,7 +276,7 @@ export function CromoJoyeria({
               )}
             </nav>
 
-            <div className="col-start-3 row-start-1 flex items-center justify-end lg:gap-1">
+            <div className={cn("col-start-3 row-start-1 flex items-center justify-end", cab.iconos)}>
               <button type="button" onClick={() => setBuscando(true)} className="joy-icono size-11" aria-label="Buscar" aria-haspopup="dialog">
                 <Search className="size-[21px]" strokeWidth={1.5} aria-hidden />
               </button>
@@ -294,6 +315,11 @@ export function CromoJoyeria({
                 Mayoristas
               </Link>
             )}
+            {paginas.map((p) => (
+              <Link key={p.href} href={p.href} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(pathname === p.href)}>
+                {p.texto}
+              </Link>
+            ))}
             {categorias.length > 0 && (
               <div className="mt-2 border-t border-edge pt-2">
                 <button

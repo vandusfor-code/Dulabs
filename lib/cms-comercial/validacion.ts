@@ -10,7 +10,7 @@ import type { z } from "zod";
 import { isReference } from "@/lib/catalogo/domain";
 import type { EstadoEntidad, Problema, ResultadoValidacion, TipoEntidad } from "@/lib/cms-comercial/contrato";
 import { precioConBeneficio } from "@/lib/cms-comercial/evaluacion";
-import { ESQUEMA_POR_TIPO, type Beneficio } from "@/lib/cms-comercial/esquemas";
+import { ESQUEMA_POR_TIPO, MAX_PAGINAS_EN_MENU, type Beneficio } from "@/lib/cms-comercial/esquemas";
 import { contieneEnlaceMayorista, ordenAlAsistente, pareceSecreto } from "@/lib/cms-comercial/texto-seguro";
 import { finExclusivoMs } from "@/lib/cms-comercial/tiempo";
 import { ARCHIVOS_VIDEO, ESPECIFICACIONES, comprobarArchivoGuardado, type ArchivoVideoId } from "@/lib/cms-comercial/video-requisitos";
@@ -45,6 +45,11 @@ export interface ContextoValidacion {
   variables: ValoresVariables;
   /** Mínimo de la compra inicial mayorista configurado (para detectar que alguien lo escriba a mano). */
   minimoMayorista: number | null;
+  /**
+   * Las OTRAS páginas propias (código → título) que hoy están publicadas en el menú de arriba de la tienda, sin contar la que se está validando. Solo hace falta al validar una página que quiere estar
+   * en el menú: con ellas se sabe si el menú ya está lleno. Quien no lo informa no comprueba ese tope.
+   */
+  paginasEnMenu?: ReadonlyMap<string, string>;
 }
 
 /** Los elementos a los que otro elemento puede apuntar: las ofertas, combos y campañas (desde botones y campañas) y las páginas propias de la tienda (desde el pie). */
@@ -231,6 +236,8 @@ const ETIQUETAS: Readonly<Record<string, string>> = {
   "bloques.tipo": "Tipo de bloque",
   "bloques.texto": "Texto",
   "bloques.items": "Lista",
+  en_menu: "Mostrar en el menú de arriba",
+  texto_menu: "Texto en el menú",
   tema: "Tema",
   audiencia: "Audiencia",
   titulo: "Título",
@@ -300,6 +307,9 @@ export function validar(tipo: TipoEntidad, borrador: unknown, ctx: ContextoValid
         break;
       case "pie":
         revisarPie(parseo.data as never, adv);
+        break;
+      case "pagina":
+        revisarPagina(parseo.data as never, ctx, err);
         break;
       case "multimedia":
         revisarMultimedia(parseo.data as never, adv);
@@ -401,6 +411,14 @@ function revisarPie(p: { descripcion?: string; columnas: unknown[]; mostrar_cate
   if (contactoVacio) adv("contacto_vacio", "contacto", "El bloque de contacto no tiene nada que mostrar: no aparecerá en la tienda.");
   const hayAlgo = Boolean(p.descripcion) || p.columnas.length > 0 || p.mostrar_categorias || (c !== undefined && !contactoVacio) || p.redes.length > 0;
   if (!hayAlgo) adv("pie_vacio", "", "El pie no tiene descripción, enlaces, contacto ni redes: solo se verá el nombre de tu marca.");
+}
+
+/** El menú de arriba es angosto: caben `MAX_PAGINAS_EN_MENU` páginas propias. Si ya están todas, otra no puede entrar sin que ella decida cuál sale (nunca se descarta una en silencio). */
+function revisarPagina(p: { en_menu?: boolean }, ctx: ContextoValidacion, err: Reportar) {
+  if (p.en_menu !== true) return;
+  const otras = [...(ctx.paginasEnMenu?.values() ?? [])];
+  if (otras.length < MAX_PAGINAS_EN_MENU) return;
+  err("menu_lleno", "en_menu", `El menú de arriba admite ${MAX_PAGINAS_EN_MENU} páginas y ya tiene ${otras.map((n) => `«${n}»`).join(", ")}. Quita una del menú (apaga «Mostrar en el menú de arriba» en esa página) para poner esta.`);
 }
 
 function revisarMultimedia(m: { videos?: Record<string, unknown>; categorias?: unknown[] }, adv: Reportar) {
