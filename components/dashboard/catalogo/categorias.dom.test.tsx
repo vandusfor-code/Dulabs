@@ -14,6 +14,7 @@ import { cleanup, configure, fireEvent, render, screen, waitFor, within } from "
 import userEvent from "@testing-library/user-event";
 import { NextRequest } from "next/server";
 import { createCatalogClient } from "@/lib/catalogo-client";
+import { createCmsClient, type UsoCategoria } from "@/lib/cms-comercial-client";
 import type { CategoryDeleteResult } from "@/lib/catalogo/domain";
 import { DashboardContext, type DashboardContextValue } from "@/lib/dashboard-session";
 import { installSupabaseMemoria, type SupabaseMemoria } from "@/lib/testing/supabase-rest-memoria";
@@ -35,6 +36,9 @@ const PREFIJO = "/api/dashboard/catalogo";
 
 let db: SupabaseMemoria;
 let puente: { llamadas: Array<{ metodo: string; ruta: string }>; restaurar: () => void };
+/** Lo que responde la consulta «¿dónde está elegida esta categoría?» de la tienda (cada prueba lo cambia). Por defecto: en ninguna parte. */
+let usosDeLaTienda: (id: string, request: NextRequest) => Response | Promise<Response>;
+const usosOk = (usos: UsoCategoria[]) => Response.json({ success: true, data: { usos } });
 
 /** Lleva las llamadas del cliente del navegador (rutas relativas) a los handlers REALES de categorías; productos y links públicos son respuestas fijas. */
 function instalarPuente() {
@@ -42,8 +46,13 @@ function instalarPuente() {
   const llamadas: Array<{ metodo: string; ruta: string }> = [];
   globalThis.fetch = (async (entrada: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof entrada === "string" ? entrada : entrada instanceof URL ? entrada.href : entrada.url, "http://localhost");
-    if (!url.pathname.startsWith(PREFIJO)) return base(entrada, init);
     const metodo = (init?.method ?? "GET").toUpperCase();
+    const deLaTienda = /^\/api\/dashboard\/tienda\/categorias\/([^/]+)\/usos$/.exec(url.pathname);
+    if (deLaTienda) {
+      llamadas.push({ metodo, ruta: url.pathname });
+      return usosDeLaTienda(deLaTienda[1], new NextRequest(url, { method: metodo, headers: init?.headers as HeadersInit | undefined }));
+    }
+    if (!url.pathname.startsWith(PREFIJO)) return base(entrada, init);
     const ruta = url.pathname.slice(PREFIJO.length);
     llamadas.push({ metodo, ruta: `${ruta}${url.search}` });
     const request = new NextRequest(url, { method: metodo, headers: init?.headers as HeadersInit | undefined, body: typeof init?.body === "string" ? init.body : undefined });
@@ -83,6 +92,7 @@ beforeEach(() => {
     { id: VACIA, id_tenant: T1, nombre: "Vacía" },
   );
   db.table("dulabs_inventario_productos").push(fila(P1, ARETES, "Aretes"), fila(P2, ARETES, "Aretes", { activo: false }), fila(P3, DIJES, "Dijes"));
+  usosDeLaTienda = () => usosOk([]);
   puente = instalarPuente();
 });
 
@@ -92,13 +102,13 @@ afterEach(() => {
   db.uninstall();
 });
 
-function abrirDialogo(token = "t-admin") {
+function abrirDialogo(token = "t-admin", opciones: { sinTienda?: boolean } = {}) {
   const eliminadas: Array<{ id: string; resultado: CategoryDeleteResult }> = [];
   let cierres = 0;
   const usuario = userEvent.setup();
   render(
     <CatalogToastProvider>
-      <CategoriasDialog abierto client={createCatalogClient(token)} onCerrar={() => void cierres++} onEliminada={(id, resultado) => void eliminadas.push({ id, resultado })} />
+      <CategoriasDialog abierto client={createCatalogClient(token)} cms={opciones.sinTienda ? null : createCmsClient(token)} onCerrar={() => void cierres++} onEliminada={(id, resultado) => void eliminadas.push({ id, resultado })} />
     </CatalogToastProvider>,
   );
   return { usuario, eliminadas, cierres: () => cierres };
@@ -245,6 +255,122 @@ describe("cuando las cosas cambian mientras la persona decide", () => {
   });
 });
 
+const USO_INICIO: UsoCategoria = { tipo: "home", clave: "home", nombre: "Página principal", estado: "publicada", lugares: ["destacadas"], enPublicado: true, enBorrador: false, visibleHoy: true };
+const USO_OFERTA: UsoCategoria = { tipo: "oferta", clave: "amor", nombre: "Amor y Amistad", estado: "borrador", lugares: ["oferta"], enPublicado: false, enBorrador: true, visibleHoy: false };
+const usosEnTienda = () => screen.findByTestId("usos-categoria");
+/** Una respuesta que la prueba suelta cuando quiere (para ver el estado «cargando» y las respuestas que llegan tarde). */
+function compuerta() {
+  let abrir!: (r: Response) => void;
+  const promesa = new Promise<Response>((r) => (abrir = r));
+  return { promesa, abrir };
+}
+
+describe("dónde está elegida la categoría (antes de eliminarla)", () => {
+  it("mientras se revisa lo dice, y eso no impide decidir: la consulta es una ayuda, no un candado", async () => {
+    const c = compuerta();
+    usosDeLaTienda = () => c.promesa;
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Vacía"));
+    assert.ok(await screen.findByTestId("usos-categoria-cargando"));
+    assert.equal(confirmar().disabled, false, "una categoría vacía se puede eliminar sin esperar la consulta");
+    c.abrir(usosOk([USO_INICIO]));
+    await usosEnTienda();
+    assert.equal(screen.queryByTestId("usos-categoria-cargando"), null);
+  });
+
+  it("pide los usos de ESA categoría a la tienda, con la sesión de quien administra", async () => {
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Aretes"));
+    await screen.findByTestId("usos-categoria-ninguno");
+    assert.ok(puente.llamadas.some((l) => l.metodo === "GET" && l.ruta === "/api/dashboard/tienda/categorias/" + ARETES + "/usos"));
+  });
+
+  it("dice en qué partes está elegida (nombre, lugar y si se ve hoy o está en borrador) y qué pasará", async () => {
+    usosDeLaTienda = () => usosOk([USO_INICIO, USO_OFERTA]);
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Aretes"));
+    const caja = await usosEnTienda();
+    const filas = within(caja).getAllByRole("listitem").map((li) => li.textContent);
+    assert.deepEqual(filas, ["Página principal — categorías destacadas (se ve hoy en la tienda)", "Oferta «Amor y Amistad» — categorías de la oferta (en borrador)"]);
+    assert.match(caja.textContent ?? "", /Si la eliminas, deja de mostrarse en esos lugares\. Antes de volver a publicar esos elementos, quítala de cada uno\./);
+  });
+
+  it("nombra cada tipo de elemento y cada lugar como lo conoce la persona", async () => {
+    usosDeLaTienda = () =>
+      usosOk([
+        { ...USO_INICIO, lugares: ["destacadas", "boton"] },
+        { tipo: "pie", clave: "pie", nombre: "Pie de página", estado: "publicada", lugares: ["enlace_pie"], enPublicado: true, enBorrador: true, visibleHoy: true },
+        { tipo: "multimedia", clave: "multimedia", nombre: "Fotos y videos", estado: "borrador", lugares: ["imagen_categoria"], enPublicado: false, enBorrador: true, visibleHoy: false },
+        { tipo: "campana", clave: "madre", nombre: "Día de la Madre", estado: "pausada", lugares: ["boton"], enPublicado: true, enBorrador: false, visibleHoy: false },
+      ]);
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Dijes"));
+    const filas = within(await usosEnTienda()).getAllByRole("listitem").map((li) => li.textContent);
+    assert.deepEqual(filas, [
+      "Página principal — categorías destacadas, un botón (se ve hoy en la tienda)",
+      "Pie de página — enlace del pie de página (se ve hoy en la tienda · en borrador)",
+      "Fotos y videos — imagen de la categoría (en borrador)",
+      "Campaña «Día de la Madre» — un botón (publicada, pero en pausa)",
+    ]);
+  });
+
+  it("si no está elegida en ninguna parte lo dice: eliminarla no cambia nada en la tienda", async () => {
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Vacía"));
+    assert.match((await screen.findByTestId("usos-categoria-ninguno")).textContent ?? "", /No está elegida en ninguna parte de la sección Tienda: eliminarla no cambia nada allí\./);
+    assert.equal(screen.queryByTestId("usos-categoria"), null);
+  });
+
+  it("si no se puede consultar (tienda sin el módulo, error, sin conexión) se avisa en general y se puede seguir", async () => {
+    usosDeLaTienda = () => Response.json({ success: false, error: { code: "MODULE_DISABLED", message: "La administración de la tienda no está habilitada para tu cuenta." } }, { status: 403 });
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Vacía"));
+    assert.match((await screen.findByTestId("usos-categoria-general")).textContent ?? "", /No pudimos revisar en qué partes de tu tienda está elegida\..*Antes de volver a publicar, quítala de esos lugares\./);
+    assert.equal(confirmar().disabled, false);
+  });
+
+  it("sin el cliente de la tienda (no hay sesión para consultarla) se muestra el mismo aviso general", async () => {
+    const { usuario } = abrirDialogo("t-admin", { sinTienda: true });
+    await usuario.click(await eliminarFila("Vacía"));
+    await screen.findByTestId("usos-categoria-general");
+    assert.ok(!puente.llamadas.some((l) => l.ruta.includes("/tienda/")), "no se consultó nada");
+  });
+
+  it("una respuesta que llega tarde de OTRA categoría no se mezcla: solo cuenta la de la categoría que se está viendo", async () => {
+    const lenta = compuerta();
+    usosDeLaTienda = (id) => (id === ARETES ? lenta.promesa : usosOk([USO_OFERTA]));
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Aretes"));
+    await screen.findByTestId("usos-categoria-cargando");
+    await usuario.click(screen.getByRole("button", { name: "Cancelar" }));
+    await usuario.click(await eliminarFila("Dijes"));
+    const caja = await usosEnTienda();
+    assert.ok(within(caja).getByText(/Amor y Amistad/));
+
+    lenta.abrir(usosOk([USO_INICIO])); // llega la de Aretes, ya tarde
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(within(screen.getByTestId("usos-categoria")).getByText(/Amor y Amistad/), "sigue viéndose lo de Dijes");
+    assert.equal(within(screen.getByTestId("usos-categoria")).queryByText(/Página principal/), null, "lo de Aretes no se mezcló");
+  });
+
+  it("al volver a elegir la misma categoría se consulta de nuevo (la tienda pudo cambiar) y no se muestra lo viejo mientras tanto", async () => {
+    usosDeLaTienda = () => usosOk([USO_INICIO]);
+    const { usuario } = abrirDialogo();
+    await usuario.click(await eliminarFila("Aretes"));
+    await usosEnTienda();
+    await usuario.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    const c = compuerta();
+    usosDeLaTienda = () => c.promesa;
+    await usuario.click(await eliminarFila("Aretes"));
+    assert.ok(await screen.findByTestId("usos-categoria-cargando"), "no queda a la vista lo de la vez anterior");
+    assert.equal(screen.queryByTestId("usos-categoria"), null);
+    c.abrir(usosOk([]));
+    await screen.findByTestId("usos-categoria-ninguno");
+    assert.equal(puente.llamadas.filter((l) => l.ruta === "/api/dashboard/tienda/categorias/" + ARETES + "/usos").length, 2);
+  });
+});
+
 describe("la página del catálogo", () => {
   function sesion(token: string, rol: "admin" | "lectura"): DashboardContextValue {
     return {
@@ -279,6 +405,21 @@ describe("la página del catálogo", () => {
     montar("t-lectura", "lectura");
     await screen.findByRole("heading", { name: "Carga de productos" });
     assert.equal(screen.queryByRole("button", { name: "Categorías" }), null);
+  });
+
+  it("al confirmar la eliminación consulta dónde está elegida la categoría, con la sesión de quien administra (no la de otra persona)", async () => {
+    const sesiones: Array<string | null> = [];
+    usosDeLaTienda = (_id, request) => {
+      sesiones.push(request.headers.get("authorization"));
+      return usosOk([USO_INICIO]);
+    };
+    const usuario = userEvent.setup();
+    montar();
+    await usuario.click(await screen.findByRole("button", { name: "Categorías" }));
+    await usuario.click(await eliminarFila("Aretes"));
+    const caja = await usosEnTienda();
+    assert.ok(within(caja).getByText(/Página principal/));
+    assert.deepEqual(sesiones, ["Bearer t-admin"]);
   });
 
   it("al eliminar la categoría por la que se estaba filtrando, el filtro se quita, la lista de filtros se actualiza y los productos se vuelven a pedir", async () => {
