@@ -6,7 +6,7 @@
  *   preparar (comprimir en el navegador) -> pedir URL firmada -> subir DIRECTO
  *   a Storage (imagen + miniatura) -> confirmar (el servidor verifica todo).
  */
-import type { CatalogCategory, CatalogImage, CatalogProduct, CatalogProductDetail, ProductPage, ProductStatus, StatusFilter } from "@/lib/catalogo/domain";
+import type { CatalogCategory, CatalogCategoryWithCount, CatalogImage, CatalogProduct, CatalogProductDetail, CategoryDeleteResult, ProductPage, ProductStatus, StatusFilter } from "@/lib/catalogo/domain";
 import { prepareProductImage, ImagePreparationError, type PreparedImage } from "@/lib/catalogo/image-processing";
 import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -304,6 +304,17 @@ export function createCatalogClient(accessToken: string) {
 
     createCategory(name: string): Promise<CatalogResult<{ category: CatalogCategory }>> {
       return call(accessToken, "/categorias", { method: "POST", body: JSON.stringify({ name }) });
+    },
+
+    /** Las categorías con cuántos productos usa cada una (administrador de categorías). */
+    listCategoriesWithCounts(): Promise<CatalogResult<{ categories: CatalogCategoryWithCount[] }>> {
+      return call(accessToken, "/categorias?conteo=1");
+    },
+
+    /** Elimina una categoría. Con productos hay que indicar `moveTo`: el id de otra categoría o «none» (sin categoría); si no, el servidor responde 409 sin tocar nada. */
+    deleteCategory(id: string, moveTo?: string): Promise<CatalogResult<CategoryDeleteResult>> {
+      const qs = moveTo ? `?moveTo=${encodeURIComponent(moveTo)}` : "";
+      return call(accessToken, `/categorias/${encodeURIComponent(id)}${qs}`, { method: "DELETE" });
     },
 
     /** Links públicos (detal y, para admin, mayor). Para un admin los crea la primera vez. */

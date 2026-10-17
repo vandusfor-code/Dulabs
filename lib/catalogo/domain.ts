@@ -53,6 +53,18 @@ export interface CatalogCategory {
   name: string;
 }
 
+/** Una categoría con cuántos productos (activos o inactivos) la usan: lo que el administrador de categorías muestra antes de eliminar. */
+export interface CatalogCategoryWithCount extends CatalogCategory {
+  productCount: number;
+}
+
+/** Resultado de eliminar una categoría: cuántos productos se pasaron y a dónde (null = quedaron sin categoría). */
+export interface CategoryDeleteResult {
+  deleted: true;
+  moved: number;
+  movedTo: CatalogCategory | null;
+}
+
 export interface CatalogProduct {
   /** Identificador técnico interno (UUID). Nunca se muestra como "referencia". */
   id: string;
@@ -286,6 +298,23 @@ export const categoryCreateSchema = z
   .strict();
 
 export type CategoryCreateInput = z.output<typeof categoryCreateSchema>;
+
+/** Valor de `moveTo` para dejar los productos sin categoría (cualquier otro valor es el id de la categoría a la que pasan). */
+export const CATEGORY_MOVE_NONE = "none";
+
+/**
+ * Query del borrado de una categoría. `moveTo` es obligatorio SOLO si la categoría tiene productos: el id de otra categoría del negocio, o «none» para dejarlos sin
+ * categoría. Sin `moveTo` y con productos, el servicio responde 409 y no toca nada.
+ */
+export const categoryDeleteQuerySchema = z
+  .object({
+    moveTo: z
+      .union([z.literal(CATEGORY_MOVE_NONE), uuid], { error: "Elige una categoría válida para pasar los productos." })
+      .optional(),
+  })
+  .strict();
+
+export type CategoryDeleteQuery = z.output<typeof categoryDeleteQuerySchema>;
 
 export const STATUS_FILTERS = ["ALL", "ACTIVE", "INACTIVE"] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number];

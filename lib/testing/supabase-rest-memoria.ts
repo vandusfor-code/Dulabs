@@ -23,6 +23,11 @@ export interface TableSpec {
   identity?: string;
   /** Valores por defecto (p. ej. created_at). */
   defaults?: () => Row;
+  /**
+   * Claves foráneas SIN «on delete» que apuntan a esta tabla (como la de productos → categorías): borrar una fila a la que todavía apunta alguna fila de `table` responde 23503
+   * como Postgres. MATCH SIMPLE: una fila hija con alguna de las columnas en null no cuenta.
+   */
+  referencedBy?: Array<{ table: string; columns: string[]; parentColumns: string[] }>;
 }
 
 export interface SupabaseMemoria {
@@ -289,6 +294,14 @@ export function installSupabaseMemoria(url = "http://supabase.memoria"): Supabas
       }
       if (method === "DELETE") {
         const target = new Set(applyFilters(list, u.searchParams));
+        for (const row of target) {
+          for (const ref of specs.get(name)?.referencedBy ?? []) {
+            const enUso = (tables.get(ref.table) ?? []).some(
+              (hija) => ref.columns.every((c) => hija[c] !== null && hija[c] !== undefined) && ref.columns.every((c, i) => String(hija[c]) === String(row[ref.parentColumns[i]])),
+            );
+            if (enUso) throw Object.assign(new Error("foreign key"), { pg: { code: "23503", message: `update or delete on table "${name}" violates foreign key constraint on table "${ref.table}"` } });
+          }
+        }
         tables.set(name, list.filter((r) => !target.has(r)));
         if (wantsRows) return reply(project([...target], u.searchParams.get("select")));
         return json(204, undefined, prefer.includes("count=exact") ? { "content-range": `*/${target.size}` } : {});

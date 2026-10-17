@@ -146,6 +146,18 @@ export interface CatalogRepository {
   listCategories(tenantId: string): Promise<CatalogCategory[]>;
   getCategory(tenantId: string, categoryId: string): Promise<CatalogCategory | null>;
   insertCategory(tenantId: string, actorId: string, name: string): Promise<CatalogCategory>;
+  /** Productos (activos o inactivos) que apuntan a la categoría. */
+  countProductsInCategory(tenantId: string, categoryId: string): Promise<number>;
+  /**
+   * Pasa TODOS los productos de la categoría `fromId` a `to` (null = quedan sin categoría), sincronizando el texto legado `categoria`. Cada escritura renueva el token de
+   * auditoría, así que el historial del producto atribuye el cambio a `actorId`.
+   */
+  reassignCategory(tenantId: string, actorId: string, fromId: string, to: CatalogCategory | null): Promise<void>;
+  /**
+   * Elimina la categoría; false si ya no existía. Lanza CONFLICT si todavía hay productos que la usan (la clave foránea compuesta lo impide: es la barrera final, aunque
+   * otro producto haya entrado después de contar).
+   */
+  deleteCategory(tenantId: string, categoryId: string): Promise<boolean>;
 
   listMedia(tenantId: string, productId: string): Promise<StoredMedia[]>;
   listPrimaryMedia(tenantId: string, productIds: string[]): Promise<StoredMedia[]>;
@@ -745,6 +757,37 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
         .single();
       if (error || !data) fail("insertCategory", error ?? { message: "sin fila" });
       return { id: (data as { id: string }).id, name: (data as { nombre: string }).nombre };
+    },
+
+    async countProductsInCategory(tenantId, categoryId) {
+      const { count, error } = await supabase.from(T_PRODUCTOS).select("id", { count: "exact", head: true }).eq("id_tenant", tenantId).eq("categoria_id", categoryId);
+      if (error) fail("countProductsInCategory", error);
+      return count ?? 0;
+    },
+
+    async reassignCategory(tenantId, actorId, fromId, to) {
+      const { error } = await supabase
+        .from(T_PRODUCTOS)
+        .update({
+          categoria_id: to?.id ?? null,
+          // Mismo par que updateProduct: el texto legado `categoria` viaja siempre con el id.
+          categoria: to?.name ?? null,
+          updated_at: new Date().toISOString(),
+          updated_by: actorId,
+          // Token nuevo: la auditoría atribuye ESTA escritura a actorId (sin él quedaría «sin actor»).
+          escritura_id: randomUUID(),
+        })
+        .eq("id_tenant", tenantId)
+        .eq("categoria_id", fromId);
+      if (error) fail("reassignCategory", error);
+    },
+
+    async deleteCategory(tenantId, categoryId) {
+      const { data, error } = await supabase.from(T_CATEGORIAS).delete().eq("id_tenant", tenantId).eq("id", categoryId).select("id");
+      // 23503 al BORRAR = hay productos que todavía apuntan a la categoría (el `fail` genérico lo lee como «la categoría no existe», que aquí sería falso).
+      if (error?.code === "23503") throw new CatalogError("CONFLICT", "La categoría todavía tiene productos. Pásalos a otra categoría e inténtalo de nuevo.");
+      if (error) fail("deleteCategory", error);
+      return (data ?? []).length > 0;
     },
 
     async listMedia(tenantId, productId) {
