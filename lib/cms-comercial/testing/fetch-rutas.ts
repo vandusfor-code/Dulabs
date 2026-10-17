@@ -17,6 +17,7 @@ import { GET as versionesGET } from "@/app/api/dashboard/tienda/entidades/[id]/v
 import { GET as imagenesGET } from "@/app/api/dashboard/tienda/imagenes/route";
 import { POST as confirmarPOST } from "@/app/api/dashboard/tienda/imagenes/[id]/confirmar/route";
 import { POST as subidaPOST } from "@/app/api/dashboard/tienda/imagenes/upload-url/route";
+import { GET as usosCategoriaGET } from "@/app/api/dashboard/tienda/categorias/[id]/usos/route";
 import { GET as productosGET } from "@/app/api/dashboard/tienda/productos/route";
 import { GET as videosGET } from "@/app/api/dashboard/tienda/videos/route";
 import { POST as confirmarVideoPOST } from "@/app/api/dashboard/tienda/videos/[id]/confirmar/route";
@@ -44,6 +45,7 @@ export function crearFetchRutas(): FetchRutas {
     if (partes[0] === "auditoria") return auditoriaGET(request);
     if (partes[0] === "contexto") return contextoGET(request);
     if (partes[0] === "productos") return productosGET(request);
+    if (partes[0] === "categorias" && partes[2] === "usos") return usosCategoriaGET(request, conId(partes[1]));
     if (partes[0] === "imagenes") {
       if (partes.length === 1) return imagenesGET(request);
       if (partes[1] === "upload-url") return subidaPOST(request);

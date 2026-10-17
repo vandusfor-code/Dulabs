@@ -12,6 +12,7 @@ import { formatCop } from "@/lib/business-agent-quote";
 import { useI18n } from "@/lib/i18n";
 import { useDashboard } from "@/lib/dashboard-session";
 import { createCatalogClient, type CatalogClient } from "@/lib/catalogo-client";
+import { createCmsClient, type CmsClient } from "@/lib/cms-comercial-client";
 import { Pill } from "@/components/dashboard/shell/ui";
 import type { ProductStatus } from "@/lib/catalogo/domain";
 
@@ -44,12 +45,14 @@ export function formatPrice(value: number | null | undefined): string {
 // backend autoriza cada llamada).
 // ---------------------------------------------------------------------------
 
-export function useCatalogAccess(): { client: CatalogClient | null; canWrite: boolean; canManageOrders: boolean; enabled: boolean; ready: boolean } {
+export function useCatalogAccess(): { client: CatalogClient | null; /** El cliente de la administración de la tienda (CMS): solo para consultar dónde está elegida una categoría. */ cms: CmsClient | null; canWrite: boolean; canManageOrders: boolean; enabled: boolean; ready: boolean } {
   const { session, rol, modulos, negocios } = useDashboard();
   const token = session?.access_token ?? null;
   const client = useMemo(() => (token ? createCatalogClient(token) : null), [token]);
+  const cms = useMemo(() => (token ? createCmsClient(token) : null), [token]);
   return {
     client,
+    cms,
     canWrite: rol === "admin",
     // Cerrar pedidos: admin y asesoras (el backend vuelve a validarlo: CATALOG_ORDER_ROLES).
     canManageOrders: rol === "admin" || rol === "agente",

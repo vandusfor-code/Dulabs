@@ -677,6 +677,7 @@ lib/cms-comercial/video-requisitos.test.ts
 lib/cms-comercial/guia-videos.test.ts
 lib/cms-comercial/video-navegador.test.ts
 lib/cms-comercial/multimedia-esquema.test.ts
+lib/cms-comercial/usos-categoria.test.ts
 lib/cms-comercial/multimedia-sql.pglite.test.ts
 lib/cms-comercial/multimedia-servicio.pglite.test.ts
 lib/cms-comercial/videos.pglite.test.ts
@@ -687,6 +688,7 @@ lib/cms-comercial-client-videos.test.ts
 app/api/dashboard/tienda/rutas-videos.test.ts
 components/catalogo-publico/tienda/joyeria/inicio-multimedia.test.tsx
 components/dashboard/tienda/multimedia-formato.test.ts
+app/api/dashboard/tienda/categorias-usos.test.ts
 components/dashboard/tienda/multimedia.dom.test.tsx
 
 # Cobros manuales: recordatorio de pago por WhatsApp (plantilla pendiente_pago desde el número de Dulabs) + suspensión del bot por falta de pago.
