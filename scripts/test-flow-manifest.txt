@@ -667,12 +667,17 @@ lib/cms-comercial/pagina-publica.test.ts
 lib/cms-comercial/pagina-servicio.pglite.test.ts
 components/catalogo-publico/tienda/joyeria/pagina-tienda.test.tsx
 components/dashboard/tienda/pagina.dom.test.tsx
+# Páginas propias en el MENÚ DE ARRIBA de la tienda (campos «en_menu» y «texto_menu» de la página): qué páginas entran (solo publicadas y marcadas), su texto, el orden de creación, el tope de 4 y cómo lo ve la administradora; la cabecera y el menú del celular que las dibujan; el aviso de «menú lleno» contra SQL real.
+lib/cms-comercial/menu-paginas.test.ts
+components/catalogo-publico/tienda/joyeria/menu-paginas.dom.test.tsx
+components/dashboard/tienda/menu-pagina.dom.test.tsx
 # Fotos y videos del inicio (tipo «multimedia» del CMS, migración 20261212): los videos de la portada, la colección, la marca y los mayoristas que la administradora sube sola, y la imagen de cada categoría. El lector de MP4 (cajas, códec, medidas, sonido, duración, índice al principio) con los videos reales y con basura; los requisitos de cada espacio con el mensaje de cada regla; la revisión en el navegador antes de subir; el esquema y la validación (incluida la red de seguridad al publicar); la migración y su reversa en SQL real; el servicio de videos; la ruta pública con Range (Safari lo exige); lo que la tienda dibuja y el panel de punta a punta.
 lib/cms-comercial/video-mp4.test.ts
 lib/cms-comercial/video-requisitos.test.ts
 lib/cms-comercial/guia-videos.test.ts
 lib/cms-comercial/video-navegador.test.ts
 lib/cms-comercial/multimedia-esquema.test.ts
+lib/cms-comercial/usos-categoria.test.ts
 lib/cms-comercial/multimedia-sql.pglite.test.ts
 lib/cms-comercial/multimedia-servicio.pglite.test.ts
 lib/cms-comercial/videos.pglite.test.ts
@@ -686,6 +691,7 @@ app/api/dashboard/tienda/rutas-videos.test.ts
 components/catalogo-publico/tienda/joyeria/inicio-multimedia.test.tsx
 components/catalogo-publico/tienda/joyeria/mayoristas-textos.test.tsx
 components/dashboard/tienda/multimedia-formato.test.ts
+app/api/dashboard/tienda/categorias-usos.test.ts
 components/dashboard/tienda/multimedia.dom.test.tsx
 components/dashboard/tienda/mayoristas-textos.dom.test.tsx
 

@@ -221,7 +221,7 @@ describe("PIE: revisar y publicar", () => {
     const deps = { tenantDe: async (slug: string) => (slug === "tienda-a" ? t : slug === "tienda-b" ? otro : null), cargar: (id: string) => lector.cargar(id) };
     const pieA = await cargarPiePublico(deps, "tienda-a");
     assert.equal(pieA.pie?.redes[0].url, "https://www.instagram.com/delacour.joyeria");
-    assert.deepEqual(await cargarPiePublico(deps, "tienda-b"), { pie: null, paginas: [] }, "el otro negocio no tiene pie publicado");
+    assert.deepEqual(await cargarPiePublico(deps, "tienda-b"), { pie: null, paginas: [], menu: [] }, "el otro negocio no tiene pie publicado");
     assert.equal(pieDesdeCms(pieA.pie, CTX).redes[0].usuario, "@delacour.joyeria");
   });
 });

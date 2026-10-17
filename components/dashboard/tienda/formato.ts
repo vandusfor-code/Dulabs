@@ -244,6 +244,11 @@ export function resumirCambios(antes: unknown, despues: unknown, max = 6, opcion
   for (const ruta of rutas) {
     const va = a.get(ruta);
     const vd = d.get(ruta);
+    // «No está en el menú de arriba» se guarda de dos maneras (sin el campo, o apagado): para quien lee el historial es lo mismo, así que apagarlo dice «Sí → No» y no «Sí → —».
+    if (ruta === "en_menu") {
+      if ((va === true) !== (vd === true)) cambios.push({ campo: etiquetaCampo(ruta), antes: va === true ? "Sí" : "No", despues: vd === true ? "Sí" : "No" });
+      continue;
+    }
     if (va === vd || (va === undefined && vd === "") || (va === "" && vd === undefined)) continue;
     // Una imagen recién puesta trae el punto focal por defecto (el centro): no es una decisión de la persona, no se cuenta.
     if (ruta.endsWith(".foco") && ((va === undefined && vd === "50% 50%") || (vd === undefined && va === "50% 50%"))) continue;

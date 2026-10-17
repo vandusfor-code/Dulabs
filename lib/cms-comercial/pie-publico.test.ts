@@ -12,7 +12,7 @@ import type { LecturaActivaCruda, PublicadoCrudo } from "@/lib/cms-comercial/rep
 import { instantanea, pie, publicada, TENANT_A } from "@/lib/cms-comercial/testing/fixtures";
 
 const PIE = pie({ descripcion: "Joyas para ti.", redes: [{ red: "instagram", url: "https://instagram.com/delacour" }] });
-const SIN_PIE = { pie: null, paginas: [] };
+const SIN_PIE = { pie: null, paginas: [], menu: [] };
 const SNAP = instantanea({ pie: publicada("pie", PIE) });
 
 type Llamadas = { tenantDe: string[]; cargar: string[]; avisos: unknown[] };
@@ -38,7 +38,7 @@ function deps(over: Partial<DepsPiePublico> = {}): { deps: DepsPiePublico; llama
 describe("cargar el pie publicado", () => {
   it("con un pie publicado: devuelve su contenido", async () => {
     const { deps: d, llamadas } = deps();
-    assert.deepEqual(await cargarPiePublico(d, "delacour"), { pie: PIE, paginas: [] });
+    assert.deepEqual(await cargarPiePublico(d, "delacour"), { pie: PIE, paginas: [], menu: [] });
     assert.deepEqual([llamadas.tenantDe, llamadas.cargar, llamadas.avisos], [["delacour"], [TENANT_A], []]);
   });
 

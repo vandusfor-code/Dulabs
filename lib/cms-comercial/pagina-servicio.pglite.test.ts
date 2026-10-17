@@ -8,7 +8,7 @@ import type { Rol } from "@/lib/team";
 import type { ActorCms } from "@/lib/cms-comercial/contrato";
 import { isCmsError } from "@/lib/cms-comercial/errores";
 import { crearLector } from "@/lib/cms-comercial/lector";
-import { bloquesDeTexto } from "@/lib/cms-comercial/pagina";
+import { bloquesDeTexto, paginasDelMenu } from "@/lib/cms-comercial/pagina";
 import { cargarPaginaPublica } from "@/lib/cms-comercial/pagina-publica";
 import { cargarPiePublico } from "@/lib/cms-comercial/pie-publico";
 import { pieInicial } from "@/lib/cms-comercial/pie";
@@ -284,5 +284,166 @@ describe("PÁGINAS: antes de aplicar la migración", () => {
     } finally {
       await vieja.cerrar();
     }
+  });
+});
+
+describe("PÁGINAS: el menú de arriba y su tope", () => {
+  /** Crea y publica una página con el menú encendido. */
+  async function enElMenu(a: ActorCms, titulo: string, extra: Record<string, unknown> = {}) {
+    const e = await servicio.crear(a, { tipo: "pagina", borrador: { ...completa(titulo), en_menu: true, ...extra } });
+    return (await servicio.publicar(a, e.id, { rev: e.rev })).entidad;
+  }
+  const menuDe = async (t: string) => paginasDelMenu(await lector.cargar(t)).map((p) => p.texto);
+  const llenar = async (a: ActorCms) => {
+    const cuatro = [];
+    for (const titulo of ["Contacto", "Envíos", "Cambios", "Garantía"]) cuatro.push(await enElMenu(a, titulo));
+    return cuatro;
+  };
+  const quinta = (a: ActorCms, titulo = "Quiénes somos") => servicio.crear(a, { tipo: "pagina", borrador: { ...completa(titulo), en_menu: true } });
+
+  it("lo publicado con el menú encendido llega a la tienda, en el orden en que se crearon; lo que no tiene el menú encendido no", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    await enElMenu(a, "Quiénes somos", { texto_menu: "Nosotros" });
+    await publicada(a, "Términos y condiciones");
+    await enElMenu(a, "Contacto");
+    assert.deepEqual(await menuDe(t), ["Nosotros", "Contacto"]);
+    assert.deepEqual((await lector.cargar(t))?.paginas.length, 3, "las tres existen para la tienda; solo dos van en el menú");
+  });
+
+  it("caben 4: la quinta no se publica, «Revisar» y publicar dicen lo mismo (con los nombres, en el orden del menú) y no sale nada", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    await llenar(a);
+    const e = await quinta(a);
+    const revision = await servicio.validar(a, e.id);
+    assert.equal(revision.ok, false);
+    assert.deepEqual(
+      revision.errores.map((x) => [x.codigo, x.campo, x.mensaje]),
+      [["menu_lleno", "en_menu", "El menú de arriba admite 4 páginas y ya tiene «Contacto», «Envíos», «Cambios», «Garantía». Quita una del menú (apaga «Mostrar en el menú de arriba» en esa página) para poner esta."]],
+    );
+    const publicarla = await fallo(servicio.publicar(a, e.id, { rev: e.rev }));
+    assert.equal(publicarla.code, "NOT_PUBLISHABLE");
+    assert.deepEqual(publicarla.problemas?.map((x) => x.codigo), ["menu_lleno"]);
+    assert.deepEqual(await menuDe(t), ["Contacto", "Envíos", "Cambios", "Garantía"], "el menú sigue como estaba");
+    assert.equal((await lector.cargar(t))?.paginas.length, 4, "la quinta no se publicó");
+  });
+
+  it("la quinta SIN el menú sí se publica: el tope es solo del menú", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    await llenar(a);
+    const e = await publicada(a, "Quiénes somos");
+    assert.equal(e.estado, "publicada");
+    assert.equal((await lector.cargar(t))?.paginas.length, 5);
+    assert.equal((await menuDe(t)).length, 4);
+  });
+
+  it("un borrador de otra página con el menú encendido no ocupa lugar hasta que se publique (ni una despublicada)", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    for (const titulo of ["Contacto", "Envíos", "Cambios"]) await enElMenu(a, titulo);
+    await quinta(a, "Borrador A");
+    const garantia = await enElMenu(a, "Garantía");
+    assert.equal((await menuDe(t)).length, 4, "el borrador no cuenta: la cuarta entró");
+    await servicio.despublicar(a, garantia.id);
+    const e = await quinta(a, "Otra más");
+    assert.equal((await servicio.validar(a, e.id)).ok, true, "una página despublicada vuelve a ser borrador: deja el lugar libre");
+  });
+
+  it("pausar o apagar el menú de una de las cuatro libera su lugar para la quinta", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    const [contacto, , cambios] = await llenar(a);
+    const e = await quinta(a);
+    assert.equal((await servicio.validar(a, e.id)).ok, false);
+
+    await servicio.pausar(a, contacto.id);
+    assert.equal((await servicio.validar(a, e.id)).ok, true, "pausada: no está en la tienda, ya no ocupa lugar");
+    await servicio.reanudar(a, contacto.id);
+    assert.equal((await servicio.validar(a, e.id)).ok, false, "reanudada: vuelve a ocupar su lugar");
+
+    // Apagar el menú de una (publicando de nuevo SIN el campo) también libera el lugar.
+    const sinMenu = await servicio.guardarBorrador(a, cambios.id, { borrador: completa("Cambios"), rev: cambios.rev });
+    await servicio.publicar(a, cambios.id, { rev: sinMenu.rev });
+    assert.deepEqual(await menuDe(t), ["Contacto", "Envíos", "Garantía"]);
+    const publicadaLaQuinta = await servicio.publicar(a, e.id, { rev: e.rev });
+    assert.equal(publicadaLaQuinta.entidad.estado, "publicada");
+    assert.deepEqual(await menuDe(t), ["Contacto", "Envíos", "Garantía", "Quiénes somos"]);
+  });
+
+  it("editar una de las cuatro que ya están en el menú no se bloquea a sí misma: el menú lleno no la cuenta como «otra»", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    const [contacto] = await llenar(a);
+    const editada = await servicio.guardarBorrador(a, contacto.id, { borrador: { ...completa("Contacto"), en_menu: true, texto_menu: "Escríbenos" }, rev: contacto.rev });
+    assert.deepEqual(await servicio.validar(a, editada.id), { ok: true, errores: [], advertencias: [] });
+    await servicio.publicar(a, editada.id, { rev: editada.rev });
+    assert.deepEqual(await menuDe(t), ["Escríbenos", "Envíos", "Cambios", "Garantía"]);
+  });
+
+  it("el tope es por negocio: las cuatro páginas del menú de otro negocio no cuentan", async () => {
+    const t = await negocio();
+    const otro = await negocio();
+    await llenar(actor(otro));
+    const a = actor(t);
+    const e = await quinta(a);
+    assert.equal((await servicio.validar(a, e.id)).ok, true);
+    await servicio.publicar(a, e.id, { rev: e.rev });
+    assert.deepEqual(await menuDe(t), ["Quiénes somos"]);
+    assert.equal((await menuDe(otro)).length, 4);
+  });
+
+  it("restaurar una versión que tenía el menú encendido también respeta el tope (con el menú lleno no se restaura, y dice por qué)", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    const nosotros = await enElMenu(a, "Quiénes somos");
+    const sinMenu = await servicio.guardarBorrador(a, nosotros.id, { borrador: completa("Quiénes somos"), rev: nosotros.rev });
+    await servicio.publicar(a, nosotros.id, { rev: sinMenu.rev });
+    const cuatro = await llenar(a);
+    const bloqueo = await fallo(servicio.restaurar(a, nosotros.id, { version: 1 }));
+    assert.equal(bloqueo.code, "NOT_PUBLISHABLE");
+    assert.deepEqual(bloqueo.problemas?.map((x) => x.codigo), ["menu_lleno"]);
+    assert.equal((await menuDe(t)).length, 4);
+
+    // Con un lugar libre sí se restaura, y la página vuelve al menú.
+    await servicio.pausar(a, cuatro[3].id);
+    await servicio.restaurar(a, nosotros.id, { version: 1 });
+    assert.deepEqual(await menuDe(t), ["Quiénes somos", "Contacto", "Envíos", "Cambios"]);
+  });
+
+  it("reanudar una página en pausa no revisa el tope (nadie la vuelve a validar), pero la tienda nunca muestra más de 4: se quedan las 4 más antiguas", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    const primera = await enElMenu(a, "Primera");
+    await servicio.pausar(a, primera.id);
+    for (const titulo of ["Contacto", "Envíos", "Cambios", "Garantía"]) await enElMenu(a, titulo);
+    await servicio.reanudar(a, primera.id);
+    const menu = await menuDe(t);
+    assert.equal(menu.length, 4, "no se desborda la cabecera");
+    assert.deepEqual(menu, ["Primera", "Contacto", "Envíos", "Cambios"], "se queda con las 4 más antiguas; la que sobra sigue publicada pero fuera del menú");
+    assert.equal((await lector.cargar(t))?.paginas.length, 5);
+  });
+
+  it("restaurar una versión de una página que YA está en el menú no se bloquea a sí misma, aunque con ella el menú esté lleno", async () => {
+    const t = await negocio();
+    const a = actor(t);
+    const contacto = await enElMenu(a, "Contacto");
+    const editada = await servicio.guardarBorrador(a, contacto.id, { borrador: { ...completa("Contacto"), en_menu: true, texto_menu: "Escríbenos" }, rev: contacto.rev });
+    await servicio.publicar(a, contacto.id, { rev: editada.rev });
+    for (const titulo of ["Envíos", "Cambios", "Garantía"]) await enElMenu(a, titulo);
+    assert.deepEqual(await menuDe(t), ["Escríbenos", "Envíos", "Cambios", "Garantía"]);
+    await servicio.restaurar(a, contacto.id, { version: 1 });
+    assert.deepEqual(await menuDe(t), ["Contacto", "Envíos", "Cambios", "Garantía"], "volvió a la versión 1 sin chocar con su propio lugar");
+  });
+
+  it("solo un administrador puede encender el menú: quien consulta no cambia nada", async () => {
+    const t = await negocio();
+    const admin = actor(t);
+    const e = await publicada(admin, "Quiénes somos");
+    const agente = actor(t, "agente", 2);
+    const intento = await fallo(servicio.guardarBorrador(agente, e.id, { borrador: { ...completa("Quiénes somos"), en_menu: true }, rev: e.rev }));
+    assert.equal(intento.code, "FORBIDDEN");
+    assert.deepEqual(await menuDe(t), []);
   });
 });

@@ -5,7 +5,7 @@
  * Aquí ese texto se convierte en BLOQUES —lo que se guarda en el CMS y lo que dibuja la tienda— y de vuelta. Lo publicado es estructura de texto plano, nunca HTML: lo que parezca una etiqueta se
  * rechaza al guardar y React lo mostraría como texto de todos modos.
  */
-import { bloquePaginaSchema, caracteresDePagina, MAX_BLOQUES_PAGINA, MAX_CARACTERES_PAGINA, MENSAJE_PAGINA_CON_MUCHOS_BLOQUES, MENSAJE_PAGINA_LARGA, type BloquePagina } from "@/lib/cms-comercial/esquemas";
+import { bloquePaginaSchema, caracteresDePagina, MAX_BLOQUES_PAGINA, MAX_CARACTERES_PAGINA, MAX_PAGINAS_EN_MENU, MENSAJE_PAGINA_CON_MUCHOS_BLOQUES, MENSAJE_PAGINA_LARGA, textoDeMenuDePagina, type BloquePagina } from "@/lib/cms-comercial/esquemas";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
 
 /** Las páginas viven bajo /catalogo/{tienda}/p/{código}. */
@@ -153,6 +153,39 @@ export function paginaDesdeCms(snap: InstantaneaCms | null, clave: string): Pagi
 
 /** Los códigos de las páginas publicadas: con ellos el pie decide a cuáles puede enlazar (un enlace nunca lleva a una página que no existe). */
 export const clavesDePaginas = (snap: InstantaneaCms | null): string[] => (snap?.paginas ?? []).map((p) => p.clave);
+
+/** Una página propia que la administradora puso en el menú de arriba de la tienda. */
+export interface PaginaDeMenu {
+  clave: string;
+  /** Lo que dice el enlace del menú: el texto que ella escribió para el menú o, si no escribió ninguno, el título de la página. */
+  texto: string;
+}
+
+/**
+ * Lo que el marco de la tienda hace con las páginas publicadas: los enlaces del menú de arriba y las rutas «aparte» de la barra inferior del celular, que son las de TODAS las páginas propias y la de
+ * «Mayoristas» (`mayoristaHref`, si la hay): en ellas ninguna pestaña debe quedar marcada, porque no son el inicio ni el catálogo. Sin ninguna, `rutasAparte` es undefined y la barra se comporta como siempre.
+ */
+export function enlacesDePaginas(
+  basePath: string,
+  datos: { menu: readonly PaginaDeMenu[]; paginas: readonly string[] },
+  mayoristaHref?: string,
+): { menu: Array<{ texto: string; href: string }>; rutasAparte: string[] | undefined } {
+  const rutasAparte = [...(mayoristaHref ? [mayoristaHref] : []), ...datos.paginas.map((clave) => rutaPagina(basePath, clave))];
+  return { menu: datos.menu.map((p) => ({ texto: p.texto, href: rutaPagina(basePath, p.clave) })), rutasAparte: rutasAparte.length > 0 ? rutasAparte : undefined };
+}
+
+/**
+ * Las páginas PUBLICADAS que la administradora puso en el menú de arriba, en el orden en que las creó (la más antigua primero: así el orden no cambia al editarlas ni al volver a publicarlas) y hasta
+ * `MAX_PAGINAS_EN_MENU`. El panel ya no deja publicar una más cuando el menú está lleno; este tope solo protege la cabecera de lo que el panel no revisa (reanudar una página que estaba en pausa).
+ * Una página pausada, despublicada o archivada no está en la instantánea y, por lo tanto, tampoco en el menú: nunca un enlace a una página que no existe.
+ */
+export function paginasDelMenu(snap: InstantaneaCms | null): PaginaDeMenu[] {
+  return (snap?.paginas ?? [])
+    .filter((p) => p.contenido.en_menu === true)
+    .sort((a, b) => Date.parse(a.creadaAt) - Date.parse(b.creadaAt) || a.clave.localeCompare(b.clave))
+    .slice(0, MAX_PAGINAS_EN_MENU)
+    .map((p) => ({ clave: p.clave, texto: textoDeMenuDePagina(p.contenido) }));
+}
 
 const FECHA = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "numeric", month: "long", year: "numeric" });
 

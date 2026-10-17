@@ -10,18 +10,105 @@ import { Tag, Trash2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { CATEGORY_MOVE_NONE, type CatalogCategoryWithCount, type CategoryDeleteResult } from "@/lib/catalogo/domain";
 import type { CatalogClient } from "@/lib/catalogo-client";
+import type { CmsClient, UsoCategoria } from "@/lib/cms-comercial-client";
 import { BotonCargando, Dialogo, actionBtn, dangerBtn, inputCls } from "@/components/dashboard/tienda/ui";
 import { useCatalogToast } from "@/components/dashboard/catalogo/ui";
 
 export interface CategoriasDialogProps {
   abierto: boolean;
   client: CatalogClient | null;
+  /** Para consultar en qué partes de la tienda está elegida la categoría antes de eliminarla. Sin él (o si no se puede consultar) se muestra un aviso general. */
+  cms?: CmsClient | null;
   onCerrar: () => void;
   /** Se eliminó una categoría: la pantalla del catálogo refresca sus categorías y su listado (los productos pudieron cambiar de categoría). */
   onEliminada: (id: string, resultado: CategoryDeleteResult) => void;
 }
 
-export function CategoriasDialog({ abierto, client, onCerrar, onEliminada }: CategoriasDialogProps) {
+type EstadoUsos = "cargando" | "listo" | "no_disponible";
+
+const NOMBRE_DE_TIPO_UNICO: Readonly<Record<string, readonly [string, string]>> = {
+  home: ["Página principal", "Home page"],
+  pie: ["Pie de página", "Footer"],
+  multimedia: ["Fotos y videos", "Photos and videos"],
+};
+const NOMBRE_DE_TIPO: Readonly<Record<string, readonly [string, string]>> = {
+  oferta: ["Oferta", "Offer"],
+  combo: ["Combo", "Combo"],
+  campana: ["Campaña", "Campaign"],
+  contenido: ["Contenido", "Content"],
+  pagina: ["Página", "Page"],
+};
+const NOMBRE_DE_LUGAR: Readonly<Record<UsoCategoria["lugares"][number], readonly [string, string]>> = {
+  destacadas: ["categorías destacadas", "featured categories"],
+  boton: ["un botón", "a button"],
+  oferta: ["categorías de la oferta", "offer categories"],
+  enlace_pie: ["enlace del pie de página", "footer link"],
+  imagen_categoria: ["imagen de la categoría", "category image"],
+  otro: ["otra parte", "somewhere else"],
+};
+
+/** Dónde está elegida la categoría que se va a eliminar: lo que dejará de mostrarse y lo que habrá que quitar antes de volver a publicar. */
+function UsosEnTienda({ estado, usos }: { estado: EstadoUsos; usos: readonly UsoCategoria[] }) {
+  const { t } = useI18n();
+  const caja = "rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist";
+  if (estado === "cargando") {
+    return (
+      <p className={caja} data-testid="usos-categoria-cargando">
+        {t("Revisando en qué partes de tu tienda está elegida…", "Checking where your store uses it…")}
+      </p>
+    );
+  }
+  if (estado === "no_disponible") {
+    return (
+      <p className={caja} data-testid="usos-categoria-general">
+        {t(
+          "No pudimos revisar en qué partes de tu tienda está elegida. Si la tenías elegida en la sección Tienda (destacadas, ofertas, pie de página o fotos del inicio), deja de mostrarse allí. Antes de volver a publicar, quítala de esos lugares.",
+          "We couldn't check where your store uses it. If it was chosen in the Store section (featured, offers, footer or home photos), it stops showing there. Remove it from those places before publishing again.",
+        )}
+      </p>
+    );
+  }
+  if (usos.length === 0) {
+    return (
+      <p className={caja} data-testid="usos-categoria-ninguno">
+        {t("No está elegida en ninguna parte de la sección Tienda: eliminarla no cambia nada allí.", "It isn't chosen anywhere in the Store section: deleting it changes nothing there.")}
+      </p>
+    );
+  }
+  const nombre = (u: UsoCategoria): string => {
+    const unico = NOMBRE_DE_TIPO_UNICO[u.tipo];
+    if (unico) return t(unico[0], unico[1]);
+    const tipo = NOMBRE_DE_TIPO[u.tipo];
+    return tipo ? `${t(tipo[0], tipo[1])} «${u.nombre}»` : u.nombre;
+  };
+  const situacion = (u: UsoCategoria): string => {
+    const partes: string[] = [];
+    if (u.visibleHoy) partes.push(t("se ve hoy en la tienda", "live in your store today"));
+    else if (u.enPublicado) partes.push(u.estado === "pausada" ? t("publicada, pero en pausa", "published, but paused") : t("en una versión que no se muestra", "in a version that isn't shown"));
+    if (u.enBorrador) partes.push(t("en borrador", "in draft"));
+    return partes.join(" · ");
+  };
+  return (
+    <div className={caja} data-testid="usos-categoria">
+      <p className="font-medium text-fg">{t("Está elegida en:", "It is chosen in:")}</p>
+      <ul className="mt-2 space-y-1.5">
+        {usos.map((u) => (
+          <li key={`${u.tipo}:${u.clave}`}>
+            <span className="text-fg">{nombre(u)}</span> — {u.lugares.map((l) => t(NOMBRE_DE_LUGAR[l][0], NOMBRE_DE_LUGAR[l][1])).join(", ")} <span className="text-mist/80">({situacion(u)})</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2">
+        {t(
+          "Si la eliminas, deja de mostrarse en esos lugares. Antes de volver a publicar esos elementos, quítala de cada uno.",
+          "If you delete it, it stops showing in those places. Before publishing those items again, remove it from each one.",
+        )}
+      </p>
+    </div>
+  );
+}
+
+export function CategoriasDialog({ abierto, client, cms = null, onCerrar, onEliminada }: CategoriasDialogProps) {
   const { t } = useI18n();
   const aviso = useCatalogToast();
   const idDestino = useId();
@@ -32,6 +119,8 @@ export function CategoriasDialog({ abierto, client, onCerrar, onEliminada }: Cat
   const [ocupado, setOcupado] = useState(false);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
   const [intento, setIntento] = useState(0);
+  const [usos, setUsos] = useState<{ id: string; estado: "listo" | "no_disponible"; lista: UsoCategoria[] } | null>(null);
+  const pendienteId = pendiente?.id ?? null;
 
   useEffect(() => {
     if (!abierto || !client) return;
@@ -49,6 +138,20 @@ export function CategoriasDialog({ abierto, client, onCerrar, onEliminada }: Cat
       vivo = false;
     };
   }, [abierto, client, intento]);
+
+  // Al abrir la confirmación de una categoría se consulta en qué partes de la tienda está elegida (una respuesta que llega tarde, de otra categoría, no se usa).
+  useEffect(() => {
+    if (!abierto || !cms || pendienteId === null) return;
+    let vivo = true;
+    const id = pendienteId;
+    void cms.usosDeCategoria(id).then((r) => {
+      if (vivo) setUsos(r.ok ? { id, estado: "listo", lista: r.data.usos } : { id, estado: "no_disponible", lista: [] });
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [abierto, cms, pendienteId]);
+  const estadoUsos: EstadoUsos = !cms ? "no_disponible" : usos !== null && usos.id === pendienteId ? usos.estado : "cargando";
 
   const cuenta = (n: number) =>
     n === 0 ? t("Sin productos", "No products") : n === 1 ? t("1 producto", "1 product") : t(`${n.toLocaleString("es-CO")} productos`, `${n.toLocaleString("en-US")} products`);
@@ -153,12 +256,7 @@ export function CategoriasDialog({ abierto, client, onCerrar, onEliminada }: Cat
           ) : (
             <p className="text-sm text-mist">{t("No tiene productos. Si la necesitas más adelante, la vuelves a crear.", "It has no products. If you need it later, you can create it again.")}</p>
           )}
-          <p className="rounded-lg border border-edge bg-ink p-3 text-xs leading-relaxed text-mist">
-            {t(
-              "Si esta categoría estaba elegida en la sección Tienda (destacadas, ofertas, pie de página o fotos del inicio), deja de mostrarse allí. Antes de volver a publicar, quítala de esos lugares.",
-              "If this category was chosen in the Store section (featured, offers, footer or home photos), it stops showing there. Remove it from those places before publishing again.",
-            )}
-          </p>
+          <UsosEnTienda estado={estadoUsos} usos={usos?.lista ?? []} />
           {errorAccion && (
             <p role="alert" className="text-sm text-red-400">
               {errorAccion}
@@ -197,6 +295,7 @@ export function CategoriasDialog({ abierto, client, onCerrar, onEliminada }: Cat
                     onClick={() => {
                       setErrorAccion(null);
                       setDestino("");
+                      setUsos(null);
                       setPendiente(c);
                     }}
                     aria-label={t(`Eliminar la categoría ${c.name}`, `Delete the category ${c.name}`)}

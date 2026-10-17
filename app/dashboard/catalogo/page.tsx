@@ -17,7 +17,7 @@ type Resultado = { key: string; page: ProductPage | null; error: string | null }
 
 export default function CatalogoPage() {
   const { t } = useI18n();
-  const { client, canWrite } = useCatalogAccess();
+  const { client, cms, canWrite } = useCatalogAccess();
 
   const [busqueda, setBusqueda] = useState("");
   const [q, setQ] = useState("");
@@ -130,7 +130,7 @@ export default function CatalogoPage() {
         )}
       </PageHeader>
 
-      <CategoriasDialog abierto={categoriasAbierto} client={client} onCerrar={() => setCategoriasAbierto(false)} onEliminada={alEliminarCategoria} />
+      <CategoriasDialog abierto={categoriasAbierto} client={client} cms={cms} onCerrar={() => setCategoriasAbierto(false)} onEliminada={alEliminarCategoria} />
 
       <div className="px-4 pt-6 md:px-8">
         <CatalogLinks client={client} canWrite={canWrite} />

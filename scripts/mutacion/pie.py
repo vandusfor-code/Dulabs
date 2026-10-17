@@ -10,7 +10,8 @@ Cubre: la seguridad de los enlaces (solo https, sin usuario ni puerto, sin red l
 contacto, redes), la validación antes de publicar (enlace mayorista, categorías, avisos), el servicio (uno por negocio, aviso sin migración), el lector, el pie resuelto contra la tienda
 (destinos que no existen, cinturón doble), su carga con respaldo, el SQL real (migración y reversa), el dibujo del pie (rejilla, enlaces externos, redes) y el panel (formulario,
 pestañas, preguntas frecuentes y contexto de la tienda). Las páginas propias: su esquema y topes, la validación (HTML, enlace mayorista, enlaces del pie), el texto ↔ bloques, su carga, el lector,
-el servicio, el HTML de la tienda y el panel (formulario, vista previa, historial y el selector del pie)."""
+el servicio, el HTML de la tienda y el panel (formulario, vista previa, historial y el selector del pie). Las páginas en el menú de arriba (en_menu / texto_menu): el esquema y el tope de texto, qué páginas entran y en qué
+orden, el tope de 4 páginas (validación y servicio), la cabecera y el menú del celular, y el formulario, la vista previa y el historial del panel."""
 import atexit
 import os
 import subprocess
@@ -47,6 +48,12 @@ T_FMT = [UI + "borrador-formato.test.ts"]
 T_PIEJ = [TIENDA + "pie-cms.test.tsx", TIENDA + "pie-dorado.test.tsx"]
 T_DOM = [UI + "pie.dom.test.tsx"]
 T_CTX = ["app/api/dashboard/tienda/contexto.test.ts"]
+CROMO, PREVIAS = TIENDA + "CromoJoyeria.tsx", UI + "previas.tsx"
+T_MENU = [C + "menu-paginas.test.ts"]
+T_MENU_ESQ = [C + "pagina-esquema.test.ts", C + "menu-paginas.test.ts"]
+T_MENU_SERV = [C + "pagina-servicio.pglite.test.ts"]
+T_MENU_CROMO = [TIENDA + "menu-paginas.dom.test.tsx"]
+T_MENU_DOM = [UI + "menu-pagina.dom.test.tsx"]
 
 # (id, descripción, archivo, texto a buscar (exactamente UNA vez), reemplazo, pruebas que deben detectarlo)
 M = [
@@ -151,7 +158,7 @@ M = [
     ("P88", "el tope de páginas por negocio no es 30", SERV, "pie: 1, pagina: 30 }", "pie: 1, pagina: 99 }", T_SERV + T_PAG_SERV),
     ("P89", "sin la migración el aviso de crear una página dice «el contenido no es válido»", SERV, 'if (input.tipo === "pie" || input.tipo === "pagina") throw new CmsError("FEATURE_UNAVAILABLE"', 'if (input.tipo === "pie") throw new CmsError("FEATURE_UNAVAILABLE"', T_PAG_SERV),
     ("P90", "el lector no entrega las páginas", LECTOR, "snap: { ...instantaneaVacia(tenantId), home, pie, paginas, ofertas,", "snap: { ...instantaneaVacia(tenantId), home, pie, ofertas,", T_PAG_PUB),
-    ("P91", "la carga del pie no entrega las páginas publicadas", PIEPUB, "paginas: clavesDePaginas(snap) }", "paginas: [] }", T_PUB + T_PAG_PUB),
+    ("P91", "la carga del pie no entrega las páginas publicadas", PIEPUB, "paginas: clavesDePaginas(snap), menu:", "paginas: [], menu:", T_PUB + T_PAG_PUB),
     ("P92", "la base no admite el tipo «pagina»", SQL, "check (tipo in ('home', 'oferta', 'combo', 'campana', 'contenido', 'pie', 'pagina'))", "check (tipo in ('home', 'oferta', 'combo', 'campana', 'contenido', 'pie'))", T_SQL),
     ("P93", "el historial no admite el tipo «pagina»", SQL, "check (entidad_tipo in ('home', 'oferta', 'combo', 'campana', 'contenido', 'pie', 'pagina', 'imagen'))", "check (entidad_tipo in ('home', 'oferta', 'combo', 'campana', 'contenido', 'pie', 'imagen'))", T_SQL),
     ("P96", "la reversa deja entrar las páginas aunque se revirtió la migración", SQLR, "check (tipo in ('home', 'oferta', 'combo', 'campana', 'contenido'));", "check (tipo in ('home', 'oferta', 'combo', 'campana', 'contenido', 'pagina'));", T_SQL),
@@ -221,6 +228,53 @@ M = [
     ("P155", "el historial no resume el texto de una página", FORMATO, "if (texto) cambios.push(", "if (false) cambios.push(", T_FMT + T_PAG_DOM),
     ("P156", "el historial no nombra una página por su título", FORMATO, 'r.entidadTipo === "contenido" || r.entidadTipo === "pagina" ? contenido.titulo', 'r.entidadTipo === "contenido" ? contenido.titulo', T_FMT),
     ("P157", "el historial no dice «Una de mis páginas»", FORMATO, 'pagina: "Una de mis páginas", ', "", T_FMT),
+    # --- páginas propias en el menú de arriba de la tienda (en_menu / texto_menu) ---
+    ("P158", "el texto del menú admite 240 caracteres (en vez de 24)", ESQ, "export const MAX_TEXTO_MENU_PAGINA = 24;", "export const MAX_TEXTO_MENU_PAGINA = 240;", T_MENU_ESQ),
+    ("P159", "el menú admite 40 páginas (en vez de 4)", ESQ, "export const MAX_PAGINAS_EN_MENU = 4;", "export const MAX_PAGINAS_EN_MENU = 40;", T_MENU_ESQ),
+    ("P160", "un título que no cabe en el menú se acepta", ESQ, "p.en_menu === true && p.texto_menu === undefined && textoDeMenuDePagina(p).length > MAX_TEXTO_MENU_PAGINA", "false", T_MENU_ESQ),
+    ("P161", "con un texto propio demasiado largo se culpa también al título", ESQ, "p.texto_menu === undefined && ", "", T_MENU_ESQ),
+    ("P162", "el menú dice el título aunque ella escribió un texto propio para el menú", ESQ, "=> p.texto_menu ?? p.titulo;", "=> p.titulo;", T_MENU),
+    ("P163", "«en menú» acepta cualquier valor (no solo sí o no)", ESQ, "en_menu: z.boolean().optional(),", "en_menu: z.any().optional(),", T_MENU_ESQ),
+    ("P164", "entran al menú páginas que ella no marcó", PAGINA, ".filter((p) => p.contenido.en_menu === true)", ".filter(() => true)", T_MENU),
+    ("P165", "el menú ordena las páginas por su código y no por cuándo se crearon", PAGINA, ".sort((a, b) => Date.parse(a.creadaAt) - Date.parse(b.creadaAt) || a.clave.localeCompare(b.clave))", ".sort((a, b) => a.clave.localeCompare(b.clave))", T_MENU),
+    ("P166", "el menú ordena por el texto de la fecha y no por el instante (otra zona horaria)", PAGINA, "Date.parse(a.creadaAt) - Date.parse(b.creadaAt) || ", "a.creadaAt.localeCompare(b.creadaAt) || ", T_MENU),
+    ("P167", "el menú no se limita a 4 páginas", PAGINA, "\n    .slice(0, MAX_PAGINAS_EN_MENU)", "", T_MENU + T_MENU_SERV),
+    ("P168", "las rutas aparte de la barra inferior solo traen las páginas del menú", PAGINA, "datos.paginas.map((clave) => rutaPagina(basePath, clave))", "datos.menu.map((p) => rutaPagina(basePath, p.clave))", T_MENU),
+    ("P169", "las rutas aparte olvidan la página de mayoristas", PAGINA, "...(mayoristaHref ? [mayoristaHref] : [])", "...[]", T_MENU),
+    ("P170", "sin rutas aparte se entrega una lista vacía en vez de «sin definir»", PAGINA, "rutasAparte: rutasAparte.length > 0 ? rutasAparte : undefined", "rutasAparte", T_MENU),
+    ("P171", "la carga del pie no entrega el menú", PIEPUB, "menu: paginasDelMenu(snap) }", "menu: [] }", T_MENU),
+    ("P172", "con el menú lleno todavía entra una quinta página", VALID, "if (otras.length < MAX_PAGINAS_EN_MENU) return;", "if (otras.length < MAX_PAGINAS_EN_MENU + 1) return;", T_MENU_ESQ + T_MENU_SERV),
+    ("P173", "el tope del menú también frena a una página que no quiere estar en él", VALID, "if (p.en_menu !== true) return;", "", T_MENU_ESQ + T_MENU_SERV),
+    ("P174", "publicar no revisa el tope del menú", VALID, "revisarPagina(parseo.data as never, ctx, err);", "", T_MENU_ESQ + T_MENU_SERV),
+    ("P175", "la página que se edita se cuenta a sí misma entre las del menú", SERV, "p.id !== propiaId && ", "", T_MENU_SERV),
+    ("P176", "una página en pausa sigue ocupando lugar en el menú", SERV, '&& p.estado === "publicada" && p.archivadaAt === null', "&& p.archivadaAt === null", T_MENU_SERV),
+    ("P177", "el borrador de otra página ocupa lugar en el menú", SERV, "p.contenidoActivo?.en_menu === true)", "p.borrador?.en_menu === true)", T_MENU_SERV),
+    ("P178", "el servicio no lee las otras páginas del menú", SERV, 'quiereMenu ? repo.listar(tenantId, { tipo: "pagina" }) : Promise.resolve<EntidadCms[]>([])', "Promise.resolve<EntidadCms[]>([])", T_MENU_SERV),
+    ("P179", "publicar no le dice al servicio cuál es la página que se publica", SERV, "await cargarContexto(actor.tenantId, e.tipo, e.borrador, e.id)", "await cargarContexto(actor.tenantId, e.tipo, e.borrador)", T_MENU_SERV),
+    ("P180", "«Revisar» no le dice al servicio cuál es la página que se revisa", SERV, "await cargarContexto(actor.tenantId, e.tipo, contenido, e.id)", "await cargarContexto(actor.tenantId, e.tipo, contenido)", T_MENU_SERV),
+    ("P181", "restaurar no le dice al servicio cuál es la página que se restaura", SERV, "await cargarContexto(actor.tenantId, e.tipo, v.contenido, e.id)", "await cargarContexto(actor.tenantId, e.tipo, v.contenido)", T_MENU_SERV),
+    ("P182", "el aviso de menú lleno nombra las páginas en el orden de la lista y no en el del menú", SERV, ".sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.clave.localeCompare(b.clave))", "", T_MENU_SERV + T_MENU_DOM),
+    ("P183", "la cabecera no marca la página actual del menú", CROMO, 'className="joy-enlace joy-tinta whitespace-nowrap text-[15px]" aria-current={actual(pathname === p.href)}>', 'className="joy-enlace joy-tinta whitespace-nowrap text-[15px]">', T_MENU_CROMO),
+    ("P184", "las páginas del menú de la cabecera llevan al inicio", CROMO, '<Link key={p.href} href={p.href} className="joy-enlace', '<Link key={p.href} href={basePath} className="joy-enlace', T_MENU_CROMO),
+    ("P185", "el menú del celular no se cierra al tocar una página", CROMO, '<Link key={p.href} href={p.href} onClick={cerrarMenu} className="joy-fila-menu"', '<Link key={p.href} href={p.href} className="joy-fila-menu"', T_MENU_CROMO),
+    ("P186", "el menú del celular lleva las páginas al inicio", CROMO, '<Link key={p.href} href={p.href} onClick={cerrarMenu} className="joy-fila-menu"', '<Link key={p.href} href={basePath} onClick={cerrarMenu} className="joy-fila-menu"', T_MENU_CROMO),
+    ("P187", "la cabecera exige que le pasen las páginas (sin ellas se rompe)", CROMO, "  paginas = [],", "  paginas,", T_MENU_CROMO),
+    ("P188", "las páginas del menú se dibujan como la píldora de «Mayorista»", CROMO, 'className="joy-enlace joy-tinta whitespace-nowrap text-[15px]" aria-current={actual(pathname === p.href)}>', 'className="joy-pildora-nav joy-tinta rounded-full border px-4 py-1.5 text-sm" aria-current={actual(pathname === p.href)}>', T_MENU_CROMO),
+    ("P189", "apagar el menú guarda «no» en vez de quitar el campo", FORMPAG, 'poner("en_menu", encendido ? true : undefined);', 'poner("en_menu", encendido);', T_MENU_DOM),
+    ("P190", "apagar el menú deja guardado el texto que se había escrito", FORMPAG, 'if (!encendido) poner("texto_menu", undefined);', "", T_MENU_DOM),
+    ("P191", "un título largo no avisa mientras se escribe", FORMPAG, 'const largoParaElMenu = enMenu && texto(borrador, "texto_menu") === "" && titulo.length > MAX_TEXTO_MENU_PAGINA;', "const largoParaElMenu = false;", T_MENU_DOM),
+    ("P192", "el campo del texto del menú se ve aunque el menú esté apagado", FORMPAG, "{enMenu && (", "{true && (", T_MENU_DOM),
+    ("P193", "el aviso de menú lleno no sale junto al interruptor", FORMPAG, "{errorMenuLleno && (", "{false && (", T_MENU_DOM),
+    ("P194", "el campo del texto del menú deja escribir más de 24 caracteres", FORMPAG, "maxLength={MAX_TEXTO_MENU_PAGINA}", "maxLength={240}", T_MENU_DOM),
+    ("P195", "la vista previa no dice cómo se verá en el menú", PREVIAS, "{enMenu && (", "{false && (", T_MENU_DOM),
+    ("P196", "la vista previa dice el título aunque haya texto propio para el menú", PREVIAS, 'const nombreEnMenu = texto(borrador, "texto_menu") || titulo;', "const nombreEnMenu = titulo;", T_MENU_DOM),
+    ("P197", "apagar el menú se lee «Sí → —» en el historial", FORMATO, "if ((va === true) !== (vd === true)) cambios.push(", "if (va !== vd) cambios.push(", T_FMT + T_MENU_DOM),
+    ("P198", "el historial no dice «Mostrar en el menú de arriba»", VALID, 'en_menu: "Mostrar en el menú de arriba",', "", T_MENU_ESQ + T_FMT),
+    ("P199", "con páginas la cabecera de escritorio sigue empezando en 1024 px (la marca se aprieta contra el menú)", CROMO, 'boton: "xl:hidden"', 'boton: "lg:hidden"', T_MENU_CROMO),
+    ("P200", "sin páginas la cabecera de siempre cambia (otra separación entre columnas)", CROMO, 'grid: "lg:grid-cols-[1fr_auto_1fr] lg:px-8"', 'grid: "lg:grid-cols-[1fr_auto_1fr] lg:gap-x-6 lg:px-8"', T_MENU_CROMO),
+    ("P201", "un texto largo del menú se parte en dos líneas dentro de la cabecera", CROMO, 'joy-tinta whitespace-nowrap text-[15px]" aria-current', 'joy-tinta text-[15px]" aria-current', T_MENU_CROMO),
+    ("P202", "con páginas el menú no pasa a dos filas cuando no cabe (empuja los iconos fuera de la pantalla)", CROMO, "xl:flex xl:flex-wrap xl:justify-center", "xl:flex xl:justify-center", T_MENU_CROMO),
+    ("P203", "con páginas las columnas de los lados vuelven a ser tres partes iguales (aprietan la marca)", CROMO, "xl:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)]", "xl:grid-cols-[1fr_auto_1fr]", T_MENU_CROMO),
 ]
 
 

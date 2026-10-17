@@ -10,6 +10,7 @@ import type { AccionAuditoria, Problema, RegistroAuditoria, ResultadoValidacion,
 import type { ImagenVista, TicketSubida } from "@/lib/cms-comercial/imagenes";
 import type { ProductoVista } from "@/lib/cms-comercial/puertos";
 import type { EntidadDetalle, EntidadResumen } from "@/lib/cms-comercial/servicio";
+import type { UsoCategoria } from "@/lib/cms-comercial/usos-categoria";
 import type { VariableId } from "@/lib/cms-comercial/variables";
 import type { ArchivoVideoId, EspacioVideo } from "@/lib/cms-comercial/video-requisitos";
 import type { VideoConfirmado, VideoVista } from "@/lib/cms-comercial/videos";
@@ -61,7 +62,7 @@ export type EtapaSubida = "preparando" | "subiendo" | "confirmando";
 /** Las etapas de subir un video: su imagen fija, el video y la verificación del servidor. */
 export type EtapaSubidaVideo = "imagen-fija" | "subiendo" | "verificando";
 
-export type { AccionAuditoria, EntidadDetalle, EntidadResumen, ImagenVista, ProductoVista, RegistroAuditoria, ResultadoValidacion, VersionCms, VideoConfirmado, VideoVista };
+export type { AccionAuditoria, EntidadDetalle, EntidadResumen, ImagenVista, ProductoVista, RegistroAuditoria, ResultadoValidacion, UsoCategoria, VersionCms, VideoConfirmado, VideoVista };
 
 const BASE = "/api/dashboard/tienda";
 
@@ -193,6 +194,8 @@ export function createCmsClient(accessToken: string, opciones: OpcionesCliente =
       return get(`/auditoria${qs.size > 0 ? `?${qs.toString()}` : ""}`);
     },
     contexto: () => get<ContextoTienda>("/contexto"),
+    /** En qué partes de la tienda está elegida una categoría del catálogo (publicado y borradores): lo que deja de mostrarse si se elimina. */
+    usosDeCategoria: (id: string) => get<{ usos: UsoCategoria[] }>(`/categorias/${encodeURIComponent(id)}/usos`),
     productos(params: { q?: string; referencias?: readonly string[] } = {}): Promise<CmsResult<{ items: ProductoVista[] }>> {
       const qs = new URLSearchParams();
       if (params.referencias && params.referencias.length > 0) qs.set("referencias", params.referencias.join(","));

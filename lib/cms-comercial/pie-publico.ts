@@ -6,7 +6,7 @@
  * error de la base de datos o una lectura demasiado lenta) no hay pie ni páginas y la tienda dibuja el pie de siempre. El negocio sale de la publicación (por el slug), jamás de la petición.
  */
 import type { Pie } from "@/lib/cms-comercial/esquemas";
-import { clavesDePaginas } from "@/lib/cms-comercial/pagina";
+import { clavesDePaginas, paginasDelMenu, type PaginaDeMenu } from "@/lib/cms-comercial/pagina";
 import { conPlazo } from "@/lib/cms-comercial/plazo";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
 
@@ -24,15 +24,17 @@ export interface DepsPiePublico {
 /** Menos que la vitrina y la página de mayoristas: el pie va en todas las pantallas y no debe hacer esperar al cliente. */
 export const PLAZO_PIE_MS = 2000;
 
-/** Lo que el pie necesita saber de lo publicado: su contenido y los códigos de las páginas propias a las que puede enlazar. */
+/** Lo que la tienda necesita saber de lo publicado fuera del inicio: el pie, los códigos de las páginas propias a las que puede enlazar y cuáles de ellas van en el menú de arriba. */
 export interface DatosPie {
   /** El pie publicado, o null (la tienda dibuja el de siempre). */
   pie: Pie | null;
   /** Los códigos de las páginas propias publicadas HOY. */
   paginas: string[];
+  /** Las páginas publicadas que la administradora puso en el menú de arriba, en orden y con lo que dice cada enlace (sin ninguna, el menú es el de siempre). */
+  menu: PaginaDeMenu[];
 }
 
-const sinDatos = (): DatosPie => ({ pie: null, paginas: [] });
+const sinDatos = (): DatosPie => ({ pie: null, paginas: [], menu: [] });
 
 const avisoPorDefecto = (error: unknown) => console.error("[cms-comercial/pie] la tienda usa el pie de siempre:", error instanceof Error ? error.message : "error desconocido");
 
@@ -45,7 +47,7 @@ function avisar(deps: DepsPiePublico, error: unknown): void {
   }
 }
 
-/** El pie publicado de una tienda y sus páginas publicadas; sin pie (o sin CMS para ella, o si algo falló) el pie es null y no hay páginas. */
+/** El pie publicado de una tienda, sus páginas publicadas y las que van en el menú de arriba; sin pie (o sin CMS para ella, o si algo falló) el pie es null y no hay páginas ni menú. */
 export async function cargarPiePublico(deps: DepsPiePublico, slug: string): Promise<DatosPie> {
   try {
     return await conPlazo(
@@ -53,7 +55,7 @@ export async function cargarPiePublico(deps: DepsPiePublico, slug: string): Prom
         const tenantId = await deps.tenantDe(slug);
         if (!tenantId) return sinDatos();
         const snap = await deps.cargar(tenantId);
-        return snap ? { pie: snap.pie?.contenido ?? null, paginas: clavesDePaginas(snap) } : sinDatos();
+        return snap ? { pie: snap.pie?.contenido ?? null, paginas: clavesDePaginas(snap), menu: paginasDelMenu(snap) } : sinDatos();
       })(),
       deps.plazoMs ?? PLAZO_PIE_MS,
       "del pie de página",

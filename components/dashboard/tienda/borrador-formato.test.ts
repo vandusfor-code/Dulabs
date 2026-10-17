@@ -217,6 +217,27 @@ describe("resumirCambios — el texto de una página", () => {
     ]);
   });
 
+  it("el menú de arriba: encenderlo dice «No → Sí» y apagarlo «Sí → No»; sin el campo es lo mismo que apagado, y el texto del menú se cuenta aparte", () => {
+    const sinMenu = { titulo: "Quiénes somos", bloques };
+    const conMenu = { titulo: "Quiénes somos", bloques, en_menu: true, texto_menu: "Nosotros" };
+    assert.deepEqual(resumirCambios(sinMenu, conMenu), [
+      { campo: "Mostrar en el menú de arriba", antes: "No", despues: "Sí" },
+      { campo: "Texto en el menú", antes: "—", despues: "Nosotros" },
+    ]);
+    assert.deepEqual(resumirCambios(conMenu, sinMenu), [
+      { campo: "Mostrar en el menú de arriba", antes: "Sí", despues: "No" },
+      { campo: "Texto en el menú", antes: "Nosotros", despues: "—" },
+    ]);
+    assert.deepEqual(resumirCambios(sinMenu, { ...sinMenu, en_menu: false }), [], "sin el campo y apagado son lo mismo: no hay nada que publicar");
+    assert.deepEqual(resumirCambios({ ...sinMenu, en_menu: false }, sinMenu), []);
+    assert.deepEqual(resumirCambios(conMenu, { ...conMenu }), []);
+  });
+
+  it("una página nueva sin menú no dice nada del menú; con menú, lo dice", () => {
+    assert.deepEqual(resumirCambios(null, { titulo: "Nueva", bloques }).map((c) => c.campo), ["Título", "Texto de la página"]);
+    assert.deepEqual(resumirCambios(null, { titulo: "Nueva", bloques, en_menu: true }).map((c) => c.campo), ["Título", "Mostrar en el menú de arriba", "Texto de la página"]);
+  });
+
   it("el destino «Una de mis páginas» de un enlace del pie se lee en español", () => {
     const r = resumirCambios({ columnas: [{ titulo: "Legal", enlaces: [{ texto: "Privacidad", destino: { tipo: "inicio" } }] }] }, { columnas: [{ titulo: "Legal", enlaces: [{ texto: "Privacidad", destino: { tipo: "pagina", clave: "privacidad" } }] }] }, 12);
     assert.ok(r.some((c) => c.campo === "Destino del enlace" && c.antes === "Inicio de la tienda" && c.despues === "Una de mis páginas"), JSON.stringify(r));
