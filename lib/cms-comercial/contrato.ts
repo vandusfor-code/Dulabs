@@ -35,6 +35,15 @@ export function modalidadAplica(modalidad: Modalidad, canal: Canal): boolean {
   return modalidad === "detal" ? canal === "retail" : canal === "wholesale";
 }
 
+/**
+ * Los textos del bloque «Compras por mayor» de la tienda (el del inicio y la banda de /mayoristas) que la administradora puede cambiar en «Fotos y videos». Los de siempre viven en el registro de la
+ * tienda (`vitrina.ts`); un texto que no está publicado conserva el de siempre. Una sola línea cada uno (se pintan en una etiqueta, un título y un botón), con tope para que el diseño no se rompa.
+ */
+export const CAMPOS_TEXTO_MAYORISTAS = ["etiqueta", "titulo", "texto", "boton", "mensaje"] as const;
+export type CampoTextoMayoristas = (typeof CAMPOS_TEXTO_MAYORISTAS)[number];
+export type TextosMayoristas = Readonly<Record<CampoTextoMayoristas, string>>;
+export const LIMITE_TEXTO_MAYORISTAS: Readonly<Record<CampoTextoMayoristas, number>> = { etiqueta: 40, titulo: 80, texto: 200, boton: 40, mensaje: 200 };
+
 export const AUDIENCIAS = ["todos", "detal", "mayorista"] as const;
 export type Audiencia = (typeof AUDIENCIAS)[number];
 

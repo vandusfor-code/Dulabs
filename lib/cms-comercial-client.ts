@@ -6,7 +6,7 @@
  *
  * Todo lo que toca la red o el navegador se puede reemplazar (`fetch`, `preparar`, `subir`) para probar los componentes sin red.
  */
-import type { AccionAuditoria, Problema, RegistroAuditoria, ResultadoValidacion, TipoEntidad, EstadoEntidad, VersionCms } from "@/lib/cms-comercial/contrato";
+import type { AccionAuditoria, Problema, RegistroAuditoria, ResultadoValidacion, TextosMayoristas, TipoEntidad, EstadoEntidad, VersionCms } from "@/lib/cms-comercial/contrato";
 import type { ImagenVista, TicketSubida } from "@/lib/cms-comercial/imagenes";
 import type { ProductoVista } from "@/lib/cms-comercial/puertos";
 import type { EntidadDetalle, EntidadResumen } from "@/lib/cms-comercial/servicio";
@@ -36,7 +36,17 @@ export interface ContextoTienda {
   /** Ruta pública de la tienda (`/catalogo/{tienda}`) si está publicada; null si no se pudo resolver. */
   rutaTienda?: string | null;
   /** Qué tienda es el negocio (null si no se pudo resolver): del tema depende si se dibujan el pie y la página de mayoristas. */
-  tienda?: { slug: string; nombre: string; tema: "clasico" | "tecnologia" | "joyeria"; mayoristas: boolean; paginaMayoristas: { intro: string | null; omitir: string[]; tambien: string[] } | null; descripcion: string | null; videosDeSiempre?: VideosDeSiempre } | null;
+  tienda?: {
+    slug: string;
+    nombre: string;
+    tema: "clasico" | "tecnologia" | "joyeria";
+    mayoristas: boolean;
+    paginaMayoristas: { intro: string | null; omitir: string[]; tambien: string[] } | null;
+    descripcion: string | null;
+    videosDeSiempre?: VideosDeSiempre;
+    /** Los textos con los que se ve hoy el bloque «Compras por mayor» (los de la tienda); null si la tienda no tiene ese bloque. */
+    textosMayoristas?: TextosMayoristas | null;
+  } | null;
   zona: string;
   ahora: string;
 }

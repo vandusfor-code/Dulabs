@@ -9,10 +9,12 @@
  *   - si se cambia el video horizontal pero no se sube uno vertical, el celular usa el horizontal recortado (jamás el vertical de siempre, que es de otra escena);
  *   - el punto focal del video de siempre no se hereda: pertenece a esa escena;
  *   - solo se reemplaza un espacio que la tienda YA tiene (no se inventan bloques que su diseño no trae);
- *   - los textos de cada bloque (título, botón…) no se tocan: son de la tienda.
+ *   - los textos de los bloques (título, botón…) son de la tienda y no se tocan, con UNA excepción: los del bloque «Compras por mayor» (etiqueta, título, texto, botón y mensaje de WhatsApp), que la
+ *     administradora puede cambiar uno por uno (ver mayoristas-textos.ts); el que no cambió conserva el de siempre.
  */
 import type { PublicHome } from "@/lib/catalogo/service";
 import type { ArchivoVideo, ConfigJoyeria, VideoAmbiente } from "@/lib/catalogo/vitrina";
+import { aplicarTextosMayoristas, textosPublicados, type TextosMayoristasPublicados } from "@/lib/cms-comercial/mayoristas-textos";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
 import { imagenDeVitrina, rutaImagenCms, rutaVideoCms } from "@/lib/cms-comercial/vitrina";
 import { comprobarMedidas, comprobarProporcion, ESPECIFICACIONES, ESPACIOS_VIDEO, usosDeVideo, type EspacioVideo } from "@/lib/cms-comercial/video-requisitos";
@@ -34,6 +36,8 @@ export interface MultimediaTienda {
   videos: Partial<Record<EspacioVideo, VideoPersonalizado>>;
   /** La imagen de presentación de las categorías que tienen una elegida, por id de categoría. */
   categorias: ReadonlyMap<string, ImagenCategoria>;
+  /** Los textos del bloque «Compras por mayor» que la administradora cambió (solo los que escribió). */
+  mayoristas?: TextosMayoristasPublicados;
 }
 
 /**
@@ -73,13 +77,16 @@ export function multimediaDesdeCms(snap: InstantaneaCms, slug: string): Multimed
     if (img) categorias.set(c.categoria_id, { src: img.src, ancho: img.width, alto: img.height });
   }
 
-  return Object.keys(videos).length === 0 && categorias.size === 0 ? null : { videos, categorias };
+  const mayoristas = textosPublicados(contenido.mayoristas);
+
+  return Object.keys(videos).length === 0 && categorias.size === 0 && !mayoristas ? null : { videos, categorias, ...(mayoristas ? { mayoristas } : {}) };
 }
 
 const conVideo = (original: VideoAmbiente, nuevo: VideoPersonalizado): VideoAmbiente => ({ horizontal: nuevo.horizontal, ...(nuevo.vertical ? { vertical: nuevo.vertical } : {}), etiqueta: original.etiqueta });
 
 /**
- * La configuración de la tienda con los videos personalizados en lugar de los de siempre. Sin nada que reemplazar devuelve la MISMA referencia. Solo cambia los espacios que la tienda ya tiene.
+ * La configuración de la tienda con los videos personalizados (y los textos de «Compras por mayor» que la administradora cambió) en lugar de los de siempre. Sin nada que reemplazar devuelve la MISMA
+ * referencia. Solo cambia los espacios y los textos que la tienda ya tiene.
  */
 export function aplicarMultimedia(joyeria: ConfigJoyeria, m: MultimediaTienda | null): ConfigJoyeria {
   if (!m) return joyeria;
@@ -98,9 +105,14 @@ export function aplicarMultimedia(joyeria: ConfigJoyeria, m: MultimediaTienda | 
     sig.marca = { ...joyeria.marca, video: conVideo(joyeria.marca.video, marca) };
     cambio = true;
   }
-  if (mayoristas && joyeria.mayoristas?.video) {
-    sig.mayoristas = aplicarVideoMayoristas(joyeria.mayoristas, m);
-    cambio = true;
+  if (joyeria.mayoristas) {
+    // El video y los textos del bloque se aplican por separado y se pueden combinar; si ninguno cambia algo, el bloque sigue siendo el mismo objeto.
+    const conVideoNuevo = mayoristas && joyeria.mayoristas.video ? aplicarVideoMayoristas(joyeria.mayoristas, m) : joyeria.mayoristas;
+    const bloque = aplicarTextosMayoristas(conVideoNuevo, m.mayoristas);
+    if (bloque !== joyeria.mayoristas) {
+      sig.mayoristas = bloque;
+      cambio = true;
+    }
   }
   return cambio ? sig : joyeria;
 }

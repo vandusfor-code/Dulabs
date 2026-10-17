@@ -679,11 +679,15 @@ lib/cms-comercial/videos.pglite.test.ts
 lib/cms-comercial/video-publico.test.ts
 lib/cms-comercial/video-publico.pglite.test.ts
 lib/cms-comercial/multimedia-tienda.test.ts
+lib/cms-comercial/mayoristas-textos.test.ts
+lib/cms-comercial/tienda-mayoristas.test.ts
 lib/cms-comercial-client-videos.test.ts
 app/api/dashboard/tienda/rutas-videos.test.ts
 components/catalogo-publico/tienda/joyeria/inicio-multimedia.test.tsx
+components/catalogo-publico/tienda/joyeria/mayoristas-textos.test.tsx
 components/dashboard/tienda/multimedia-formato.test.ts
 components/dashboard/tienda/multimedia.dom.test.tsx
+components/dashboard/tienda/mayoristas-textos.dom.test.tsx
 
 # Cobros manuales: recordatorio de pago por WhatsApp (plantilla pendiente_pago desde el número de Dulabs) + suspensión del bot por falta de pago.
 # La prueba de la ruta del Panel vive en lib/cobros (no junto a la ruta) porque el corredor lee los corchetes de «[idTenant]» como un comodín y correría 0 pruebas.

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ImageIcon } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import { ETIQUETAS_RED, REDES_SOCIALES, type Canal, type RedSocial, type TipoEntidad } from "@/lib/cms-comercial/contrato";
+import { CAMPOS_TEXTO_MAYORISTAS, ETIQUETAS_RED, REDES_SOCIALES, type Canal, type RedSocial, type TipoEntidad } from "@/lib/cms-comercial/contrato";
 import { usuarioDeRed } from "@/lib/cms-comercial/enlaces";
 import { bloquesDeBorrador } from "@/lib/cms-comercial/pagina";
 import { textoDerechos } from "@/lib/cms-comercial/pie";
@@ -611,6 +611,10 @@ function PreviaMultimedia({ borrador }: { borrador: Draft }) {
   };
   const eligidas = lista2(leer(borrador, "categorias")).length;
   const total = contexto?.categorias.length ?? 0;
+  const textosCambiados = CAMPOS_TEXTO_MAYORISTAS.filter((c) => {
+    const v = leer(borrador, `mayoristas.${c}`);
+    return typeof v === "string" && v.trim() !== "";
+  }).length;
   return (
     <Marco titulo={t("Así quedaría tu inicio", "How your home page would look")}>
       {espacios.length === 0 && eligidas === 0 ? <NoLista motivo={t("Todavía no elegiste nada: tu tienda se ve como siempre.", "You haven't picked anything yet: your store looks as usual.")} /> : null}
@@ -639,7 +643,14 @@ function PreviaMultimedia({ borrador }: { borrador: Draft }) {
       <p className="text-xs text-mist" data-testid="previa-categorias">
         {total > 0 ? t(`Categorías con imagen propia: ${eligidas} de ${total}.`, `Categories with their own image: ${eligidas} of ${total}.`) : t("Tu catálogo todavía no tiene categorías.", "Your catalog has no categories yet.")}
       </p>
-      <p className="text-[11px] text-mist/80">{t("Los videos se ven en la tienda cuando publiques. Mira el resultado con «Ver mi tienda».", "The videos show in the store once you publish. Check the result with “View my store”.")}</p>
+      {contexto?.tienda?.textosMayoristas ? (
+        <p className="text-xs text-mist" data-testid="previa-textos-mayoristas">
+          {textosCambiados > 0
+            ? t(`Textos de «Compras por mayor» que cambiaste: ${textosCambiados} de ${CAMPOS_TEXTO_MAYORISTAS.length}.`, `“Buy wholesale” texts you changed: ${textosCambiados} of ${CAMPOS_TEXTO_MAYORISTAS.length}.`)
+            : t("Los textos de «Compras por mayor» siguen como siempre.", "The “Buy wholesale” texts stay as usual.")}
+        </p>
+      ) : null}
+      <p className="text-[11px] text-mist/80">{t("Los videos y los textos se ven en la tienda cuando publiques. Mira el resultado con «Ver mi tienda».", "The videos and texts show in the store once you publish. Check the result with “View my store”.")}</p>
     </Marco>
   );
 }

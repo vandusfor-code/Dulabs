@@ -150,6 +150,12 @@ const ETIQUETAS_MULTIMEDIA: Readonly<Record<string, string>> = {
   categorias: "Imágenes de las categorías",
   "categorias.categoria_id": "Categoría",
   "categorias.imagen": "Imagen de la categoría",
+  mayoristas: "Textos de «Compras por mayor»",
+  "mayoristas.etiqueta": "Etiqueta de «Compras por mayor»",
+  "mayoristas.titulo": "Título de «Compras por mayor»",
+  "mayoristas.texto": "Texto corto de «Compras por mayor»",
+  "mayoristas.boton": "Botón de «Compras por mayor»",
+  "mayoristas.mensaje": "Mensaje de WhatsApp de «Compras por mayor»",
   ...Object.fromEntries(
     ARCHIVOS_VIDEO.flatMap((archivo) => {
       const [espacio, orientacion] = archivo.split(".");
@@ -271,7 +277,7 @@ export function validar(tipo: TipoEntidad, borrador: unknown, ctx: ContextoValid
 
   // 2) Textos: ni órdenes al asistente, ni secretos, ni variables fuera del contenido.
   revisarTextos(tipo, borrador, err);
-  if (tipo === "pie" || tipo === "pagina") revisarEnlaceMayoristaVisible(tipo, borrador, err);
+  if (tipo === "pie" || tipo === "pagina" || tipo === "multimedia") revisarEnlaceMayoristaVisible(tipo, borrador, err);
 
   // 3) Lo que el borrador menciona debe existir.
   revisarDependencias(tipo, borrador, ctx, err, adv);
@@ -387,9 +393,12 @@ function revisarDependencias(tipo: TipoEntidad, borrador: unknown, ctx: Contexto
   }
 }
 
-/** El pie y las páginas de la tienda los ven todos los clientes: ni una dirección ni un texto pueden llevar el enlace del catálogo mayorista (el token es un secreto). Se revisa aunque el resto no esté completo. */
-function revisarEnlaceMayoristaVisible(tipo: "pie" | "pagina", borrador: unknown, err: Reportar) {
-  const donde = tipo === "pie" ? "el pie de página: lo verían" : "una página de la tienda: la verían";
+/**
+ * El pie, las páginas y los textos del bloque «Compras por mayor» de la tienda los ven todos los clientes: ni una dirección ni un texto pueden llevar el enlace del catálogo mayorista (el token es un secreto).
+ * Se revisa aunque el resto no esté completo.
+ */
+function revisarEnlaceMayoristaVisible(tipo: "pie" | "pagina" | "multimedia", borrador: unknown, err: Reportar) {
+  const donde = tipo === "pie" ? "el pie de página: lo verían" : tipo === "pagina" ? "una página de la tienda: la verían" : "los textos de la tienda: los verían";
   recorrerTextos(borrador, "", (texto, campo) => {
     if (contieneEnlaceMayorista(texto)) err("enlace_mayorista", campo, `No pongas el enlace del catálogo mayorista en ${donde} todos los clientes.`);
   });
@@ -403,10 +412,11 @@ function revisarPie(p: { descripcion?: string; columnas: unknown[]; mostrar_cate
   if (!hayAlgo) adv("pie_vacio", "", "El pie no tiene descripción, enlaces, contacto ni redes: solo se verá el nombre de tu marca.");
 }
 
-function revisarMultimedia(m: { videos?: Record<string, unknown>; categorias?: unknown[] }, adv: Reportar) {
+function revisarMultimedia(m: { videos?: Record<string, unknown>; categorias?: unknown[]; mayoristas?: Record<string, unknown> }, adv: Reportar) {
   const hayVideos = m.videos !== undefined && Object.values(m.videos).some((v) => v !== undefined);
   const hayCategorias = (m.categorias?.length ?? 0) > 0;
-  if (!hayVideos && !hayCategorias) adv("multimedia_vacia", "", "No elegiste ningún video ni ninguna imagen de categoría: publicar esto no cambia nada en tu tienda (se siguen viendo los originales).");
+  const hayTextos = m.mayoristas !== undefined && Object.values(m.mayoristas).some((v) => v !== undefined);
+  if (!hayVideos && !hayCategorias && !hayTextos) adv("multimedia_vacia", "", "No elegiste ningún video, ninguna imagen de categoría ni cambiaste ningún texto: publicar esto no cambia nada en tu tienda (se siguen viendo los originales).");
 }
 
 function revisarHome(h: { portada: { visible: boolean; imagen?: unknown }; banner?: { visible: boolean }; secciones: Array<{ tipo: string; visible: boolean }>; categorias_destacadas: string[]; productos_destacados: string[] }, adv: Reportar) {

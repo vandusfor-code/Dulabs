@@ -10,7 +10,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, Film, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import type { Problema } from "@/lib/cms-comercial/contrato";
+import { CAMPOS_TEXTO_MAYORISTAS, LIMITE_TEXTO_MAYORISTAS, type CampoTextoMayoristas, type Problema } from "@/lib/cms-comercial/contrato";
 import type { Imagen } from "@/lib/cms-comercial/esquemas";
 import type { EtapaSubidaVideo } from "@/lib/cms-comercial-client";
 import { revisarArchivo, type RevisionVideo } from "@/lib/cms-comercial/video-navegador";
@@ -34,7 +34,7 @@ import { useTienda } from "@/components/dashboard/tienda/contexto";
 import type { FormProps } from "@/components/dashboard/tienda/formularios";
 import { useHerramientasVideo } from "@/components/dashboard/tienda/herramientas-video";
 import { SelectorImagen } from "@/components/dashboard/tienda/selectores";
-import { Aviso, BotonCargando, Tarjeta, actionBtn, cn, dangerBtn, primaryBtn } from "@/components/dashboard/tienda/ui";
+import { Aviso, BotonCargando, CampoTexto, Tarjeta, actionBtn, cn, dangerBtn, primaryBtn } from "@/components/dashboard/tienda/ui";
 
 type ReferenciaVideo = { video: string; poster: string };
 
@@ -568,6 +568,83 @@ function TarjetaEspacio({ espacio, formulario }: { espacio: EspacioVideo; formul
 }
 
 // ---------------------------------------------------------------------------
+// Los textos del bloque «Compras por mayor»
+// ---------------------------------------------------------------------------
+
+const CAMPOS_TEXTOS_MAYORISTAS: Readonly<Record<CampoTextoMayoristas, { es: string; en: string; ayuda: readonly [string, string] }>> = {
+  etiqueta: { es: "Etiqueta", en: "Label", ayuda: ["La palabra pequeña que va sobre el título.", "The small line above the title."] },
+  titulo: { es: "Título", en: "Title", ayuda: ["El título grande del bloque, en el inicio y en la página de mayoristas.", "The big title of the band, on the home page and on the wholesale page."] },
+  texto: {
+    es: "Texto corto",
+    en: "Short text",
+    ayuda: [
+      "La frase bajo el título en el inicio. En la página de mayoristas solo se usa si no hay una introducción publicada (esa se edita en «Preguntas frecuentes»).",
+      "The line under the title on the home page. The wholesale page only uses it when no introduction is published (that one is edited in “FAQ”).",
+    ],
+  },
+  boton: { es: "Botón", en: "Button", ayuda: ["Lo que dice el botón que abre el WhatsApp del negocio.", "What the button that opens the business WhatsApp says."] },
+  mensaje: { es: "Mensaje de WhatsApp", en: "WhatsApp message", ayuda: ["El mensaje que le llega al negocio cuando el cliente toca el botón.", "The message the business receives when the customer taps the button."] },
+};
+
+/** Los textos de la banda «Compras por mayor» (inicio y página de mayoristas). Cada campo vacío conserva el texto de siempre, que se ve en gris dentro del campo. */
+export function TarjetaTextosMayoristas({ formulario }: { formulario: FormProps }) {
+  const { t } = useI18n();
+  const { contexto } = useTienda();
+  const { borrador, poner, disabled, problemas } = formulario;
+  const siempre = contexto?.tienda?.textosMayoristas;
+  if (!siempre) return null; // la tienda no tiene este bloque: no hay nada que cambiar
+  const valorDe = (campo: CampoTextoMayoristas): string => {
+    const v = leer(borrador, `mayoristas.${campo}`);
+    return typeof v === "string" ? v : "";
+  };
+  const errorDe = (campo: CampoTextoMayoristas): string | null => problemas.find((p) => p.severidad === "error" && p.campo === `mayoristas.${campo}`)?.mensaje ?? null;
+  const personalizado = CAMPOS_TEXTO_MAYORISTAS.some((c) => valorDe(c) !== "");
+  const efectivo = (campo: CampoTextoMayoristas) => valorDe(campo).trim() || siempre[campo];
+
+  return (
+    <Tarjeta
+      titulo={t("Textos de «Compras por mayor»", "“Buy wholesale” texts")}
+      descripcion={t(
+        "Lo que dice la banda de compradores mayoristas del inicio y la parte de arriba de la página de mayoristas. Lo que dejes vacío se sigue viendo como siempre. La introducción de la página se edita en la pestaña «Preguntas frecuentes».",
+        "What the wholesale-buyers band on the home page and the top of the wholesale page say. Anything you leave empty keeps looking as usual. The page introduction is edited in the “FAQ” tab.",
+      )}
+      accion={
+        personalizado && !disabled ? (
+          <button type="button" onClick={() => poner("mayoristas", undefined)} className={cn(actionBtn, "text-[12px]")}>
+            <RotateCcw className="size-3.5" aria-hidden /> {t("Volver a los textos de siempre", "Back to the usual texts")}
+          </button>
+        ) : undefined
+      }
+    >
+      {CAMPOS_TEXTO_MAYORISTAS.map((campo) => (
+        <CampoTexto
+          key={campo}
+          etiqueta={t(CAMPOS_TEXTOS_MAYORISTAS[campo].es, CAMPOS_TEXTOS_MAYORISTAS[campo].en)}
+          ayuda={t(CAMPOS_TEXTOS_MAYORISTAS[campo].ayuda[0], CAMPOS_TEXTOS_MAYORISTAS[campo].ayuda[1])}
+          valor={valorDe(campo)}
+          onCambio={(v) => poner(`mayoristas.${campo}`, v)}
+          placeholder={siempre[campo]}
+          maxLength={LIMITE_TEXTO_MAYORISTAS[campo]}
+          error={errorDe(campo)}
+          disabled={disabled}
+        />
+      ))}
+      <div className="rounded-lg border border-edge bg-ink p-4" data-testid="vista-previa-mayoristas">
+        <p className="mb-2 text-[11px] uppercase tracking-wide text-mist">{t("Así se leerá", "How it will read")}</p>
+        <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-mist">{efectivo("etiqueta")}</p>
+        <p className="mt-1 text-lg font-semibold leading-snug text-fg">{efectivo("titulo")}</p>
+        <p className="mt-1 text-sm text-mist">{efectivo("texto")}</p>
+        <span className="mt-3 inline-block rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg">{efectivo("boton")}</span>
+        <p className="mt-3 text-[11px] text-mist/80">
+          {t("Mensaje que llega al WhatsApp: ", "Message that reaches WhatsApp: ")}
+          <span className="text-fg">«{efectivo("mensaje")}»</span>
+        </p>
+      </div>
+    </Tarjeta>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Imágenes de las categorías
 // ---------------------------------------------------------------------------
 
@@ -674,6 +751,8 @@ export function FormMultimedia(p: FormProps) {
       {espacios.map((e) => (
         <TarjetaEspacio key={e} espacio={e} formulario={p} />
       ))}
+
+      <TarjetaTextosMayoristas formulario={p} />
 
       <ImagenesDeCategorias {...p} />
 
