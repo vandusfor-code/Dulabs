@@ -13,7 +13,7 @@
  */
 import { z } from "zod";
 import { isReference } from "@/lib/catalogo/domain";
-import { AUDIENCIAS, ETIQUETAS_RED, LIMITE_JSON_CONTENIDO, MODALIDADES, REDES_SOCIALES, SECCIONES_HOME, TEMAS_CONTENIDO, type TipoEntidad } from "@/lib/cms-comercial/contrato";
+import { AUDIENCIAS, ETIQUETAS_RED, LIMITE_JSON_CONTENIDO, LIMITE_TEXTO_MAYORISTAS, MODALIDADES, REDES_SOCIALES, SECCIONES_HOME, TEMAS_CONTENIDO, type CampoTextoMayoristas, type TipoEntidad } from "@/lib/cms-comercial/contrato";
 import { esCorreoValido, esTelefonoValido, esUrlHttpsSegura, numeroDeLineas, perteneceARed } from "@/lib/cms-comercial/enlaces";
 import { contieneHtml, normalizarTexto } from "@/lib/cms-comercial/texto-seguro";
 import { esFechaLocalValida, intervaloDe } from "@/lib/cms-comercial/tiempo";
@@ -414,6 +414,29 @@ const videoUnico = z.strictObject({ horizontal: archivoVideoSchema });
 
 export const MAX_CATEGORIAS_CON_IMAGEN = 60;
 
+/** Cómo se llama cada texto del bloque de mayoristas en los mensajes de error. */
+const NOMBRE_TEXTO_MAYORISTAS: Readonly<Record<CampoTextoMayoristas, string>> = {
+  etiqueta: "La etiqueta",
+  titulo: "El título",
+  texto: "El texto corto",
+  boton: "El texto del botón",
+  mensaje: "El mensaje de WhatsApp",
+};
+
+/** Cada texto del bloque va en una sola línea: se pinta como etiqueta, título o botón (y el mensaje de WhatsApp viaja en una dirección). */
+const textoDeMayoristas = (campo: CampoTextoMayoristas) =>
+  texto(NOMBRE_TEXTO_MAYORISTAS[campo], LIMITE_TEXTO_MAYORISTAS[campo]).refine((s) => !/[\r\n]/.test(s), { message: `${NOMBRE_TEXTO_MAYORISTAS[campo]} debe ir en una sola línea.` });
+
+/** Los textos del bloque «Compras por mayor» que la administradora cambió. Un texto que no está aquí conserva el que trae la tienda. */
+export const textosMayoristasSchema = z.strictObject({
+  etiqueta: textoDeMayoristas("etiqueta").optional(),
+  titulo: textoDeMayoristas("titulo").optional(),
+  texto: textoDeMayoristas("texto").optional(),
+  boton: textoDeMayoristas("boton").optional(),
+  mensaje: textoDeMayoristas("mensaje").optional(),
+} satisfies Record<CampoTextoMayoristas, z.ZodType>);
+export type TextosMayoristasCms = z.infer<typeof textosMayoristasSchema>;
+
 export const multimediaSchema = z.strictObject({
   /** Los videos de los espacios del inicio. Un espacio que no está aquí conserva el video que trae la tienda (el original de DuLabs). */
   videos: z.strictObject({ portada: videoHorizontalYVertical.optional(), coleccion: videoHorizontalYVertical.optional(), marca: videoUnico.optional(), mayoristas: videoUnico.optional() }).optional(),
@@ -423,6 +446,8 @@ export const multimediaSchema = z.strictObject({
     .max(MAX_CATEGORIAS_CON_IMAGEN, { message: `Máximo ${MAX_CATEGORIAS_CON_IMAGEN} categorías con imagen.` })
     .refine((c) => sinRepetidos(c.map((x) => x.categoria_id)), { message: "Una categoría no puede repetirse." })
     .optional(),
+  /** Los textos del bloque «Compras por mayor» (el del inicio y la banda de la página de mayoristas). Los que no estén aquí conservan los que trae la tienda. */
+  mayoristas: textosMayoristasSchema.optional(),
 });
 export type Multimedia = z.infer<typeof multimediaSchema>;
 

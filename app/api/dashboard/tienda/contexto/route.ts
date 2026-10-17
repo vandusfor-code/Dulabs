@@ -7,6 +7,7 @@ import type { NextRequest } from "next/server";
 import { apiOk } from "@/lib/agent-compiler/api/http";
 import { joyeriaOf, storefrontConfigFor, temaDe } from "@/lib/catalogo/vitrina";
 import { withCms } from "@/lib/cms-comercial/http";
+import { textosDeSiempre } from "@/lib/cms-comercial/mayoristas-textos";
 import { videosDeSiempre } from "@/lib/cms-comercial/multimedia-tienda";
 import { ZONA_NEGOCIO } from "@/lib/cms-comercial/tiempo";
 import { ETIQUETAS_VARIABLE, VARIABLES } from "@/lib/cms-comercial/variables";
@@ -38,6 +39,8 @@ export async function GET(request: NextRequest) {
             descripcion: joyeria?.descripcion ?? null,
             // Los videos con los que se ve la tienda hoy en cada espacio (solo los espacios que tiene): el panel los muestra como «el de siempre» y permite volver a ellos.
             videosDeSiempre: videosDeSiempre(joyeria),
+            // Los textos con los que se ve hoy el bloque «Compras por mayor» (solo si la tienda lo tiene): el panel los muestra como «el de siempre» y permite volver a ellos.
+            ...(joyeria?.mayoristas ? { textosMayoristas: textosDeSiempre(joyeria.mayoristas) } : {}),
           }
         : null;
     return apiOk({

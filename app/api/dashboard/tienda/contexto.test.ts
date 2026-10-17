@@ -91,6 +91,19 @@ describe("GET /contexto — qué tienda es el negocio", () => {
     assert.equal(v.mayoristas.horizontal.width, 1280);
   });
 
+  it("la tienda de joyería cuenta con qué textos se ve hoy el bloque «Compras por mayor» (lo que el panel muestra como «el de siempre»); una tienda sin ese bloque no trae el campo", async () => {
+    publicacion(TA, "delacour", "Delacour");
+    const t = (await contexto("t-admin-a")).json.data?.tienda;
+    assert.deepEqual(t.textosMayoristas, {
+      etiqueta: "Compras por mayor",
+      titulo: "Compra al por mayor",
+      texto: "Escríbenos por WhatsApp y una asesora te atiende.",
+      boton: "Hablar con una asesora",
+      mensaje: "Hola, quiero información para comprar al por mayor.",
+    });
+    assert.equal("textosMayoristas" in ((await contexto("t-agente-a")).json.data?.tienda ?? {}), true, "también lo ve quien solo consulta");
+  });
+
   it("una tienda sin tema propio: no hay pie ni preguntas que ofrecer (mayoristas false, sin página, sin frase)", async () => {
     publicacion(TA, "tienda-a", "Tienda A");
     const t = (await contexto("t-admin-a")).json.data?.tienda;
