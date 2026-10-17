@@ -13,6 +13,7 @@ import type { EntidadResumen } from "@/lib/cms-comercial-client";
 import { borradorInicial } from "@/components/dashboard/tienda/borrador";
 import { useTienda } from "@/components/dashboard/tienda/contexto";
 import { chipsDe, fechaHora } from "@/components/dashboard/tienda/formato";
+import { MinimoMayorista } from "@/components/dashboard/tienda/minimo-mayorista";
 import { Aviso, BotonCargando, CampoArea, CampoTexto, Cargando, ChipUi, Dialogo, actionBtn, cn, primaryBtn } from "@/components/dashboard/tienda/ui";
 
 const TEMA_PREGUNTAS: TemaContenido = "mayoristas";
@@ -141,6 +142,8 @@ export function ListaPreguntas({ onAbrir }: { onAbrir: (id: string) => void }) {
           </button>
         )}
       </div>
+
+      <MinimoMayorista />
 
       {error ? (
         <Aviso tono="danger" titulo={t("No pudimos cargar las preguntas", "We couldn't load the questions")}>

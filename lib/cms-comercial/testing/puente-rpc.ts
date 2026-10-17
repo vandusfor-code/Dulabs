@@ -40,7 +40,8 @@ export function instalarPuenteRpcCms(base: BaseCms, urlBase: string, opciones: {
       tasa.llamadas++;
       return Response.json([{ permitido: !tasa.bloqueada, conteo: tasa.llamadas, reinicia_en: new Date(Date.now() + 60_000).toISOString() }]);
     }
-    const m = /^\/rest\/v1\/rpc\/(dulabs_cms_[a-z_]+)$/.exec(url.pathname);
+    // Las funciones del CMS y las del mínimo mayorista (migración 20261214: el asistente) van al SQL real; el resto sigue en el emulador.
+    const m = /^\/rest\/v1\/rpc\/(dulabs_(?:cms_[a-z_]+|agente_minimo_mayorista_[a-z]+))$/.exec(url.pathname);
     if (url.origin !== origen || !m) return original(input as never, init);
     const nombre = m[1];
     llamadas.push(nombre);

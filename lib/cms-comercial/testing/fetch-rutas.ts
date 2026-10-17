@@ -20,6 +20,7 @@ import { POST as subidaPOST } from "@/app/api/dashboard/tienda/imagenes/upload-u
 import { GET as usosCategoriaGET } from "@/app/api/dashboard/tienda/categorias/[id]/usos/route";
 import { GET as productosGET } from "@/app/api/dashboard/tienda/productos/route";
 import { GET as videosGET } from "@/app/api/dashboard/tienda/videos/route";
+import { GET as minimoGET, PUT as minimoPUT } from "@/app/api/dashboard/tienda/minimo-mayorista/route";
 import { POST as confirmarVideoPOST } from "@/app/api/dashboard/tienda/videos/[id]/confirmar/route";
 import { POST as subidaVideoPOST } from "@/app/api/dashboard/tienda/videos/upload-url/route";
 
@@ -42,6 +43,7 @@ export function crearFetchRutas(): FetchRutas {
     const partes = ruta.split("/").filter(Boolean);
     const conId = (id: string) => ({ params: Promise.resolve({ id }) });
 
+    if (partes[0] === "minimo-mayorista") return metodo === "PUT" ? minimoPUT(request) : minimoGET(request);
     if (partes[0] === "auditoria") return auditoriaGET(request);
     if (partes[0] === "contexto") return contextoGET(request);
     if (partes[0] === "productos") return productosGET(request);

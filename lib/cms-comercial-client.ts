@@ -14,6 +14,7 @@ import type { UsoCategoria } from "@/lib/cms-comercial/usos-categoria";
 import type { VariableId } from "@/lib/cms-comercial/variables";
 import type { ArchivoVideoId, EspacioVideo } from "@/lib/cms-comercial/video-requisitos";
 import type { VideoConfirmado, VideoVista } from "@/lib/cms-comercial/videos";
+import type { MinimoMayoristaVista, ResultadoMinimoMayorista } from "@/lib/cms-comercial/minimo-mayorista";
 import type { ArchivoVideo } from "@/lib/catalogo/vitrina";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -194,6 +195,10 @@ export function createCmsClient(accessToken: string, opciones: OpcionesCliente =
     },
     imagenes: () => get<{ items: ImagenVista[] }>("/imagenes"),
     videos: () => get<{ items: VideoVista[] }>("/videos"),
+    /** El mínimo de la compra inicial mayorista: cómo está hoy y si se puede cambiar desde el panel (disponible = false: falta activarlo, solo se ve el monto). */
+    minimoMayorista: () => get<MinimoMayoristaVista & { disponible: boolean }>("/minimo-mayorista"),
+    /** Cambia el mínimo (solo administradores). Se aplica de inmediato. «esperado»: el monto que se estaba viendo (si cambió mientras tanto, el servidor responde 409). */
+    fijarMinimoMayorista: (minimo: number, esperado: number) => llamar<ResultadoMinimoMayorista>(f, accessToken, "/minimo-mayorista", { method: "PUT", body: JSON.stringify({ minimo, esperado }) }),
 
     subirImagen,
 
