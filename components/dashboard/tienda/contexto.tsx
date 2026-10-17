@@ -13,6 +13,8 @@ export interface TiendaContextValue {
   canWrite: boolean;
   contexto: ContextoTienda | null;
   errorContexto: string | null;
+  /** Vuelve a pedir el contexto de la tienda (las variables y su valor): por ejemplo, tras cambiar el mínimo mayorista. */
+  recargarContexto: () => Promise<void>;
   producto: (referencia: string) => ProductoVista | undefined;
   asegurarProductos: (referencias: readonly string[]) => Promise<void>;
   buscarProductos: (consulta: string) => Promise<{ items: ProductoVista[]; error: string | null }>;
@@ -67,6 +69,14 @@ export function TiendaProvider({ client, canWrite, children }: { client: CmsClie
     return () => {
       vivo = false;
     };
+  }, [client]);
+
+  const recargarContexto = useCallback(async () => {
+    const r = await client.contexto();
+    if (r.ok) {
+      setContexto(r.data);
+      setErrorContexto(null);
+    }
   }, [client]);
 
   const guardar = useCallback((items: readonly ProductoVista[]) => {
@@ -147,6 +157,7 @@ export function TiendaProvider({ client, canWrite, children }: { client: CmsClie
       canWrite,
       contexto,
       errorContexto,
+      recargarContexto,
       producto: (referencia) => cache.current.get(referencia),
       asegurarProductos,
       buscarProductos,
@@ -162,7 +173,7 @@ export function TiendaProvider({ client, canWrite, children }: { client: CmsClie
       subirVideo,
       videoPorId: (id) => videos?.find((v) => v.id === id),
     }),
-    [client, canWrite, contexto, errorContexto, asegurarProductos, buscarProductos, versionProductos, imagenes, errorImagenes, cargarImagenes, subirImagen, videos, errorVideos, cargarVideos, subirVideo],
+    [client, canWrite, contexto, errorContexto, recargarContexto, asegurarProductos, buscarProductos, versionProductos, imagenes, errorImagenes, cargarImagenes, subirImagen, videos, errorVideos, cargarVideos, subirVideo],
   );
 
   return <TiendaContext.Provider value={valor}>{children}</TiendaContext.Provider>;

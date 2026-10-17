@@ -631,6 +631,11 @@ lib/agente/agente-comercial-checkout.test.ts
 lib/agente/agente-comercial-produccion.pglite.test.ts
 lib/cms-comercial/migracion-textos.test.ts
 lib/cms-comercial/migracion-textos.pglite.test.ts
+# Mínimo de la compra inicial mayorista editable desde el panel (migración 20261214): el monto escrito a mano dentro de los textos del asistente (reglas puras), el cálculo del cambio con el esquema REAL del asistente (un texto que quedaría demasiado largo no se toca), el adaptador, el SQL real (rango, concurrencia, todo o nada, auditoría de solo añadir, permisos, reversa), la ruta y la pantalla.
+lib/cms-comercial/minimo-mayorista.test.ts
+lib/cms-comercial/minimo-mayorista.pglite.test.ts
+app/api/dashboard/tienda/minimo-mayorista.test.ts
+components/dashboard/tienda/minimo-mayorista.dom.test.tsx
 # Bloque 30 (rediseño visual de la tienda de Delacour, tema "joyeria"): el tema y su contenido (puro), el inicio con lo que publica el CMS (qué se dibuja, el orden, lo que nunca se muestra), la tarjeta,
 # el listado con las MISMAS direcciones que el de siempre, la ficha con los mismos datos y acciones, y lo que hace el cliente en jsdom (cabecera, menú, buscador, anuncios, galería, carrusel, botón de vidrio).
 lib/catalogo/joyeria.test.ts
