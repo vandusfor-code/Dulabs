@@ -12,6 +12,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   CATALOG_LIMITS,
+  CATEGORY_MOVE_NONE,
   availabilityOf,
   maxOrderableUnits,
   detailPathOf,
@@ -19,10 +20,12 @@ import {
   normalizeSearch,
   sniffImageMime,
   type CatalogCategory,
+  type CatalogCategoryWithCount,
   type CatalogImage,
   type CatalogProduct,
   type CatalogProductDetail,
   type CategoryCreateInput,
+  type CategoryDeleteResult,
   type ImageConfirmInput,
   type ImageMimeType,
   type ImageUploadRequest,
@@ -254,6 +257,41 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
         }
         throw err;
       }
+    },
+
+    /** Las categorías con cuántos productos usa cada una (una consulta de conteo por categoría, en paralelo). */
+    async listCategoriesWithCounts(actor: CatalogActor): Promise<CatalogCategoryWithCount[]> {
+      const categories = await repo.listCategories(actor.tenantId);
+      const counts = await Promise.all(categories.map((c) => repo.countProductsInCategory(actor.tenantId, c.id)));
+      return categories.map((c, i) => ({ ...c, productCount: counts[i] }));
+    },
+
+    /**
+     * Elimina una categoría. Si tiene productos NO se borra a ciegas: hay que decir qué pasa con ellos (`moveTo` = otra categoría del negocio, o «none» para dejarlos sin
+     * categoría); sin decisión responde 409 y no toca nada. Los productos se pasan ANTES de borrar y, aun así, la clave foránea de la base es la barrera final: si entró un
+     * producto nuevo entre medias, el borrado falla con 409 (los ya pasados se quedan donde están; reintentar es seguro).
+     */
+    async deleteCategory(actor: CatalogActor, categoryId: string, options: { moveTo?: string } = {}): Promise<CategoryDeleteResult> {
+      if (options.moveTo === categoryId) throw new CatalogError("VALIDATION_ERROR", "Elige una categoría distinta de la que vas a eliminar.");
+      const category = await repo.getCategory(actor.tenantId, categoryId);
+      if (!category) throw new CatalogError("NOT_FOUND", "La categoría no existe.");
+
+      const inUse = await repo.countProductsInCategory(actor.tenantId, categoryId);
+      let target: CatalogCategory | null = null;
+      if (inUse > 0) {
+        if (options.moveTo === undefined) {
+          throw new CatalogError("CONFLICT", `Esta categoría tiene ${inUse} producto${inUse === 1 ? "" : "s"}. Elige a qué categoría pasarlos o déjalos sin categoría.`);
+        }
+        if (options.moveTo !== CATEGORY_MOVE_NONE) {
+          // Del MISMO negocio: el id que llega del navegador nunca se usa sin verificarlo.
+          target = await repo.getCategory(actor.tenantId, options.moveTo);
+          if (!target) throw new CatalogError("VALIDATION_ERROR", "La categoría de destino no existe.");
+        }
+        await repo.reassignCategory(actor.tenantId, actor.userId, categoryId, target);
+      }
+
+      if (!(await repo.deleteCategory(actor.tenantId, categoryId))) throw new CatalogError("NOT_FOUND", "La categoría no existe.");
+      return { deleted: true, moved: inUse, movedTo: target };
     },
 
     /**

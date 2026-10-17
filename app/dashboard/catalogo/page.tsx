@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, ClipboardList, FileSpreadsheet, PackagePlus, Plus, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ClipboardList, FileSpreadsheet, PackagePlus, Plus, Search, Tags, X } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
 import type { CatalogCategory, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
 import { CatalogLinks } from "@/components/dashboard/catalogo/CatalogLinks";
+import { CategoriasDialog } from "@/components/dashboard/catalogo/CategoriasDialog";
 import { ProductList, ProductListSkeleton } from "@/components/dashboard/catalogo/ProductList";
 import { actionBtn, cn, inputCls, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
 
@@ -24,6 +25,9 @@ export default function CatalogoPage() {
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const [page, setPage] = useState(1);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
+  const [categoriasAbierto, setCategoriasAbierto] = useState(false);
+  // Sube cuando cambian las categorías: los productos de una categoría eliminada cambiaron de categoría, así que el listado se vuelve a pedir.
+  const [recarga, setRecarga] = useState(0);
   const [resultado, setResultado] = useState<Resultado | null>(null);
 
   // Búsqueda con debounce: una consulta por pausa de escritura, no por tecla.
@@ -46,7 +50,7 @@ export default function CatalogoPage() {
     };
   }, [client]);
 
-  const key = useMemo(() => JSON.stringify({ q, categoryId, status, page }), [q, categoryId, status, page]);
+  const key = useMemo(() => JSON.stringify({ q, categoryId, status, page, recarga }), [q, categoryId, status, page, recarga]);
 
   useEffect(() => {
     if (!client) return;
@@ -68,6 +72,16 @@ export default function CatalogoPage() {
   const cambiarPagina = (p: number) => {
     setPage(p);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const alEliminarCategoria = (id: string) => {
+    // Un filtro puesto en la categoría que acaba de desaparecer no tiene sentido: se quita.
+    if (categoryId === id) {
+      setCategoryId("");
+      setPage(1);
+    }
+    setCategories((todas) => todas.filter((c) => c.id !== id));
+    setRecarga((n) => n + 1);
   };
 
   const limpiar = () => {
@@ -108,9 +122,15 @@ export default function CatalogoPage() {
               <FileSpreadsheet className="size-4" />
               {t("Carga masiva", "Bulk upload")}
             </Link>
+            <button type="button" onClick={() => setCategoriasAbierto(true)} className={actionBtn}>
+              <Tags className="size-4" />
+              {t("Categorías", "Categories")}
+            </button>
           </>
         )}
       </PageHeader>
+
+      <CategoriasDialog abierto={categoriasAbierto} client={client} onCerrar={() => setCategoriasAbierto(false)} onEliminada={alEliminarCategoria} />
 
       <div className="px-4 pt-6 md:px-8">
         <CatalogLinks client={client} canWrite={canWrite} />

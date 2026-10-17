@@ -59,7 +59,7 @@ export type Suscripcion = {
   cancelar_al_vencer?: boolean;
 } | null;
 
-type DashboardContextValue = {
+export type DashboardContextValue = {
   session: Session | null;
   negocios: Negocio[] | null;
   errorNegocios: string | null;
@@ -79,7 +79,8 @@ type DashboardContextValue = {
   seleccionarNumero: (phoneNumberId: string) => void;
 };
 
-const DashboardContext = createContext<DashboardContextValue | null>(null);
+/** Exportado para que las pruebas de pantalla renderen una página del dashboard con una sesión de mentira (sin Supabase Auth); la app solo usa `DashboardSessionProvider` y `useDashboard`. */
+export const DashboardContext = createContext<DashboardContextValue | null>(null);
 
 const NUMERO_ACTIVO_KEY = "du_labs_numero_activo";
 

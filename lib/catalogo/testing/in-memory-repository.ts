@@ -345,6 +345,32 @@ export function createInMemoryCatalogRepository() {
       return { id: c.id, name: c.name };
     },
 
+    async countProductsInCategory(tenantId, categoryId) {
+      return [...products.values()].filter((p) => p.tenantId === tenantId && p.categoryId === categoryId).length;
+    },
+
+    async reassignCategory(tenantId, actorId, fromId, to) {
+      for (const p of products.values()) {
+        if (p.tenantId !== tenantId || p.categoryId !== fromId) continue;
+        // Igual que el UPDATE real: id y texto legado juntos, y la escritura queda atribuida al actor.
+        p.categoryId = to?.id ?? null;
+        p.categoryName = to?.name ?? null;
+        p.updatedAt = now();
+        p.updatedBy = actorId;
+      }
+    },
+
+    async deleteCategory(tenantId, categoryId) {
+      const c = categories.get(categoryId);
+      if (!c || c.tenantId !== tenantId) return false;
+      // Igual que la FK compuesta (id_tenant, categoria_id) sin ON DELETE: con productos que la usan, la BD rechaza el borrado.
+      if ([...products.values()].some((p) => p.tenantId === tenantId && p.categoryId === categoryId)) {
+        throw new CatalogError("CONFLICT", "La categoría todavía tiene productos. Pásalos a otra categoría e inténtalo de nuevo.");
+      }
+      categories.delete(categoryId);
+      return true;
+    },
+
     async listMedia(tenantId, productId) {
       return [...media.values()]
         .filter((m) => m.tenantId === tenantId && m.productId === productId)

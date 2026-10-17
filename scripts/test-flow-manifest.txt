@@ -442,6 +442,9 @@ lib/flow/executors/send-message-executor-cliente-liviano.test.ts
 lib/catalogo/domain.test.ts
 lib/catalogo/auth.test.ts
 lib/catalogo/service.test.ts
+lib/catalogo/categorias-eliminar.test.ts
+lib/catalogo/categorias-eliminar-ruta.test.ts
+lib/catalogo/categorias-sql.pglite.test.ts
 lib/catalogo/form.test.ts
 lib/catalogo/compat-stock.test.ts
 # Catálogo público (links detal / mayor): sin precios mayoristas ni ids en el link detal, token exacto y rotable.
@@ -614,6 +617,7 @@ lib/cms-comercial/precios.pglite.test.ts
 lib/catalogo/resolucion-ofertas.test.ts
 components/catalogo-publico/tienda/ofertas-ui.dom.test.tsx
 components/dashboard/catalogo/lineas-pedido-oferta.test.tsx
+components/dashboard/catalogo/categorias.dom.test.tsx
 lib/catalogo/pedidos/lineas-oferta-persistencia.test.ts
 lib/cms-comercial/tienda-real.pglite.test.ts
 lib/cms-comercial/lectura-publicada.test.ts
