@@ -10,11 +10,11 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import { caracteresDePagina, MAX_BLOQUES_PAGINA, MAX_CARACTERES_PAGINA } from "@/lib/cms-comercial/esquemas";
+import { caracteresDePagina, MAX_BLOQUES_PAGINA, MAX_CARACTERES_PAGINA, MAX_PAGINAS_EN_MENU, MAX_TEXTO_MENU_PAGINA, MENSAJE_TEXTO_MENU_LARGO } from "@/lib/cms-comercial/esquemas";
 import { bloquesDeBorrador, bloquesDeTexto, inicioDeBloque, mismosBloques, problemasDeBloques, textoDeBloques } from "@/lib/cms-comercial/pagina";
 import { leer, type Draft } from "@/components/dashboard/tienda/borrador";
 import type { FormProps } from "@/components/dashboard/tienda/formularios";
-import { Campo, CampoTexto, Tarjeta, actionBtn, cn, inputCls } from "@/components/dashboard/tienda/ui";
+import { Campo, CampoTexto, Interruptor, Tarjeta, actionBtn, cn, inputCls } from "@/components/dashboard/tienda/ui";
 
 const texto = (b: Draft, ruta: string): string => {
   const v = leer(b, ruta);
@@ -73,13 +73,25 @@ export function FormPagina(p: FormProps) {
   const caracteres = caracteresDePagina(bloques);
   const errorTitulo = problemas.find((x) => x.severidad === "error" && x.campo === "titulo")?.mensaje ?? null;
 
+  // El menú de arriba de la tienda: encendido guarda `en_menu: true`; apagado quita el campo (y el texto que había escrito para el menú), así «no está en el menú» tiene una sola forma.
+  const titulo = texto(borrador, "titulo");
+  const enMenu = leer(borrador, "en_menu") === true;
+  // Un título largo no cabe en el menú: se le dice mientras escribe (el mismo mensaje y la misma regla que al publicar), sin esperar a «Revisar».
+  const largoParaElMenu = enMenu && texto(borrador, "texto_menu") === "" && titulo.length > MAX_TEXTO_MENU_PAGINA;
+  const errorTextoMenu = problemas.find((x) => x.severidad === "error" && x.campo === "texto_menu")?.mensaje ?? (largoParaElMenu ? MENSAJE_TEXTO_MENU_LARGO : null);
+  const errorMenuLleno = problemas.find((x) => x.severidad === "error" && x.campo === "en_menu")?.mensaje ?? null;
+  const ponerEnMenu = (encendido: boolean) => {
+    poner("en_menu", encendido ? true : undefined);
+    if (!encendido) poner("texto_menu", undefined);
+  };
+
   return (
     <div className="space-y-5">
       <Tarjeta
         titulo={t("Tu página", "Your page")}
         descripcion={t(
-          "Escribe aquí una política, unos términos o cualquier información que quieras darle a tus clientes. Al publicarla tiene su propia dirección dentro de tu tienda; para que tus clientes la encuentren, agrégale un enlace desde el «Pie de página».",
-          "Write a policy, terms or any information you want to give your customers. Once published it has its own address inside your store; so your customers can find it, add a link to it from the “Footer”.",
+          "Escribe aquí una política, unos términos o cualquier información que quieras darle a tus clientes (por ejemplo «Quiénes somos»). Al publicarla tiene su propia dirección dentro de tu tienda; para que tus clientes la encuentren, ponla en el menú de arriba (más abajo) o agrégale un enlace desde el «Pie de página».",
+          "Write a policy, terms or any information you want to give your customers (for example “About us”). Once published it has its own address inside your store; so your customers can find it, put it in the top menu (below) or add a link to it from the “Footer”.",
         )}
       >
         <CampoTexto etiqueta={t("Título de la página", "Page title")} ayuda={t("Por ejemplo «Política de privacidad». Es lo primero que ve el cliente.", "For example “Privacy policy”. It is the first thing the customer sees.")} valor={texto(borrador, "titulo")} onCambio={(v) => poner("titulo", v)} maxLength={80} disabled={disabled} requerido error={errorTitulo} />
@@ -132,6 +144,42 @@ export function FormPagina(p: FormProps) {
             {t(`${caracteres.toLocaleString("es-CO")} de ${MAX_CARACTERES_PAGINA.toLocaleString("es-CO")} caracteres · ${bloques.length} de ${MAX_BLOQUES_PAGINA} bloques`, `${caracteres.toLocaleString("en-US")} of ${MAX_CARACTERES_PAGINA.toLocaleString("en-US")} characters · ${bloques.length} of ${MAX_BLOQUES_PAGINA} blocks`)}
           </p>
         </div>
+      </Tarjeta>
+
+      <Tarjeta
+        titulo={t("Menú de arriba de la tienda", "Store top menu")}
+        descripcion={t(
+          "Para que tus clientes la encuentren sin buscarla, ponla en el menú de arriba, junto a «Inicio», «Catálogo» y «Categorías». Aparece ahí cuando la publiques.",
+          "So your customers can find it without searching, put it in the top menu, next to “Home”, “Catalog” and “Categories”. It shows up there once you publish it.",
+        )}
+      >
+        <Interruptor
+          etiqueta={t("Mostrar esta página en el menú de arriba", "Show this page in the top menu")}
+          ayuda={t(`En el menú caben hasta ${MAX_PAGINAS_EN_MENU} páginas.`, `The menu has room for up to ${MAX_PAGINAS_EN_MENU} pages.`)}
+          valor={enMenu}
+          onCambio={ponerEnMenu}
+          disabled={disabled}
+        />
+        {errorMenuLleno && (
+          <p role="alert" className="text-[12px] text-red-400">
+            {errorMenuLleno}
+          </p>
+        )}
+        {enMenu && (
+          <CampoTexto
+            etiqueta={t("Texto en el menú", "Menu text")}
+            ayuda={t(
+              `Opcional. Si lo dejas vacío, el menú dice «${titulo || "el título de tu página"}». Máximo ${MAX_TEXTO_MENU_PAGINA} caracteres.`,
+              `Optional. If you leave it empty, the menu says “${titulo || "your page title"}”. Up to ${MAX_TEXTO_MENU_PAGINA} characters.`,
+            )}
+            valor={texto(borrador, "texto_menu")}
+            onCambio={(v) => poner("texto_menu", v)}
+            placeholder={titulo}
+            maxLength={MAX_TEXTO_MENU_PAGINA}
+            disabled={disabled}
+            error={errorTextoMenu}
+          />
+        )}
       </Tarjeta>
     </div>
   );

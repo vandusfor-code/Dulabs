@@ -556,8 +556,16 @@ function PreviaPagina({ borrador }: { borrador: Draft }) {
   const titulo = texto(borrador, "titulo");
   const bloques = bloquesDeBorrador(leer(borrador, "bloques"));
   const marca = contexto?.tienda?.nombre ?? t("Tu marca", "Your brand");
+  const enMenu = leer(borrador, "en_menu") === true;
+  const nombreEnMenu = texto(borrador, "texto_menu") || titulo;
   return (
     <Marco titulo={t("Así se vería tu página", "How your page would look")}>
+      {enMenu && (
+        <p data-testid="previa-menu-pagina" className="flex flex-wrap items-center gap-2 text-[11px] text-fg">
+          {t("En el menú de arriba de tu tienda se verá así:", "In your store's top menu it will look like this:")}
+          <span className="rounded-full border border-edge px-3 py-1 text-[12px] text-fg">{nombreEnMenu || t("(sin título)", "(no title)")}</span>
+        </p>
+      )}
       <article className="space-y-3 rounded-lg border border-edge bg-ink p-3 text-sm">
         <header className="space-y-1 text-center">
           <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-mist">{marca}</p>

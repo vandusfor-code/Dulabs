@@ -371,6 +371,14 @@ export type BloquePagina = z.infer<typeof bloquePaginaSchema>;
 /** Cuántos caracteres de texto lleva una página (la suma de todos sus bloques). */
 export const caracteresDePagina = (bloques: readonly BloquePagina[]): number => bloques.reduce((n, b) => n + (b.tipo === "lista" ? b.items.reduce((m, i) => m + i.length, 0) : b.texto.length), 0);
 
+/** El menú de arriba de la tienda es angosto: caben pocas páginas propias y con un texto corto cada una. */
+export const MAX_PAGINAS_EN_MENU = 4;
+export const MAX_TEXTO_MENU_PAGINA = 24;
+export const MENSAJE_TEXTO_MENU_LARGO = `El título de la página es muy largo para el menú de arriba (máximo ${MAX_TEXTO_MENU_PAGINA} caracteres): escribe un texto más corto en «Texto en el menú».`;
+
+/** Cómo se llama una página en el menú de arriba: el texto que ella escribió para el menú o, si no escribió ninguno, el título de la página. */
+export const textoDeMenuDePagina = (p: { titulo: string; texto_menu?: string }): string => p.texto_menu ?? p.titulo;
+
 export const paginaSchema = z
   .strictObject({
     /** El título de la página: es también lo que dice el enlace del pie si ella no escribe otro. */
@@ -379,9 +387,15 @@ export const paginaSchema = z
       .array(bloquePaginaSchema)
       .min(1, { message: "Escribe el texto de la página." })
       .max(MAX_BLOQUES_PAGINA, { message: MENSAJE_PAGINA_CON_MUCHOS_BLOQUES }),
+    /** La página tiene su enlace en el menú de arriba de la tienda (junto a Inicio, Catálogo y Categorías). Sin esto, a la página solo se llega por un enlace del pie. */
+    en_menu: z.boolean().optional(),
+    /** Cómo se llama en el menú; si no hay, el título. */
+    texto_menu: texto("El texto del menú", MAX_TEXTO_MENU_PAGINA).optional(),
   })
   .superRefine((p, ctx) => {
     if (caracteresDePagina(p.bloques) > MAX_CARACTERES_PAGINA) ctx.addIssue({ code: "custom", path: ["bloques"], message: MENSAJE_PAGINA_LARGA });
+    // Sin texto propio para el menú, el enlace dice el título: si no cabe, se pide el texto corto. (Con un texto propio demasiado largo, ya lo dice el límite del propio campo: no se culpa al título.)
+    if (p.en_menu === true && p.texto_menu === undefined && textoDeMenuDePagina(p).length > MAX_TEXTO_MENU_PAGINA) ctx.addIssue({ code: "custom", path: ["texto_menu"], message: MENSAJE_TEXTO_MENU_LARGO });
   });
 export type Pagina = z.infer<typeof paginaSchema>;
 

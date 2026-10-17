@@ -156,18 +156,22 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
     return e;
   }
 
-  async function cargarContexto(tenantId: string, tipo: TipoEntidad, contenido: unknown): Promise<ContextoValidacion> {
+  /** `propiaId`: el elemento que se está validando (para no contarlo entre «las otras páginas del menú»). */
+  async function cargarContexto(tenantId: string, tipo: TipoEntidad, contenido: unknown, propiaId?: string): Promise<ContextoValidacion> {
     const dep = dependenciasDe(tipo, contenido);
     const referencias = unicos(dep.referencias.map((r) => r.valor));
     const categorias = unicos(dep.categorias.map((c) => c.valor));
     const assets = unicos([...dep.assets.map((a) => a.valor), ...dep.videos.map((v) => v.valor)]);
     const tiposElementos = unicos(dep.elementos.map((e) => e.tipo));
-    const [productos, cats, listaAssets, listasElementos, vars] = await Promise.all([
+    // Una página que quiere estar en el menú de arriba necesita saber cuáles OTRAS ya están ahí: una sola lectura, y solo en ese caso.
+    const quiereMenu = tipo === "pagina" && typeof contenido === "object" && contenido !== null && (contenido as { en_menu?: unknown }).en_menu === true;
+    const [productos, cats, listaAssets, listasElementos, vars, paginas] = await Promise.all([
       referencias.length > 0 ? catalogo.productosPorReferencia(tenantId, referencias) : Promise.resolve([]),
       categorias.length > 0 ? catalogo.categoriasPorId(tenantId, categorias) : Promise.resolve([]),
       Promise.all(assets.map((id) => repo.obtenerAsset(tenantId, id))),
       Promise.all(tiposElementos.map((t) => repo.listar(tenantId, { tipo: t, incluirArchivadas: true }))),
       variables.valores(tenantId),
+      quiereMenu ? repo.listar(tenantId, { tipo: "pagina" }) : Promise.resolve<EntidadCms[]>([]),
     ]);
     const elementos = new Map<string, { estado: EstadoEntidad; archivada: boolean; nombre: string }>();
     for (const lista of listasElementos) {
@@ -184,6 +188,16 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
       elementos,
       variables: vars.variables,
       minimoMayorista: vars.minimoMayorista,
+      // Lo que cuenta es lo que la tienda muestra HOY: publicada, sin archivar y con el menú en su versión activa (un borrador de otra página no ocupa lugar hasta que se publique). En el orden del
+      // menú (la más antigua primero) para que el aviso las nombre como ella las ve, no en el orden que traiga la lista.
+      paginasEnMenu: quiereMenu
+        ? new Map(
+            paginas
+              .filter((p) => p.id !== propiaId && p.estado === "publicada" && p.archivadaAt === null && p.contenidoActivo?.en_menu === true)
+              .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.clave.localeCompare(b.clave))
+              .map((p) => [p.clave, nombreDeEntidad("pagina", p.contenidoActivo)] as const),
+          )
+        : undefined,
     };
   }
 
@@ -286,7 +300,7 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
       exigirLectura(actor);
       const e = await cargar(actor, id);
       const contenido = e.borrador ?? e.contenidoActivo ?? {};
-      return validar(e.tipo, contenido, await cargarContexto(actor.tenantId, e.tipo, contenido));
+      return validar(e.tipo, contenido, await cargarContexto(actor.tenantId, e.tipo, contenido, e.id));
     },
 
     async publicar(actor, id, input) {
@@ -296,7 +310,7 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
       if (e.archivadaAt !== null) throw new CmsError("ARCHIVED", "Este elemento está archivado. Desarchívalo para poder publicarlo.");
       if (e.borrador === null) throw new CmsError("INVALID_STATE", "No hay cambios para publicar.");
       if (e.rev !== input.rev) throw new CmsError("CONFLICT", "Otra persona cambió este elemento mientras lo editabas. Recarga la página para ver la versión más reciente.");
-      const resultado = validar(e.tipo, e.borrador, await cargarContexto(actor.tenantId, e.tipo, e.borrador));
+      const resultado = validar(e.tipo, e.borrador, await cargarContexto(actor.tenantId, e.tipo, e.borrador, e.id));
       if (!resultado.ok) throw new CmsError("NOT_PUBLISHABLE", "Corrige los problemas marcados antes de publicar.", resultado.errores);
       const r = await repo.publicar(actor.tenantId, id, { revEsperada: e.rev, versionEsperada: e.versionActiva ?? 0, checksum: checksumDe(e.borrador), nota, actor });
       const entidad = resolver(r, "publicar");
@@ -313,7 +327,7 @@ export function crearServicioCms(deps: CmsServicioDeps): CmsServicio {
       if (!v) throw new CmsError("NOT_FOUND", "Esa versión no existe.");
       if (checksumDe(v.contenido) !== v.checksum) throw new CmsError("INVALID_STATE", "Esa versión no se puede restaurar porque su contenido no pasó la verificación de integridad.");
       // Se valida con las reglas de HOY (productos que ya no existen, imágenes borradas…). Una oferta vencida sí se puede restaurar: simplemente no valdrá.
-      const resultado = validar(e.tipo, v.contenido, await cargarContexto(actor.tenantId, e.tipo, v.contenido));
+      const resultado = validar(e.tipo, v.contenido, await cargarContexto(actor.tenantId, e.tipo, v.contenido, e.id));
       const bloqueos = resultado.errores.filter((p) => p.codigo !== "vigencia_vencida");
       if (bloqueos.length > 0) throw new CmsError("NOT_PUBLISHABLE", "Esa versión ya no se puede restaurar porque algo de lo que usaba cambió.", bloqueos);
       const r = await repo.restaurar(actor.tenantId, id, { version: input.version, versionEsperada: e.versionActiva ?? 0, nota, actor });

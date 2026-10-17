@@ -119,13 +119,13 @@ describe("cargar una página publicada", () => {
 describe("el pie conoce las páginas publicadas", () => {
   it("entrega los códigos de las páginas publicadas junto con el pie, en una sola lectura", async () => {
     const { deps: d, llamadas } = deps();
-    assert.deepEqual(await cargarPiePublico(d, "tienda-a"), { pie: pie(), paginas: ["politica-de-privacidad"] });
+    assert.deepEqual(await cargarPiePublico(d, "tienda-a"), { pie: pie(), paginas: ["politica-de-privacidad"], menu: [] });
     assert.deepEqual(llamadas.cargar, [TENANT_A]);
   });
 
   it("sin pie publicado igual entrega las páginas (se puede enlazar a ellas desde el pie de siempre solo si hay un pie: aquí solo se informan)", async () => {
     const { deps: d } = deps({ cargar: async () => instantanea({ paginas: [publicada("terminos", pagina())] }) });
-    assert.deepEqual(await cargarPiePublico(d, "tienda-a"), { pie: null, paginas: ["terminos"] });
+    assert.deepEqual(await cargarPiePublico(d, "tienda-a"), { pie: null, paginas: ["terminos"], menu: [] });
   });
 });
 
