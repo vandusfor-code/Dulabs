@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { manejarNotificarDuExplora, fechaDDMMAAAAReal, depurarDetalle, type DependenciasNotificarDuExplora } from "./du-explora-notificar";
+import { manejarNotificarDuExplora, fechaDDMMAAAAReal, depurarDetalle, resolverUrlPanel, URL_PANEL_DU_EXPLORA, type DependenciasNotificarDuExplora } from "./du-explora-notificar";
 import type { ResultadoEnvioTemplate } from "@/lib/developer/dulabs-whatsapp";
 
 const SECRETO = "secreto-de-prueba-123";
@@ -9,7 +9,7 @@ const DESTINO = "573001112233";
 
 type LlamadaEnvio = { nombrePlantilla: string; idioma: string; destinoE164: string; params?: string[] };
 
-function montar(opts: { resultado?: ResultadoEnvioTemplate; secreto?: string | undefined; destino?: string | undefined; permitido?: boolean } = {}) {
+function montar(opts: { resultado?: ResultadoEnvioTemplate; secreto?: string | undefined; destino?: string | undefined; permitido?: boolean; urlPanel?: string } = {}) {
   const llamadas: LlamadaEnvio[] = [];
   let creaciones = 0;
   const deps: DependenciasNotificarDuExplora = {
@@ -17,7 +17,7 @@ function montar(opts: { resultado?: ResultadoEnvioTemplate; secreto?: string | u
       creaciones++;
       return {} as SupabaseClient;
     },
-    env: { secreto: "secreto" in opts ? opts.secreto : SECRETO, destino: "destino" in opts ? opts.destino : DESTINO },
+    env: { secreto: "secreto" in opts ? opts.secreto : SECRETO, destino: "destino" in opts ? opts.destino : DESTINO, urlPanel: opts.urlPanel },
     enviar: async (_sb, input) => {
       llamadas.push(input);
       return opts.resultado ?? { enviado: true, wamid: "wamid.ABC123" };
@@ -96,7 +96,7 @@ describe("POST /api/integraciones/du-explora/notificar (lógica)", () => {
     assert.equal(r.status, 200);
     assert.deepEqual(r.cuerpo, { ok: true, wamid: "wamid.ABC123" });
     assert.equal(m.llamadas.length, 1);
-    assert.deepEqual(m.llamadas[0], { nombrePlantilla: "du_explora_videos_listos", idioma: "es_CO", destinoE164: DESTINO, params: ["3", "26-10-2026"] });
+    assert.deepEqual(m.llamadas[0], { nombrePlantilla: "du_explora_videos_listos", idioma: "es_CO", destinoE164: DESTINO, params: ["3", "26-10-2026", "https://duexplora.vercel.app/"] });
     // la respuesta jamás incluye el destino
     assert.ok(!JSON.stringify(r.cuerpo).includes(DESTINO));
   });
@@ -117,6 +117,9 @@ describe("POST /api/integraciones/du-explora/notificar (lógica)", () => {
       { params: ["x", "y"] },
       { bodyParams: ["x"] },
       { type: "text" },
+      { url: "https://evil.example/" },
+      { panelUrl: "https://evil.example/" },
+      { urlPanel: "https://evil.example/" },
     ]) {
       const m = montar();
       const r = await manejarNotificarDuExplora(m.deps, peticion({ ...cuerpoOk, ...extra }));
@@ -178,6 +181,30 @@ describe("POST /api/integraciones/du-explora/notificar (lógica)", () => {
     assert.equal(r.status, 429);
     assert.ok(Number(r.headers?.["Retry-After"]) >= 1);
     assert.equal(m.llamadas.length, 0);
+  });
+
+  it("la plantilla lleva 3 variables: {{1}} listos, {{2}} fecha, {{3}} URL del panel fijada por el servidor", async () => {
+    const m = montar();
+    await manejarNotificarDuExplora(m.deps, peticion(cuerpoOk));
+    assert.equal(m.llamadas[0].params?.length, 3);
+    assert.equal(m.llamadas[0].params?.[2], URL_PANEL_DU_EXPLORA);
+    assert.equal(URL_PANEL_DU_EXPLORA, "https://duexplora.vercel.app/");
+  });
+
+  it("DU_EXPLORA_PANEL_URL (https) sobrescribe la URL por defecto; el cliente no puede", async () => {
+    const m = montar({ urlPanel: "https://panel.ejemplo.com/inicio" });
+    const r = await manejarNotificarDuExplora(m.deps, peticion(cuerpoOk));
+    assert.equal(r.status, 200);
+    assert.deepEqual(m.llamadas[0].params, ["3", "26-10-2026", "https://panel.ejemplo.com/inicio"]);
+  });
+
+  it("resolverUrlPanel: solo https válido; si no, cae a la constante", () => {
+    assert.equal(resolverUrlPanel(undefined), URL_PANEL_DU_EXPLORA);
+    assert.equal(resolverUrlPanel(""), URL_PANEL_DU_EXPLORA);
+    assert.equal(resolverUrlPanel("  https://a.example/x  "), "https://a.example/x");
+    for (const mala of ["http://a.example/", "javascript:alert(1)", "ftp://a.example", "no es url", "https://", "https://u:p@a.example/", "https://a.example/ con espacio", "//a.example/", "https://a.example/" + "x".repeat(1100)]) {
+      assert.equal(resolverUrlPanel(mala), URL_PANEL_DU_EXPLORA, mala.slice(0, 40));
+    }
   });
 
   it("fechaDDMMAAAAReal / depurarDetalle", () => {
