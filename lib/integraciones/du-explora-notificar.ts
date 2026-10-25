@@ -20,6 +20,8 @@ import { verificarLimiteTasa, type ResultadoLimiteTasa } from "@/lib/rate-limit"
 
 export const PLANTILLA_DU_EXPLORA = "du_explora_videos_listos";
 export const IDIOMA_DU_EXPLORA = "es_CO";
+// {{3}} de la plantilla = URL del panel. La fija el SERVIDOR: el cliente no la envía ni la cambia.
+export const URL_PANEL_DU_EXPLORA = "https://duexplora.vercel.app/";
 
 const CLAVES_PERMITIDAS = new Set(["ready", "date", "runId"]);
 const RUN_ID_VALIDO = /^[A-Za-z0-9_-]{1,64}$/;
@@ -27,10 +29,24 @@ const FECHA_VALIDA = /^(\d{2})-(\d{2})-(\d{4})$/;
 const DESTINO_VALIDO = /^\d{8,15}$/;
 export const TAMANO_MAXIMO_CUERPO = 2048;
 
+/** URL del panel para {{3}}: DU_EXPLORA_PANEL_URL si es una URL https válida; si falta o es inválida, la constante por defecto. */
+export function resolverUrlPanel(envUrl: string | undefined): string {
+  const candidata = (envUrl ?? "").trim();
+  if (!candidata) return URL_PANEL_DU_EXPLORA;
+  try {
+    const u = new URL(candidata);
+    if (u.protocol === "https:" && u.hostname && !u.username && !u.password && candidata.length <= 1024 && !/\s/.test(candidata)) return candidata;
+  } catch {
+    // inválida: cae al valor por defecto
+  }
+  console.error("[du-explora-notificar] DU_EXPLORA_PANEL_URL inválida (debe ser https); se usa la URL por defecto");
+  return URL_PANEL_DU_EXPLORA;
+}
+
 export type DependenciasNotificarDuExplora = {
   /** Se invoca DESPUÉS de autenticar: sin secreto válido nunca se toca la base. */
   crearSupabase: () => SupabaseClient;
-  env: { secreto: string | undefined; destino: string | undefined };
+  env: { secreto: string | undefined; destino: string | undefined; urlPanel?: string | undefined };
   enviar?: typeof enviarTemplateDulabs;
   limitar?: (supabase: SupabaseClient) => Promise<ResultadoLimiteTasa>;
 };
@@ -116,7 +132,7 @@ export async function manejarNotificarDuExplora(
       nombrePlantilla: PLANTILLA_DU_EXPLORA,
       idioma: IDIOMA_DU_EXPLORA,
       destinoE164: destino,
-      params: [String(cuerpo.ready), cuerpo.date],
+      params: [String(cuerpo.ready), cuerpo.date, resolverUrlPanel(deps.env.urlPanel)],
     });
   } catch (err) {
     r = { enviado: false, motivo: "error_inesperado", detalle: err instanceof Error ? err.message : String(err) };
