@@ -29,6 +29,7 @@ también se calla (queda el error en el log).
 - La clienta pidió una persona (menú «3» o frases como «quiero hablar con alguien»): 24 h de silencio (`VENTANA_ATENCION_HUMANA_MS`).
 - El equipo pulsó **«Atención manual»** en el chat del panel: el worker no invoca al asistente (hasta «Reactivar asistente»).
 - Una conversación ya saludada y sin petición de cita ni de gestión: silencio (punto de arriba).
+- Un registro o una compra que la clienta dejó abiertos ya no le repiten avisos mientras una persona le contesta (ver §10).
 
 Que el equipo escriba **no** pausa al asistente por sí mismo; por eso el menú es de una sola vez y los números dejan de valer cuando una persona del equipo fue la última en
 escribirle a la clienta (`lib/chats/ultimo-saliente.ts`: si «la profesional» ofrece «1) 10 o 2) 11» y la clienta responde «1», eso es de SU conversación).
@@ -61,8 +62,9 @@ la charla). Cualquier otro valor, o quitar la variable, deja el modo «saludo ú
 
 ## 6. Qué no cambia
 
-Confirmaciones y recordatorios de citas, «Mi cita», registro de clientas por el portal, compra desde la tienda, atención humana, el panel de chats y los demás negocios (todo el
-código nuevo se aparta si `idTenant` no es AMORE).
+Confirmaciones y recordatorios de citas, «Mi cita», registro de clientas por el portal, atención humana, el panel de chats y los demás negocios (todo el código nuevo se aparta
+si `idTenant` no es AMORE). La compra desde la tienda conserva su recorrido (botón «Comprar» → menú 1/2 → llave de pago → «Ya pagué» avisa a Jessica); solo dejó de repetir avisos sin
+fin (ver §10).
 
 ## 7. Texto a aprobar por AMORE
 
@@ -71,7 +73,7 @@ código nuevo se aparta si `idTenant` no es AMORE).
 
 ## 8. Pruebas
 
-`lib/amore-saludo-unico.test.ts` (71 casos) corre el pipeline real de producción con base de datos en memoria y exige, en **cada** mensaje, cero llamadas a la IA y cero al Flow
+`lib/amore-saludo-unico.test.ts` (84 casos) corre el pipeline real de producción con base de datos en memoria y exige, en **cada** mensaje, cero llamadas a la IA y cero al Flow
 Engine. Cubre primer contacto (con y sin petición de cita, clienta nueva, gestión), silencio posterior, menú de una sola vez, enlace, gestión de citas de punta a punta, sesiones
 viejas, fallo de base de datos, el interruptor y la regla de «una persona escribió». `lib/amore-pide-cita.test.ts` (90 casos) fija las frases que sí y las que no piden una cita, y `lib/amore-menu-bienvenida.test.ts` (81 casos) las formas de responder al menú.
 
@@ -79,3 +81,35 @@ viejas, fallo de base de datos, el interruptor y la regla de «una persona escri
 
 - Los saludos de **cumpleaños** (`app/api/cron/cumpleanos/route.ts`) no los toca este cambio. Al revisarlos (2026-10-08) no había envíos registrados y el cron no figuraba
   programado; programarlo es una decisión aparte.
+
+## 10. Flujos que capturan los mensajes de la clienta: cuándo se sueltan
+
+Dos flujos de AMORE se quedan con **todos** los mensajes de la clienta mientras están abiertos (van antes que cualquier otra capa en `lib/whatsapp-qr-pipeline.ts`): el **registro** de
+clientas nuevas (nombre → día → mes de cumpleaños) y la **compra de un producto** de la tienda (botón «Comprar» → menú 1/2 → pago). Ninguno tenía salida: repetían «Necesito un día válido
+entre 1 y 31», «No reconocí esa opción» o el recordatorio de pago con cada mensaje, sin tope, aunque una persona del equipo ya le estuviera contestando desde el celular y aunque hubieran
+pasado semanas (captura de AMORE del 2026-10-29: «aparecen muchos mensajes»).
+
+Ahora cada flujo se **suelta** —modo `gemini`, sin mandar nada y **sin marcar el wamid**, para que el mensaje siga su camino por las demás capas como el de cualquier otra clienta— cuando
+deja de ser de la clienta. Todo se decide con lo que la clienta realmente recibió (sus últimos mensajes enviados en `dulabs_chat_mensajes`, `lib/chats/salientes-recientes.ts`); sin historial
+legible no se decide nada y el flujo sigue como siempre. **No hay migración ni SQL**: las clientas que hoy están atrapadas se sueltan solas con su próximo mensaje.
+
+| | Registro (`lib/amore-registro-vigencia.ts`) | Compra (`lib/amore-compra-vigencia.ts`) |
+|---|---|---|
+| Una persona del equipo fue la última en escribirle | se suelta | menú 1/2: se suelta (su «1» es de SU conversación) · esperando el pago: el asistente **calla** y el flujo sigue abierto |
+| Cambia de tema (pide una cita o gestiona la que tiene) | — | se suelta |
+| Ya se le repitió el aviso 2 veces seguidas | se suelta en vez de mandar un tercero | menú 1/2: se suelta en vez de mandar un tercero |
+| Respuesta válida (un día o mes; «1» o «2») | **nunca** se descarta por los avisos anteriores | **nunca** se descarta por los avisos anteriores |
+| Tiempo | más de 6 h sin ningún mensaje enviado: se suelta | **sin vencimiento**: quien elige «1» días después todavía puede pagar |
+| «Ya pagué» | — | se reconoce **siempre**, antes que cualquier otra regla |
+| Recordatorio de pago | — | se manda **una** vez seguida |
+| Botón «Comprar» nuevo | — | reinicia el flujo con el producto nuevo (antes recibía «No reconocí esa opción») |
+
+«Una persona fue la última en escribirle» = el último mensaje enviado tiene `origen = 'humano'` (el worker lo marca así cuando no lo mandó el asistente). En la compra, además, el texto no
+puede ser uno de los textos fijos del asistente: el `origen` se marca desde un registro en memoria del worker, y un fallo de esa marca no debe quitarle el flujo de pago a la clienta.
+
+**Por qué el registro vence por tiempo y la compra no:** desde que las citas nuevas van por el enlace nadie arranca un registro por chat, así que todos los que hay en la base son viejos;
+el flujo de compra, en cambio, está activo y toca dinero (perder un «Ya pagué» o un «1» tardío es peor que un aviso de más).
+
+**Pruebas:** `lib/amore-registro-vigencia.test.ts`, `lib/amore-compra-vigencia.test.ts`, `lib/chats/salientes-recientes.test.ts`, los bloques «Test R» y «Test S» de
+`lib/amore-entrada-router.test.ts` y los bloques J y K de `lib/amore-saludo-unico.test.ts` (pipeline real, de punta a punta). Mutación: `scripts/mutacion/registro-vigencia.py` y
+`scripts/mutacion/compra-vigencia.py`.

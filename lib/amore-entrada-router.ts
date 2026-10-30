@@ -31,6 +31,7 @@ import { opcionDelMenuBienvenida } from "@/lib/amore-menu-bienvenida";
 import { ultimoSalienteLoEscribioUnaPersona } from "@/lib/chats/ultimo-saliente";
 import { leerSalientesRecientes } from "@/lib/chats/salientes-recientes";
 import { motivoAbandonoRegistro, SALIENTES_A_REVISAR } from "@/lib/amore-registro-vigencia";
+import { decidirEsperaPago, motivoSoltarMenuCompra, SALIENTES_COMPRA_A_REVISAR } from "@/lib/amore-compra-vigencia";
 import { nombreConocido, recordarNombreCliente, clienteConocidoCompleto } from "@/lib/clientes-conocidos";
 import { parseDiaCumpleanos, parseMesCumpleanos, parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 import { obtenerHistorialRecienteChat } from "@/lib/chats/historial-reciente";
@@ -783,6 +784,16 @@ export async function interceptarAtencionHumanaAmore(
 
 const MODOS_REGISTRO = new Set<string>(["registro_nombre", "registro_dia", "registro_mes"]);
 
+/**
+ * ¿Este texto contesta lo que pide el paso del registro en que está la clienta? Usa los MISMOS lectores que el propio registro más abajo (nunca una segunda definición de
+ * «día/mes válido»). El paso del nombre nunca recibe avisos de «día/mes válido», así que ahí no aplica.
+ */
+function esRespuestaValidaDelRegistro(modo: ModoEntradaAmore, texto: string): boolean {
+  if (modo === "registro_dia") return parseCumpleanosNatural(texto).ok || parseDiaCumpleanos(texto) !== null;
+  if (modo === "registro_mes") return parseMesCumpleanos(texto) !== null;
+  return false;
+}
+
 export interface InterceptarRegistroClienteDeps {
   adquirirCandadoChat?: typeof adquirirCandadoChat;
   liberarCandadoChat?: typeof liberarCandadoChat;
@@ -872,20 +883,21 @@ export async function interceptarRegistroClienteAmore(
       return { manejado: true };
     }
 
+    const texto = params.texto.trim();
+
     // ¿Sigue vivo este registro? Si una persona del equipo ya le escribió, si lleva horas sin respuesta o si ya se le insistió dos veces con «necesito un día/mes válido»,
     // NO se retoma: se suelta en silencio y el mensaje sigue su camino. A propósito NO se marca el wamid: las capas siguientes deben tratar este mensaje como nuevo (si pide
-    // una cita recibe el enlace; si no, el asistente se calla), y su propia idempotencia lo marca después.
+    // una cita recibe el enlace; si no, el asistente se calla), y su propia idempotencia lo marca después. Una respuesta VÁLIDA nunca se descarta por los avisos anteriores:
+    // «sin_respuesta_valida» solo corta cuando el mensaje tampoco contesta lo que se le pidió (mismo criterio que el flujo de compra).
     const motivoAbandono = motivoAbandonoRegistro(
       await leerSalientes(params.supabase, { idTenant: params.idTenant, telefono: params.telefono, limite: SALIENTES_A_REVISAR }),
       ahoraMs(),
     );
-    if (motivoAbandono) {
+    if (motivoAbandono && !(motivoAbandono === "sin_respuesta_valida" && esRespuestaValidaDelRegistro(fila.modo, texto))) {
       console.info(`[amore-entrada] registro de clienta abandonado (${motivoAbandono}) en modo ${fila.modo} tenant=${params.idTenant} -- se suelta y el mensaje sigue su camino`);
       await actualizarEntrada(params.supabase, fila.id, { modo: "gemini" });
       return { manejado: false };
     }
-
-    const texto = params.texto.trim();
 
     if (normalizeText(texto) === "cancelar") {
       // Mismo comando global EXACTO ya usado por Agenda V2 (COMANDO_CANCELAR,
@@ -1008,6 +1020,8 @@ export interface InterceptarCompraProductoDeps {
   buscarNombreConocido?: typeof nombreConocido;
   /** Inyectable para tests -- default real: listarProductosActivos (lib/amore-inventario.ts). Solo se consulta cuando el mensaje NO viene del link de la tienda (ver extraerProductoDeLinkTienda), para el reconocimiento de texto libre. */
   listarProductosActivos?: typeof listarProductosActivos;
+  /** Últimos mensajes enviados a la clienta (quién los escribió, texto y hora) para saber si el flujo de compra sigue siendo suyo (lib/amore-compra-vigencia.ts). Solo se lee con un flujo de compra en curso. Default real: lib/chats/salientes-recientes.ts. */
+  leerSalientesRecientes?: typeof leerSalientesRecientes;
 }
 
 /**
@@ -1033,6 +1047,15 @@ export interface InterceptarCompraProductoDeps {
  * "Ya pagué" se reconoce ÚNICAMENTE dentro de compra_esperando_pago -- nunca
  * como trigger global (aprobado explícitamente).
  *
+ * Un flujo de compra que ya NO es de la clienta se SUELTA en vez de seguir
+ * contestándole (lib/amore-compra-vigencia.ts): una persona del equipo ya le
+ * escribió, cambió de tema (pide una cita o gestiona la que tiene) o ya se le
+ * repitió dos veces «No reconocí esa opción». Esperando el pago, «Ya pagué» se
+ * reconoce SIEMPRE y el recordatorio se manda una sola vez seguida. Un botón
+ * «Comprar» NUEVO (link de la tienda) reinicia el flujo con el producto nuevo
+ * en vez de recibir «No reconocí esa opción». Antes este gate se quedaba con
+ * todos sus mensajes, sin tope ni salida.
+ *
  * Devuelve manejado:false SIN escribir nada cuando no hay flujo en curso ni
  * intención detectada -- así procesarMensajeConAgendaV2/procesarEntradaAmore
  * siguen exactamente igual que hoy para cualquier conversación ajena a este
@@ -1054,6 +1077,7 @@ export async function interceptarCompraProductoAmore(
   const enviarMensaje = deps.enviarMensajeWhatsApp ?? enviarMensajeWhatsApp;
   const buscarNombreConocidoDep = deps.buscarNombreConocido ?? nombreConocido;
   const obtenerProductosActivos = deps.listarProductosActivos ?? listarProductosActivos;
+  const leerSalientes = deps.leerSalientesRecientes ?? leerSalientesRecientes;
 
   const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
 
@@ -1078,9 +1102,23 @@ export async function interceptarCompraProductoAmore(
 
     const texto = params.texto.trim();
 
-    if (fila && MODOS_COMPRA.has(fila.modo)) {
+    // Un botón «Comprar» NUEVO (link de la tienda, prioridad absoluta) nunca se contesta como si fuera la respuesta al menú ("No reconocí esa opción"): reinicia el flujo con el
+    // producto nuevo (más abajo, (b)).
+    if (fila && MODOS_COMPRA.has(fila.modo) && extraerProductoDeLinkTienda(params.texto) === null) {
       // (a) Continuación de un flujo de compra ya en curso.
+      const idFila = fila.id;
+      const modoActual = fila.modo;
+      const leer = () => leerSalientes(params.supabase, { idTenant: params.idTenant, telefono: params.telefono, limite: SALIENTES_COMPRA_A_REVISAR });
+      // Si el flujo ya no es de la clienta se SUELTA (modo 'gemini') sin mandar nada y SIN marcar el wamid: el mensaje sigue su camino por las demás capas como el de cualquier otra
+      // clienta (lib/amore-compra-vigencia.ts explica cuándo).
+      const soltar = async (motivo: string): Promise<ResultadoEntradaAmore> => {
+        console.info(`[amore-entrada] flujo de compra soltado (${motivo}) en modo ${modoActual} tenant=${params.idTenant} -- el mensaje sigue su camino`);
+        await actualizarEntrada(params.supabase, idFila, { modo: "gemini" });
+        return { manejado: false };
+      };
       if (fila.modo === "compra_producto_opcion") {
+        const motivo = motivoSoltarMenuCompra({ texto, esOpcion: texto === "1" || texto === "2", salientes: await leer() });
+        if (motivo) return await soltar(motivo);
         if (texto === "1") {
           await actualizarEntrada(params.supabase, fila.id, { modo: "compra_esperando_pago", ultimoWamidProcesado: params.wamid });
           await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE, origen: "automatico" });
@@ -1126,11 +1164,15 @@ export async function interceptarCompraProductoAmore(
           mensajeCliente: MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE,
         });
       }
-      // No es "Ya pagué" -- nunca se deja pasar a Gemini/Agenda V2 mientras
-      // se espera el pago (el gate de atención humana, evaluado ANTES que
-      // este, ya intercepta "hablar con Jessica" en cualquier momento).
+      // No es "Ya pagué" (ese se reconoce SIEMPRE, arriba). Si cambió de tema se suelta el flujo; si una persona la atiende o ya se le recordó el pago, el asistente CALLA pero el
+      // flujo sigue abierto para un «Ya pagué» posterior; si no, el recordatorio de siempre. Nunca se deja pasar a Gemini/Agenda V2 sin soltar antes el flujo (el gate de atención
+      // humana, evaluado ANTES que este, ya intercepta "hablar con Jessica" en cualquier momento).
+      const decision = decidirEsperaPago({ texto, salientes: await leer() });
+      if (decision === "soltar_cambio_de_tema") return await soltar(decision);
       await actualizarEntrada(params.supabase, fila.id, { ultimoWamidProcesado: params.wamid });
-      await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_RECORDATORIO_PAGO, origen: "automatico" });
+      if (decision === "recordar") {
+        await enviarMensaje({ tenantId: params.idTenant, telefono: params.telefono, mensaje: MENSAJE_COMPRA_RECORDATORIO_PAGO, origen: "automatico" });
+      }
       return { manejado: true };
     }
 

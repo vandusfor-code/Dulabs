@@ -37,9 +37,15 @@ import {
   MENSAJE_REGISTRO_CANCELADO,
   MENSAJE_REGISTRO_DIA,
   MENSAJE_REGISTRO_NOMBRE,
+  MENSAJE_COMPRA_MENU,
+  MENSAJE_COMPRA_OPCION_INVALIDA,
+  MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE,
+  MENSAJE_COMPRA_RECORDATORIO_PAGO,
+  construirMensajeCompraSaludo,
   type ResultadoClasificacionGemini,
 } from "@/lib/amore-entrada-gemini";
 import { REGISTRO_VENCE_MS, SALIENTES_A_REVISAR } from "@/lib/amore-registro-vigencia";
+import { SALIENTES_COMPRA_A_REVISAR } from "@/lib/amore-compra-vigencia";
 import type { SalienteReciente } from "@/lib/chats/salientes-recientes";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 
@@ -1298,7 +1304,7 @@ const haceRegistro = (ms: number) => new Date(AHORA_REGISTRO - ms).toISOString()
 const botDijo = (texto: string, haceMs = 2 * MIN_REGISTRO): SalienteReciente => ({ origen: "automatico", texto, enviadoEn: haceRegistro(haceMs) });
 const personaDijo = (texto: string, haceMs = 2 * MIN_REGISTRO): SalienteReciente => ({ origen: "humano", texto, enviadoEn: haceRegistro(haceMs) });
 /** Los últimos mensajes ENVIADOS a la clienta, del más nuevo al más viejo (como los entrega lib/chats/salientes-recientes.ts). */
-const historialEnviado = (...salientes: SalienteReciente[]): Partial<InterceptarRegistroClienteDeps> => ({ leerSalientesRecientes: async () => salientes });
+const historialEnviado = (...salientes: SalienteReciente[]) => ({ leerSalientesRecientes: async () => salientes });
 
 describe("Test R -- un registro abandonado NO se retoma: se suelta en silencio y el mensaje sigue su camino", () => {
   const consola = console.info;
@@ -1396,6 +1402,83 @@ describe("Test R -- un registro abandonado NO se retoma: se suelta en silencio y
       assert.equal(envios.enviados.at(-1)!.mensaje, aviso);
     });
   }
+
+  describe("una respuesta VÁLIDA nunca se descarta por los avisos anteriores", () => {
+    const DOS_AVISOS_DE_DIA = () => historialEnviado(botDijo(MENSAJE_DIA_INVALIDO, MIN_REGISTRO), botDijo(MENSAJE_DIA_INVALIDO, 2 * MIN_REGISTRO), botDijo(MENSAJE_REGISTRO_DIA, 3 * MIN_REGISTRO));
+    const DOS_AVISOS_DE_MES = () => historialEnviado(botDijo(MENSAJE_MES_INVALIDO, MIN_REGISTRO), botDijo(MENSAJE_MES_INVALIDO, 2 * MIN_REGISTRO));
+
+    it("registro_dia: tras dos avisos, un día válido («15») se acepta y sigue pidiendo el mes", async () => {
+      const entradas = crearFakeEntradas();
+      const clientes = crearFakeClientesConocidos();
+      clientes.clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`, { nombre: "Camila", cumpleDia: null, cumpleMes: null });
+      const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+      const { deps, envios } = armarDepsRegistro(DOS_AVISOS_DE_DIA(), entradas, clientes);
+
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "15", wamid: "w1" }, deps);
+
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "registro_mes");
+      assert.equal(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`)?.cumpleDia, 15);
+      assert.equal(envios.enviados.length, 1);
+    });
+
+    it("registro_dia: tras dos avisos, una fecha completa («3 de enero») se acepta y cierra el registro", async () => {
+      const entradas = crearFakeEntradas();
+      const clientes = crearFakeClientesConocidos();
+      clientes.clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`, { nombre: "Camila", cumpleDia: null, cumpleMes: null });
+      const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+      const { deps, iniciarAgenda } = armarDepsRegistro(DOS_AVISOS_DE_DIA(), entradas, clientes);
+
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "3 de enero", wamid: "w1" }, deps);
+
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "gemini");
+      assert.deepEqual(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`), { nombre: "Camila", cumpleDia: 3, cumpleMes: 1 });
+      assert.equal(iniciarAgenda.llamadas.length, 1);
+    });
+
+    it("registro_mes: tras dos avisos, un mes válido («marzo») se acepta y cierra el registro", async () => {
+      const entradas = crearFakeEntradas();
+      const clientes = crearFakeClientesConocidos();
+      clientes.clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`, { nombre: "Laura", cumpleDia: 10, cumpleMes: null });
+      const fila = await crearFilaEnRegistro(entradas, "registro_mes");
+      const { deps, iniciarAgenda } = armarDepsRegistro(DOS_AVISOS_DE_MES(), entradas, clientes);
+
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "marzo", wamid: "w1" }, deps);
+
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "gemini");
+      assert.equal(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`)?.cumpleMes, 3);
+      assert.equal(iniciarAgenda.llamadas.length, 1);
+    });
+
+    it("pero un mensaje que TAMPOCO es un día/mes válido, tras dos avisos, sí se suelta en silencio", async () => {
+      for (const [modo, lector, texto] of [
+        ["registro_dia", DOS_AVISOS_DE_DIA(), "32"],
+        ["registro_dia", DOS_AVISOS_DE_DIA(), "jajaja"],
+        ["registro_mes", DOS_AVISOS_DE_MES(), "13"],
+        ["registro_mes", DOS_AVISOS_DE_MES(), "invierno"],
+      ] as const) {
+        const entradas = crearFakeEntradas();
+        const fila = await crearFilaEnRegistro(entradas, modo);
+        const { deps, envios } = armarDepsRegistro(lector, entradas);
+        const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto, wamid: "w1" }, deps);
+        assert.deepEqual(r, { manejado: false }, `${modo} «${texto}»`);
+        assert.equal(fila.modo, "gemini", `${modo} «${texto}»`);
+        assert.equal(envios.enviados.length, 0, `${modo} «${texto}»`);
+      }
+    });
+
+    it("la persona atendiendo y el registro vencido SÍ mandan sobre una respuesta válida (es otra conversación)", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+      const { deps, envios } = armarDepsRegistro(historialEnviado(personaDijo("Te queda en 230 mil"), botDijo(MENSAJE_REGISTRO_DIA, 30 * MIN_REGISTRO)), entradas);
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "15", wamid: "w1" }, deps);
+      assert.deepEqual(r, { manejado: false }, "«15» ahí es parte de su charla con la persona, no su cumpleaños");
+      assert.equal(fila.modo, "gemini");
+      assert.equal(envios.enviados.length, 0);
+    });
+  });
 
   it("«cancelar» con una persona atendiendo: se suelta en silencio (no se le manda «cancelé el registro»)", async () => {
     const entradas = crearFakeEntradas();
@@ -1551,6 +1634,8 @@ function armarDepsCompra(
     enviarMensajeWhatsApp: envios.enviarMensajeWhatsApp,
     buscarNombreConocido: nombreConocido.buscarNombreConocido,
     listarProductosActivos: productos.listarProductosActivos,
+    // Sin historial de mensajes enviados el flujo de compra sigue exactamente como siempre; las pruebas de la vigencia (Test S) inyectan uno.
+    leerSalientesRecientes: async () => [],
     ...overrides,
   };
   return { deps, entradas, envios, candado, nombreConocido, productos };
@@ -1730,6 +1815,338 @@ describe("Compra de producto -- idempotencia y tenant", () => {
     assert.deepEqual(r, { manejado: false });
     assert.equal(candado.llamadas.length, 0);
     assert.equal(entradas.filas.length, 0);
+  });
+});
+
+// --- El flujo de compra NO secuestra la conversación -------------------------
+// Mismo defecto que tenía el registro (Test R), pero este flujo SÍ está activo (botón «Comprar» de la tienda) y toca dinero: mientras estaba abierto, el gate contestaba CADA mensaje
+// con «No reconocí esa opción» o con el recordatorio de pago, sin tope, aunque una persona del equipo ya le estuviera escribiendo. Reglas en lib/amore-compra-vigencia.ts.
+
+async function crearFilaCompra(entradas: ReturnType<typeof crearFakeEntradas>, modo: "compra_producto_opcion" | "compra_esperando_pago", wamid = "w0") {
+  return entradas.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid, modo, productoInteresNombre: "Aretes de plata" });
+}
+const decirCompra = (deps: InterceptarCompraProductoDeps, texto: string, wamid = "w1") =>
+  interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, texto, wamid }, deps);
+/** Lo que la clienta recibe al entrar al flujo: el saludo con el producto y el menú (el MENÚ es lo más reciente). Más nuevo primero. */
+const elMenuDeCompra = (haceMs?: number) => [botDijo(MENSAJE_COMPRA_MENU, haceMs), botDijo(construirMensajeCompraSaludo("Aretes de plata"), haceMs)];
+const dosAvisosDeOpcion = () => [botDijo(MENSAJE_COMPRA_OPCION_INVALIDA, 30_000), botDijo(MENSAJE_COMPRA_OPCION_INVALIDA, 60_000), ...elMenuDeCompra(120_000)];
+
+describe("Test S -- el flujo de compra NO secuestra la conversación", () => {
+  const consola = console.info;
+  before(() => {
+    console.info = () => {}; // el aviso «flujo de compra soltado» es solo para el log de producción
+  });
+  after(() => {
+    console.info = consola;
+  });
+
+  describe("menú 1/2 (compra_producto_opcion)", () => {
+    it("una persona del equipo le escribió: su «1» es de SU conversación, no «Pagar producto» -> se suelta en silencio y no sale la llave de pago", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps, envios } = armarDepsCompra(historialEnviado(personaDijo("¿las 10 o las 11?"), ...elMenuDeCompra(10 * MIN_REGISTRO)), entradas);
+
+      const r = await decirCompra(deps, "1");
+
+      assert.deepEqual(r, { manejado: false });
+      assert.equal(fila.modo, "gemini");
+      assert.equal(fila.ultimoWamidProcesado, "w0", "NO se marca el wamid: las capas siguientes tratan el mensaje como nuevo");
+      assert.equal(envios.enviados.length, 0, "ni la llave de pago ni «No reconocí esa opción»");
+    });
+
+    it("una persona le escribió y la clienta sigue la charla (cualquier mensaje) -> ningún aviso", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps, envios } = armarDepsCompra(historialEnviado(personaDijo("Te queda en 230 mil"), ...elMenuDeCompra(10 * MIN_REGISTRO)), entradas);
+      for (const [i, texto] of ["Gracias, listo", "¿Y el tinte es el mismo?", "Nos vemos mañana"].entries()) {
+        const r = await decirCompra(deps, texto, `w${i + 1}`);
+        assert.deepEqual(r, { manejado: false }, texto);
+      }
+      assert.equal(envios.enviados.length, 0);
+      assert.equal(fila.modo, "gemini");
+    });
+
+    for (const texto of ["quiero una cita", "quiero cancelar mi cita"]) {
+      it(`cambia de tema («${texto}») -> se suelta en silencio y el mensaje sigue su camino`, async () => {
+        const entradas = crearFakeEntradas();
+        const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+        const { deps, envios } = armarDepsCompra(historialEnviado(...elMenuDeCompra()), entradas);
+
+        const r = await decirCompra(deps, texto);
+
+        assert.deepEqual(r, { manejado: false });
+        assert.equal(fila.modo, "gemini");
+        assert.equal(envios.enviados.length, 0, "ya no recibe «No reconocí esa opción»");
+      });
+    }
+
+    it("dos avisos «No reconocí esa opción» seguidos y vuelve a no elegir -> se suelta en silencio (nunca más de dos avisos)", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps, envios } = armarDepsCompra(historialEnviado(...dosAvisosDeOpcion()), entradas);
+
+      const r = await decirCompra(deps, "jajaja");
+
+      assert.deepEqual(r, { manejado: false });
+      assert.equal(fila.modo, "gemini");
+      assert.equal(envios.enviados.length, 0);
+    });
+
+    it("una respuesta VÁLIDA nunca se descarta por los avisos anteriores: «1» tras dos avisos manda la llave de pago", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps, envios } = armarDepsCompra(historialEnviado(...dosAvisosDeOpcion()), entradas);
+
+      const r = await decirCompra(deps, "1");
+
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "compra_esperando_pago");
+      assert.match(envios.enviados[0]!.mensaje, /@urrego3948/);
+    });
+
+    it("«2» tras dos avisos sigue pasando a una asesora (atención humana)", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps } = armarDepsCompra(historialEnviado(...dosAvisosDeOpcion()), entradas);
+      const r = await decirCompra(deps, "2");
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "atencion_humana");
+    });
+
+    it("con UN solo aviso todavía se le repite, exactamente igual que antes", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps, envios } = armarDepsCompra(historialEnviado(botDijo(MENSAJE_COMPRA_OPCION_INVALIDA, 30_000), ...elMenuDeCompra(120_000)), entradas);
+
+      const r = await decirCompra(deps, "hola");
+
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "compra_producto_opcion");
+      assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_COMPRA_OPCION_INVALIDA);
+    });
+
+    it("el menú reciente del asistente + «1» -> la llave de pago, como siempre", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps, envios } = armarDepsCompra(historialEnviado(...elMenuDeCompra()), entradas);
+      const r = await decirCompra(deps, "1");
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "compra_esperando_pago");
+      assert.equal(envios.enviados[0]!.mensaje, MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE);
+    });
+
+    it("SIN vencimiento por tiempo: quien elige «1» días después del menú todavía puede pagar", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const { deps } = armarDepsCompra(historialEnviado(...elMenuDeCompra(3 * 24 * 60 * MIN_REGISTRO)), entradas);
+      const r = await decirCompra(deps, "1");
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "compra_esperando_pago");
+    });
+
+    it("DEFENSA: si el worker dejó el menú del asistente marcado como «humano», la clienta igual puede pagar (no se confunde con una persona)", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      const mal = [personaDijo(MENSAJE_COMPRA_MENU), personaDijo(construirMensajeCompraSaludo("Aretes de plata"))];
+      const { deps } = armarDepsCompra(historialEnviado(...mal), entradas);
+      const r = await decirCompra(deps, "1");
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "compra_esperando_pago");
+    });
+
+    it("historial ilegible (null) o vacío -> el menú sigue como siempre (nunca se suelta a ciegas)", async () => {
+      for (const lector of [{ leerSalientesRecientes: async () => null }, { leerSalientesRecientes: async () => [] }]) {
+        const entradas = crearFakeEntradas();
+        const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+        const { deps, envios } = armarDepsCompra(lector, entradas);
+        const r = await decirCompra(deps, "hola");
+        assert.equal(r.manejado, true);
+        assert.equal(fila.modo, "compra_producto_opcion");
+        assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_COMPRA_OPCION_INVALIDA);
+      }
+    });
+  });
+
+  describe("esperando el pago (compra_esperando_pago)", () => {
+    const trasLasInstrucciones = () => [botDijo(MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE, 60_000), ...elMenuDeCompra(120_000)];
+
+    it("«Ya pagué» se reconoce SIEMPRE, también con una persona atendiendo: nunca se pierde un pago", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_esperando_pago");
+      const { deps, envios } = armarDepsCompra(historialEnviado(personaDijo("Cuando me avises lo reviso"), ...trasLasInstrucciones()), entradas);
+
+      const r = await decirCompra(deps, "Ya pagué");
+
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "atencion_humana");
+      assert.equal(fila.notificadoAJessica, true);
+      assert.ok(envios.enviados.some((e) => e.telefono === NUMERO_JESSICA_TEST), "Jessica recibe el aviso del pago reportado");
+    });
+
+    it("una persona le escribió y la clienta sigue la charla -> el asistente CALLA (sin recordatorio), pero el flujo sigue abierto", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_esperando_pago");
+      const { deps, envios } = armarDepsCompra(historialEnviado(personaDijo("Ya te confirmo el envío"), ...trasLasInstrucciones()), entradas);
+
+      const r = await decirCompra(deps, "gracias");
+
+      assert.equal(r.manejado, true, "sigue capturando: nunca cae a Gemini/Agenda V2 con un modo que no entienden");
+      assert.equal(envios.enviados.length, 0, "ni el recordatorio de pago");
+      assert.equal(fila.modo, "compra_esperando_pago", "el flujo sigue abierto");
+      assert.equal(fila.ultimoWamidProcesado, "w1", "el wamid queda marcado (idempotencia)");
+    });
+
+    it("tras callar por una persona, un «Ya pagué» posterior todavía se reconoce", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_esperando_pago");
+      const { deps } = armarDepsCompra(historialEnviado(personaDijo("Ya te confirmo el envío"), ...trasLasInstrucciones()), entradas);
+      await decirCompra(deps, "gracias", "w1");
+      assert.equal(fila.modo, "compra_esperando_pago");
+      await decirCompra(deps, "ya hice el pago", "w2");
+      assert.equal(fila.modo, "atencion_humana");
+      assert.equal(fila.notificadoAJessica, true);
+    });
+
+    it("el primer mensaje después de las instrucciones de pago recibe el recordatorio de siempre", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_esperando_pago");
+      const { deps, envios } = armarDepsCompra(historialEnviado(...trasLasInstrucciones()), entradas);
+      const r = await decirCompra(deps, "ok gracias");
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, "compra_esperando_pago");
+      assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_COMPRA_RECORDATORIO_PAGO);
+    });
+
+    it("el recordatorio se manda UNA vez seguida: si lo último que se le envió ya fue el recordatorio, el asistente calla", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_esperando_pago");
+      const { deps, envios } = armarDepsCompra(historialEnviado(botDijo(MENSAJE_COMPRA_RECORDATORIO_PAGO, 30_000), ...trasLasInstrucciones()), entradas);
+
+      const r = await decirCompra(deps, "dale");
+
+      assert.equal(r.manejado, true);
+      assert.equal(envios.enviados.length, 0);
+      assert.equal(fila.modo, "compra_esperando_pago", "el flujo sigue abierto para un «Ya pagué» posterior");
+    });
+
+    it("cambia de tema («quiero una cita») -> se suelta el flujo en silencio y el mensaje sigue su camino", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_esperando_pago");
+      const { deps, envios } = armarDepsCompra(historialEnviado(...trasLasInstrucciones()), entradas);
+
+      const r = await decirCompra(deps, "quiero una cita");
+
+      assert.deepEqual(r, { manejado: false });
+      assert.equal(fila.modo, "gemini");
+      assert.equal(fila.ultimoWamidProcesado, "w0", "NO se marca el wamid");
+      assert.equal(envios.enviados.length, 0);
+    });
+
+    it("historial ilegible (null) o vacío -> el recordatorio de siempre", async () => {
+      for (const lector of [{ leerSalientesRecientes: async () => null }, { leerSalientesRecientes: async () => [] }]) {
+        const entradas = crearFakeEntradas();
+        const fila = await crearFilaCompra(entradas, "compra_esperando_pago");
+        const { deps, envios } = armarDepsCompra(lector, entradas);
+        await decirCompra(deps, "hola de nuevo");
+        assert.equal(fila.modo, "compra_esperando_pago");
+        assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_COMPRA_RECORDATORIO_PAGO);
+      }
+    });
+
+    it("DEFENSA: instrucciones de pago mal marcadas como «humano» -> igual recibe el recordatorio (no se calla creyendo que habla una persona)", async () => {
+      const entradas = crearFakeEntradas();
+      await crearFilaCompra(entradas, "compra_esperando_pago");
+      const { deps, envios } = armarDepsCompra(historialEnviado(personaDijo(MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE)), entradas);
+      await decirCompra(deps, "ok");
+      assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_COMPRA_RECORDATORIO_PAGO);
+    });
+  });
+
+  describe("un botón «Comprar» NUEVO reinicia el flujo en vez de recibir «No reconocí esa opción»", () => {
+    const LINK_NUEVO = "Hola, estoy interesada en este producto: Collar de perlas";
+
+    for (const modo of ["compra_producto_opcion", "compra_esperando_pago"] as const) {
+      it(`estando en ${modo}: saluda con el producto NUEVO y vuelve a mostrar el menú`, async () => {
+        const entradas = crearFakeEntradas();
+        const fila = await crearFilaCompra(entradas, modo);
+        const { deps, envios } = armarDepsCompra({}, entradas);
+
+        const r = await decirCompra(deps, LINK_NUEVO);
+
+        assert.equal(r.manejado, true);
+        assert.equal(fila.modo, "compra_producto_opcion");
+        assert.equal(fila.productoInteresNombre, "Collar de perlas");
+        assert.equal(envios.enviados.length, 2);
+        assert.match(envios.enviados[0]!.mensaje, /interesada en Collar de perlas\./);
+        assert.equal(envios.enviados[1]!.mensaje, MENSAJE_COMPRA_MENU);
+        assert.ok(!envios.enviados.some((e) => /No reconocí/.test(e.mensaje)));
+      });
+    }
+
+    it("tiene prioridad aunque una persona esté atendiendo, y no necesita leer el historial", async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaCompra(entradas, "compra_producto_opcion");
+      let lecturas = 0;
+      const { deps } = armarDepsCompra(
+        {
+          leerSalientesRecientes: async () => {
+            lecturas++;
+            return [personaDijo("Hola linda")];
+          },
+        },
+        entradas,
+      );
+      await decirCompra(deps, LINK_NUEVO);
+      assert.equal(fila.productoInteresNombre, "Collar de perlas");
+      assert.equal(lecturas, 0);
+    });
+  });
+
+  describe("lectura del historial", () => {
+    it("lee los mensajes enviados a ESA clienta y de ese negocio, y solo lo necesario", async () => {
+      const entradas = crearFakeEntradas();
+      await crearFilaCompra(entradas, "compra_producto_opcion");
+      const consultas: { idTenant: string; telefono: string; limite?: number }[] = [];
+      const { deps } = armarDepsCompra(
+        {
+          leerSalientesRecientes: async (_s, p) => {
+            consultas.push(p);
+            return [];
+          },
+        },
+        entradas,
+      );
+      await decirCompra(deps, "hola");
+      assert.deepEqual(consultas, [{ idTenant: AMORE_TENANT_ID, telefono: TEL_COMPRA, limite: SALIENTES_COMPRA_A_REVISAR }]);
+    });
+
+    it("NO lo lee si no hay un flujo de compra en curso, si el mensaje ya se procesó, si dice «Ya pagué» ni para otro negocio: este gate corre con CADA mensaje de AMORE", async () => {
+      let lecturas = 0;
+      const lector = {
+        leerSalientesRecientes: async () => {
+          lecturas++;
+          return [];
+        },
+      };
+      // Sin fila.
+      await decirCompra(armarDepsCompra(lector).deps, "hola");
+      // Conversación normal.
+      const normal = crearFakeEntradas();
+      await normal.crearEntrada(FAKE_SUPABASE, { tenantId: AMORE_TENANT_ID, telefonoCliente: TEL_COMPRA, wamid: "w0", modo: "gemini" });
+      await decirCompra(armarDepsCompra(lector, normal).deps, "hola");
+      // Flujo de compra pero ese wamid ya se procesó.
+      const yaProcesado = crearFakeEntradas();
+      await crearFilaCompra(yaProcesado, "compra_producto_opcion", "w1");
+      await decirCompra(armarDepsCompra(lector, yaProcesado).deps, "hola", "w1");
+      // «Ya pagué»: prioridad al dinero, ni siquiera hace falta mirar el historial.
+      const pagando = crearFakeEntradas();
+      await crearFilaCompra(pagando, "compra_esperando_pago");
+      await decirCompra(armarDepsCompra(lector, pagando).deps, "Ya pagué");
+      // Otro negocio.
+      await interceptarCompraProductoAmore({ supabase: FAKE_SUPABASE, idTenant: OTRO_TENANT, telefono: TEL_COMPRA, texto: "hola", wamid: "w1" }, armarDepsCompra(lector).deps);
+
+      assert.equal(lecturas, 0);
+    });
   });
 });
 
