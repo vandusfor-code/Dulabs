@@ -4078,6 +4078,67 @@ body {
   outline-offset: -4px;
 }
 
+/* ----- Líneas (Plata, Rodio, Acero, Cover Gold): la misma franja que los acabados, pero en rejilla (2 columnas en el celular, 4 desde la tableta, sin deslizar) y con letra más grande. ----- */
+.tienda-joyeria .joy-franja-lineas-lista {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 768px) {
+  .tienda-joyeria .joy-franja-lineas-lista {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.tienda-joyeria .joy-franja-lineas-lista > li {
+  border-top: 1px solid var(--color-edge);
+  border-left: 1px solid var(--color-edge);
+  background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.65), transparent);
+}
+.tienda-joyeria .joy-franja-lineas-lista > li:nth-child(odd) {
+  border-left: 0;
+}
+.tienda-joyeria .joy-franja-lineas-lista > li:nth-child(-n + 2) {
+  border-top: 0;
+}
+@media (min-width: 768px) {
+  .tienda-joyeria .joy-franja-lineas-lista > li:nth-child(odd) {
+    border-left: 1px solid var(--color-edge);
+  }
+  .tienda-joyeria .joy-franja-lineas-lista > li:first-child {
+    border-left: 0;
+  }
+  .tienda-joyeria .joy-franja-lineas-lista > li:nth-child(-n + 2) {
+    border-top: 1px solid var(--color-edge);
+  }
+  .tienda-joyeria .joy-franja-lineas-lista > li {
+    border-top: 0;
+  }
+}
+.tienda-joyeria .joy-franja-linea {
+  display: flex;
+  height: 5.25rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1rem;
+  text-align: center;
+  font-size: 1.375rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-fg);
+  transition:
+    color 0.3s,
+    background-color 0.3s;
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-franja-linea:hover {
+    color: var(--tienda-oro-hover);
+    background-color: var(--tienda-oro-suave);
+  }
+}
+.tienda-joyeria .joy-franja-linea:focus-visible {
+  outline: 2px solid var(--tienda-oro);
+  outline-offset: -4px;
+}
+
 /* Enlace subrayado de los encabezados de sección («Ver todo»). */
 .tienda-joyeria .joy-enlace-subrayado {
   text-decoration: underline;

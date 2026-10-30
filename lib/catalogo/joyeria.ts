@@ -3,7 +3,8 @@
  * migas de pan. Sin I/O y sin React: se prueba aparte (joyeria.test.ts). Nunca toca precios, stock, carrito ni pedidos.
  */
 import { SIN_FILTROS, urlFiltros, type OpcionFaceta } from "@/lib/catalogo/filtros";
-import type { ConfigJoyeria, MayoristasJoyeria } from "@/lib/catalogo/vitrina";
+import type { LineaConfig, LineasJoyeria } from "@/lib/catalogo/lineas";
+import { joyeriaOf, storefrontConfigFor, type ConfigJoyeria, type MayoristasJoyeria } from "@/lib/catalogo/vitrina";
 import type { FeaturedPolicy } from "@/lib/catalogo/service";
 
 /** Dígitos de un número de WhatsApp si es utilizable (≥ 8, como en el resto de la tienda); null si no. */
@@ -96,4 +97,37 @@ export function acabadosVisibles(colores: readonly OpcionFaceta[] | null | undef
  */
 export function rotuloDeDestacados(politica: FeaturedPolicy): { etiqueta: string; titulo: string } {
   return politica === "cms" ? { etiqueta: "Selección", titulo: "Productos destacados" } : { etiqueta: "Nuevas piezas", titulo: "Novedades" };
+}
+
+export interface LineaVisible {
+  clave: string;
+  etiqueta: string;
+  /** El listado de la línea (`?linea=plata`). */
+  href: string;
+  /** Las MISMAS categorías de la tienda, en su orden, cada una dentro de la línea (`?linea=plata&categoria=…`). Siempre todas: la estructura no depende de cuántas piezas haya. */
+  categorias: ReadonlyArray<{ id: string; nombre: string; href: string }>;
+}
+
+/**
+ * Las líneas que se muestran (menú, inicio): TODAS las de la configuración y en su orden, cada una con todas las categorías de la tienda, tenga o no piezas hoy. Se arman solo con la configuración y las
+ * categorías que la tienda ya carga en cada pantalla (ninguna lectura de productos): el menú y el inicio nunca dependen de contar piezas. Sin líneas configuradas, la lista es vacía y la tienda se ve como siempre.
+ */
+export function lineasVisibles(config: LineasJoyeria | undefined, categorias: ReadonlyArray<{ id: string; name: string }>, basePath: string): LineaVisible[] {
+  if (!config || config.lineas.length === 0) return [];
+  return config.lineas.map((l) => ({
+    clave: l.clave,
+    etiqueta: l.etiqueta,
+    href: urlFiltros(basePath, { ...SIN_FILTROS, lineas: [l.clave] }),
+    categorias: categorias.map((c) => ({ id: c.id, nombre: c.name, href: urlFiltros(basePath, { ...SIN_FILTROS, lineas: [l.clave], categorias: [c.id] }) })),
+  }));
+}
+
+/** Las líneas de la tienda de ese negocio, de su configuración; vacía si no tiene (entonces la tienda se ve como siempre). */
+export function lineasDeLaTienda(slug: string): readonly LineaConfig[] {
+  return joyeriaOf(storefrontConfigFor(slug))?.lineas?.lineas ?? [];
+}
+
+/** A dónde lleva el acceso «Líneas» de la cabecera: la franja de líneas del inicio. */
+export function hrefLineas(basePath: string): string {
+  return `${basePath}#lineas`;
 }

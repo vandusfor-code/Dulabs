@@ -18,7 +18,7 @@ import { Dialogo } from "@/components/catalogo-publico/tienda/Dialogo";
 import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
 import { useMovimientoReducido } from "@/components/catalogo-publico/tienda/joyeria/medios";
 import { esListadoDeUrl } from "@/lib/catalogo/inicio";
-import type { AnuncioVisible } from "@/lib/catalogo/joyeria";
+import type { AnuncioVisible, LineaVisible } from "@/lib/catalogo/joyeria";
 
 /** De un mensaje al siguiente pasan 5 s (medido en la referencia): el fundido de salida (0,28 s) va dentro de ese tiempo. */
 const CICLO_MS = 5000;
@@ -158,6 +158,8 @@ export function CromoJoyeria({
   mayorista,
   mayoristaHref,
   paginas = [],
+  lineas = [],
+  lineasHref,
 }: {
   marca: { name: string; descriptor?: string };
   basePath: string;
@@ -171,6 +173,10 @@ export function CromoJoyeria({
   mayoristaHref?: string;
   /** Las páginas propias que la administradora puso en el menú (publicadas hoy), ya en orden: van después de «Categorías» y antes de «Mayorista». Sin ninguna, el menú es el de siempre. */
   paginas?: ReadonlyArray<{ texto: string; href: string }>;
+  /** Las líneas de la tienda (Plata, Rodio…), todas, cada una con las mismas categorías de siempre dentro. Salen de la configuración (no hay lectura de productos). Sin líneas, el menú es el de siempre. */
+  lineas?: readonly LineaVisible[];
+  /** A dónde lleva el acceso «Líneas» de la cabecera (la franja de líneas del inicio). */
+  lineasHref?: string;
 }) {
   const { whatsapp } = useTienda();
   const pathname = usePathname();
@@ -186,10 +192,13 @@ export function CromoJoyeria({
   const [menuAbierto, setMenuAbierto] = useState(false);
   const [buscando, setBuscando] = useState(false);
   const [categoriasAbiertas, setCategoriasAbiertas] = useState(false);
+  const [lineasAbiertas, setLineasAbiertas] = useState(false);
+  const [lineaAbierta, setLineaAbierta] = useState<string | null>(null);
   const digits = (whatsapp ?? "").replace(/\D/g, "");
   const hrefMayorista = mayoristaHref ?? `${basePath}#mayoristas`;
   const enMayoristas = pathname === hrefMayorista;
-  const cab = paginas.length > 0 ? CABECERA.ancha : CABECERA.normal;
+  // Cada acceso de más en la cabecera (páginas propias o líneas) pide el ancho amplio: por debajo de xl se usa el menú lateral, que tiene lugar para todo.
+  const cab = paginas.length > 0 || lineas.length > 0 ? CABECERA.ancha : CABECERA.normal;
 
   // ¿Lo claro del contenido (o, sin marca, la cortina que sube sobre la portada) ya llegó a la cabecera? Se mide en un fotograma, nunca en cada evento de scroll.
   useEffect(() => {
@@ -259,6 +268,11 @@ export function CromoJoyeria({
               <Link href={listPath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esListado)}>
                 Catálogo
               </Link>
+              {lineas.length > 0 && (
+                <Link href={lineasHref ?? `${basePath}#lineas`} className="joy-enlace joy-tinta text-[15px]">
+                  Líneas
+                </Link>
+              )}
               {categorias.length > 0 && (
                 <Link href={categoriasHref} className="joy-enlace joy-tinta text-[15px]">
                   Categorías
@@ -320,6 +334,57 @@ export function CromoJoyeria({
                 {p.texto}
               </Link>
             ))}
+            {lineas.length > 0 && (
+              <div className="mt-2 border-t border-edge pt-2">
+                <button
+                  type="button"
+                  className="joy-fila-menu w-full justify-between"
+                  aria-expanded={lineasAbiertas}
+                  aria-controls="joy-menu-lineas"
+                  onClick={() => setLineasAbiertas((v) => !v)}
+                >
+                  Líneas
+                  <ChevronDown className="joy-giro size-4" strokeWidth={1.6} aria-hidden />
+                </button>
+                <div id="joy-menu-lineas" className="joy-acordeon" data-abierto={lineasAbiertas} inert={!lineasAbiertas}>
+                  <div className="overflow-hidden">
+                    <div className="space-y-0.5 pt-1">
+                      {lineas.map((l) => {
+                        const abierta = lineaAbierta === l.clave;
+                        return (
+                          <div key={l.clave}>
+                            <button
+                              type="button"
+                              className="joy-fila-menu joy-fila-sub w-full justify-between"
+                              aria-expanded={abierta}
+                              aria-controls={`joy-menu-linea-${l.clave}`}
+                              onClick={() => setLineaAbierta(abierta ? null : l.clave)}
+                            >
+                              {l.etiqueta}
+                              <ChevronDown className="joy-giro size-4" strokeWidth={1.6} aria-hidden />
+                            </button>
+                            <div id={`joy-menu-linea-${l.clave}`} className="joy-acordeon" data-abierto={abierta} inert={!abierta}>
+                              <div className="overflow-hidden">
+                                <div className="space-y-0.5 pb-1 pl-4">
+                                  <Link href={l.href} onClick={cerrarMenu} className="joy-fila-menu joy-fila-sub">
+                                    Toda la línea
+                                  </Link>
+                                  {l.categorias.map((c) => (
+                                    <Link key={c.id} href={c.href} onClick={cerrarMenu} className="joy-fila-menu joy-fila-sub">
+                                      {c.nombre}
+                                    </Link>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             {categorias.length > 0 && (
               <div className="mt-2 border-t border-edge pt-2">
                 <button

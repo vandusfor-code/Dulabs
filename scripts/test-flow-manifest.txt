@@ -459,6 +459,10 @@ lib/catalogo/inicio.test.ts
 lib/catalogo/tienda-publica.test.ts
 lib/catalogo/filtros.test.ts
 lib/catalogo/filtros-servicio.test.ts
+lib/catalogo/lineas.test.ts
+lib/catalogo/filtros-lineas.test.ts
+lib/catalogo/lineas-servicio.test.ts
+lib/catalogo/consulta-publica.test.ts
 lib/catalogo/busqueda-publica.test.ts
 lib/catalogo/busqueda-indice.test.ts
 lib/catalogo/foto-http.test.ts
@@ -648,6 +652,9 @@ components/catalogo-publico/tienda/joyeria/listado-ficha-joyeria.test.tsx
 components/catalogo-publico/tienda/joyeria/joyeria.dom.test.tsx
 components/catalogo-publico/tienda/joyeria/filtros-joyeria.test.tsx
 components/catalogo-publico/tienda/joyeria/filtros-joyeria.dom.test.tsx
+components/catalogo-publico/tienda/joyeria/lineas.ssr.test.tsx
+components/catalogo-publico/tienda/joyeria/lineas.dom.test.tsx
+components/catalogo-publico/tienda/joyeria/lineas-filtros.dom.test.tsx
 # Bloque 30, inicio «como la referencia»: los acabados reales y la guarda de los archivos de video (lib), el inicio con video en el HTML del servidor y el carrusel, el video y los botones flotantes en jsdom.
 lib/catalogo/inicio-video.test.ts
 components/catalogo-publico/tienda/joyeria/inicio-video.test.tsx

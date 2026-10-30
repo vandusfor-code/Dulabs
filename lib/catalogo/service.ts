@@ -37,6 +37,7 @@ import {
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
 import { SIN_FILTROS, calcularFacetas, cumpleFiltros, hayFiltros, soloUnaCategoria, type FacetasCatalogo, type FilaFaceta, type FiltrosCatalogo, type OpcionFaceta } from "@/lib/catalogo/filtros";
+import { clavesConocidas, type LineaConfig } from "@/lib/catalogo/lineas";
 import { PreciosNoDisponibles, precioQueRige, type EvaluadorPrecios } from "@/lib/catalogo/precios";
 import type { CatalogRepository, FilaFiltrable, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
@@ -486,10 +487,23 @@ export interface PublicCatalogQuery {
    * productos activos con el listado filtrado: una sola lectura por petición. `facets: null` = catálogo demasiado grande para contar en memoria.
    */
   facets?: boolean;
+  /**
+   * Las líneas del negocio (Plata, Rodio…; lib/catalogo/lineas.ts), de la configuración de su tienda. Con ellas `?linea=` filtra por línea y `facets` trae el conteo de cada línea y de sus categorías; sin ellas
+   * (un negocio sin líneas) una `?linea=` se ignora y el listado es el de siempre.
+   */
+  lineas?: readonly LineaConfig[];
 }
 
 /** El listado público y, si se pidieron, las opciones de los filtros. */
 export type PublicCatalogPageFiltrable = PublicCatalogPage & { facets?: FacetasCatalogo | null };
+
+/** Los mismos filtros pero solo con las líneas que el negocio tiene (sin la propiedad si no queda ninguna): la forma de siempre cuando no hay línea. */
+function conLineasConocidas(f: FiltrosCatalogo, lineas: readonly LineaConfig[] | undefined): FiltrosCatalogo {
+  const conocidas = clavesConocidas(f.lineas, lineas);
+  const copia: FiltrosCatalogo = { ...f };
+  delete copia.lineas;
+  return conocidas.length > 0 ? { ...copia, lineas: conocidas } : copia;
+}
 
 /** Productos activos que se leen de una vez para filtrar y contar en memoria (por lote) y tope: un catálogo más grande no ofrece filtros por color, material ni precio. */
 export const FILTRO_LOTE = 500;
@@ -902,9 +916,10 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     requested: number,
     activos: FilaFiltrable[] | null,
     evaluador: EvaluadorPrecios | null,
+    lineas?: readonly LineaConfig[],
   ): Promise<Listing> {
     if (activos === null) return publicListing(tenantId, context, undefined, filtros.categorias.find((c) => UUID_PATTERN.test(c)), requested);
-    const coinciden = activos.filter((f) => cumpleFiltros(filaDe(f, context, evaluador), filtros));
+    const coinciden = activos.filter((f) => cumpleFiltros(filaDe(f, context, evaluador), filtros, lineas));
     const offset = (requested - 1) * PUBLIC_PAGE_SIZE;
     const referencias = coinciden.slice(offset, offset + PUBLIC_PAGE_SIZE).map((f) => f.reference);
     // Si algún producto se desactivó entre las dos lecturas, simplemente no aparece (un desactivado nunca se muestra).
@@ -935,8 +950,11 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
 
       const requested = Number.isInteger(input.page) && (input.page as number) >= 1 ? Math.min(input.page as number, 10_000) : 1;
       const texto = normalizeSearch(input.q);
+      // Las líneas que el negocio no tiene se ignoran (una dirección vieja o mal escrita nunca deja la lista vacía).
+      const lineasDelNegocio = input.lineas && input.lineas.length > 0 ? input.lineas : undefined;
+      const filtrosEntrada = input.filters ? conLineasConocidas(input.filters, lineasDelNegocio) : undefined;
       // Los filtros de joyería solo aplican sin búsqueda por texto; con una sola categoría y nada más, el listado es exactamente el de siempre.
-      const filtros = input.filters && hayFiltros(input.filters) && !texto ? input.filters : null;
+      const filtros = filtrosEntrada && hayFiltros(filtrosEntrada) && !texto ? filtrosEntrada : null;
       const unaCategoria = filtros ? soloUnaCategoria(filtros) : null;
       const categoriaCruda = unaCategoria ?? input.categoryId;
       const categoryId = categoriaCruda && UUID_PATTERN.test(categoriaCruda) ? categoriaCruda : undefined;
@@ -947,8 +965,8 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
         filtrar !== null || input.facets === true ? activosParaFiltrar(pub.tenantId) : Promise.resolve(undefined),
         filtrar !== null ? Promise.resolve(null) : publicListing(pub.tenantId, input.context, texto, categoryId, requested),
       ]);
-      const listing = deSiempre ?? (await filteredListing(pub.tenantId, input.context, filtrar ?? SIN_FILTROS, requested, activos ?? null, evaluador));
-      const facets = input.facets === true ? (activos ? calcularFacetas(activos.map((p) => filaDe(p, input.context, evaluador)), categories) : null) : undefined;
+      const listing = deSiempre ?? (await filteredListing(pub.tenantId, input.context, filtrar ?? SIN_FILTROS, requested, activos ?? null, evaluador, lineasDelNegocio));
+      const facets = input.facets === true ? (activos ? calcularFacetas(activos.map((p) => filaDe(p, input.context, evaluador)), categories, lineasDelNegocio, filtrar?.lineas) : null) : undefined;
 
       return {
         business: { name: pub.publicName, whatsapp: business.whatsapp },

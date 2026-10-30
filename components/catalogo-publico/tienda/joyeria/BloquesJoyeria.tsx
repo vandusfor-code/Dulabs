@@ -5,7 +5,7 @@
 import { ArrowRight } from "lucide-react";
 import { VideoSeccion } from "@/components/catalogo-publico/tienda/joyeria/VideoJoyeria";
 import { ENLACE_TEXTO, EnlaceJoyeria } from "@/components/catalogo-publico/tienda/joyeria/piezas";
-import type { AcabadoVisible } from "@/lib/catalogo/joyeria";
+import type { AcabadoVisible, LineaVisible } from "@/lib/catalogo/joyeria";
 import type { ColeccionJoyeria, MarcaJoyeria } from "@/lib/catalogo/vitrina";
 
 /**
@@ -45,6 +45,29 @@ export function AcabadosJoyeria({ titulo, acabados }: { titulo: string; acabados
           <li key={a.clave}>
             <EnlaceJoyeria href={a.href} className="joy-acabado">
               {a.etiqueta}
+            </EnlaceJoyeria>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Franja «Nuestras líneas»: el primer nivel de la tienda (Plata, Rodio, Acero, Cover Gold…). Cada línea lleva a su listado, donde están las mismas categorías de siempre. Se dibuja con TODAS las líneas
+ * de la configuración aunque alguna aún no tenga piezas: la estructura no depende de cuántas haya. Con dos columnas en el celular y cuatro desde la tableta, sin deslizar.
+ */
+export function FranjaLineas({ titulo, lineas }: { titulo: string; lineas: readonly LineaVisible[] }) {
+  return (
+    <section id="lineas" aria-labelledby="joy-lineas" className="joy-acabados joy-franja-lineas joy-ancla">
+      <h2 id="joy-lineas" className="joy-acabados-titulo">
+        {titulo}
+      </h2>
+      <ul className="joy-franja-lineas-lista">
+        {lineas.map((l) => (
+          <li key={l.clave}>
+            <EnlaceJoyeria href={l.href} className="joy-franja-linea font-serif-tienda">
+              {l.etiqueta}
             </EnlaceJoyeria>
           </li>
         ))}

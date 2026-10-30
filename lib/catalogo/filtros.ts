@@ -1,11 +1,13 @@
 /**
- * Filtros del catálogo público (tema "joyeria"): categoría, color, material y rango de precio. SOLO LECTURA sobre lo que el catálogo ya tiene:
+ * Filtros del catálogo público (tema "joyeria"): línea, categoría, color, material y rango de precio. SOLO LECTURA sobre lo que el catálogo ya tiene:
  * no escribe nada, no cambia ningún precio ni inventario y no crea datos nuevos. Aquí vive lo puro (sin red ni React):
  *   - las claves con que se agrupan los valores que los negocios escriben a mano ("Dorada", "dorado" y "Dorado" son un solo color; "RODIO" y "Rodio", un solo material);
  *   - las facetas (qué opciones hay y cuántos productos tiene cada una) y el rango de precio real;
  *   - qué productos cumplen los filtros elegidos (dentro de un grupo basta uno; entre grupos deben cumplirse todos);
  *   - cómo viajan los filtros en la dirección (`?categoria=…&color=…&material=…&precio_min=…&precio_max=…`), de modo que cada vista se puede compartir y funciona sin JavaScript.
  */
+
+import { calcularLineas, esClaveDeLinea, lineasDeMaterial, type LineaConfig, type LineaFaceta } from "@/lib/catalogo/lineas";
 
 /** Paso del deslizador de precio (pesos). */
 export const PRECIO_PASO = 1_000;
@@ -20,6 +22,8 @@ const MAX_CLAVE = 40;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface FiltrosCatalogo {
+  /** Claves de línea (`?linea=plata`, ver lib/catalogo/lineas.ts): cualquiera de ellas. Solo existe cuando la dirección trae una; las líneas que el negocio no tiene se ignoran. */
+  lineas?: string[];
   /** Ids de categoría (cualquiera de ellas). */
   categorias: string[];
   /** Claves de color (ver `claveDe`): cualquiera de ellas. */
@@ -34,12 +38,12 @@ export interface FiltrosCatalogo {
 export const SIN_FILTROS: FiltrosCatalogo = { categorias: [], colores: [], materiales: [] };
 
 export function hayFiltros(f: FiltrosCatalogo): boolean {
-  return f.categorias.length > 0 || f.colores.length > 0 || f.materiales.length > 0 || f.precioMin !== undefined || f.precioMax !== undefined;
+  return f.categorias.length > 0 || f.colores.length > 0 || f.materiales.length > 0 || (f.lineas?.length ?? 0) > 0 || f.precioMin !== undefined || f.precioMax !== undefined;
 }
 
 /** Solo una categoría y nada más: es el listado de siempre (`?categoria=<id>`), con su consulta paginada en la base. */
 export function soloUnaCategoria(f: FiltrosCatalogo): string | null {
-  return f.categorias.length === 1 && f.colores.length === 0 && f.materiales.length === 0 && f.precioMin === undefined && f.precioMax === undefined ? f.categorias[0] : null;
+  return f.categorias.length === 1 && f.colores.length === 0 && f.materiales.length === 0 && !f.lineas?.length && f.precioMin === undefined && f.precioMax === undefined ? f.categorias[0] : null;
 }
 
 /**
@@ -95,6 +99,8 @@ export interface FacetasCatalogo {
   materiales: OpcionFaceta[];
   /** Menor y mayor precio EFECTIVO (>0), redondeados al paso del deslizador; null si ningún producto tiene precio. */
   precio: { min: number; max: number } | null;
+  /** Las líneas del negocio, EN SU ORDEN y aunque no tengan piezas, con su conteo y el de cada categoría dentro de ella. Solo existe si se pidieron (el negocio tiene líneas). */
+  lineas?: LineaFaceta[];
 }
 
 /** Lo mínimo de un producto para filtrar: nada de imágenes ni datos internos. */
@@ -121,9 +127,19 @@ function agrupar(valores: ReadonlyArray<string | null>): OpcionFaceta[] {
     .sort((a, b) => a.etiqueta.localeCompare(b.etiqueta, "es", { sensitivity: "base" }) || b.n - a.n);
 }
 
-export function calcularFacetas(filas: readonly FilaFaceta[], categorias: ReadonlyArray<{ id: string; name: string }>): FacetasCatalogo {
+/**
+ * `lineas` (las del negocio) añade el conteo de cada línea. `lineasElegidas` (las de la dirección) hace que las CATEGORÍAS se cuenten solo dentro de esas líneas: en la página de «Plata», «Anillos»
+ * dice cuántos anillos de plata hay, no cuántos anillos hay en toda la tienda. Lo demás (colores, materiales, precio) sigue siendo del catálogo completo.
+ */
+export function calcularFacetas(
+  filas: readonly FilaFaceta[],
+  categorias: ReadonlyArray<{ id: string; name: string }>,
+  lineas?: readonly LineaConfig[],
+  lineasElegidas?: readonly string[],
+): FacetasCatalogo {
   const porCategoria = new Map<string, number>();
-  for (const f of filas) if (f.categoryId) porCategoria.set(f.categoryId, (porCategoria.get(f.categoryId) ?? 0) + 1);
+  const dentro = lineas && lineasElegidas && lineasElegidas.length > 0 ? filas.filter((f) => lineasDeMaterial(f.material, lineas).some((l) => lineasElegidas.includes(l))) : filas;
+  for (const f of dentro) if (f.categoryId) porCategoria.set(f.categoryId, (porCategoria.get(f.categoryId) ?? 0) + 1);
   const positivos = filas.map((f) => f.price).filter((p): p is number => p !== null && p > 0);
   return {
     total: filas.length,
@@ -131,11 +147,17 @@ export function calcularFacetas(filas: readonly FilaFaceta[], categorias: Readon
     colores: agrupar(filas.map((f) => f.color)),
     materiales: agrupar(filas.map((f) => f.material)),
     precio: positivos.length === 0 ? null : { min: Math.floor(Math.min(...positivos) / PRECIO_PASO) * PRECIO_PASO, max: Math.ceil(Math.max(...positivos) / PRECIO_PASO) * PRECIO_PASO },
+    ...(lineas && lineas.length > 0 ? { lineas: calcularLineas(filas, lineas) } : {}),
   };
 }
 
 /** Dentro de un grupo basta con uno de los valores elegidos; entre grupos deben cumplirse todos. Un producto sin precio (a consultar o en 0) no cumple ningún rango. */
-export function cumpleFiltros(fila: FilaFaceta, f: FiltrosCatalogo): boolean {
+export function cumpleFiltros(fila: FilaFaceta, f: FiltrosCatalogo, lineas?: readonly LineaConfig[]): boolean {
+  // Sin las líneas del negocio una `?linea=` no significa nada: se ignora (nunca deja la lista vacía por una dirección vieja).
+  if (f.lineas && f.lineas.length > 0 && lineas && lineas.length > 0) {
+    const deLaFila = lineasDeMaterial(fila.material, lineas);
+    if (!f.lineas.some((l) => deLaFila.includes(l))) return false;
+  }
   if (f.categorias.length > 0 && (!fila.categoryId || !f.categorias.includes(fila.categoryId))) return false;
   if (f.colores.length > 0) {
     const c = claveDe(fila.color);
@@ -166,13 +188,17 @@ const entero = (v: string | string[] | undefined): number | undefined => {
   return s !== undefined && /^\d{1,9}$/.test(s) ? Number(s) : undefined;
 };
 const claves = (v: string | string[] | undefined): string[] => [...new Set(lista(v).map((x) => claveDe(x)).filter((x): x is string => Boolean(x)))].slice(0, MAX_VALORES);
+/** Claves de línea de la dirección: solo las bien formadas (minúsculas, números y guiones); las demás se ignoran. */
+const clavesDeLinea = (v: string | string[] | undefined): string[] => [...new Set(lista(v).map((x) => x.trim().toLowerCase()).filter(esClaveDeLinea))].slice(0, MAX_VALORES);
 
 /** Los filtros que trae la dirección. Todo lo que no sea válido se ignora (nunca un error): ids que no son UUID, precios que no son enteros, valores de más. */
 export function leerFiltros(sp: Params): FiltrosCatalogo {
   let precioMin = entero(sp.precio_min);
   let precioMax = entero(sp.precio_max);
   if (precioMin !== undefined && precioMax !== undefined && precioMin > precioMax) [precioMin, precioMax] = [precioMax, precioMin];
+  const lineas = clavesDeLinea(sp.linea);
   return {
+    ...(lineas.length > 0 ? { lineas } : {}),
     categorias: [...new Set(lista(sp.categoria).filter((c) => UUID_PATTERN.test(c)))].slice(0, MAX_VALORES),
     colores: claves(sp.color),
     materiales: claves(sp.material),
@@ -184,6 +210,7 @@ export function leerFiltros(sp: Params): FiltrosCatalogo {
 /** Los filtros como pares de la dirección, en orden estable. */
 export function paramsDeFiltros(f: FiltrosCatalogo): Array<[string, string]> {
   return [
+    ...(f.lineas ?? []).map((l): [string, string] => ["linea", l]),
     ...f.categorias.map((c): [string, string] => ["categoria", c]),
     ...f.colores.map((c): [string, string] => ["color", c]),
     ...f.materiales.map((m): [string, string] => ["material", m]),

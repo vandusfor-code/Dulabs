@@ -2,7 +2,7 @@
  * Listado y búsqueda del tema "joyeria": SOLO presentación. Los datos, los filtros (búsqueda `?q=`, categoría `?categoria=`, página `?pagina=`), los enlaces y la paginación son los de
  * siempre (mismas direcciones: `href` de PublicCatalog); funciona sin JavaScript y cada vista se puede compartir.
  *
- * Sin búsqueda por texto y con las opciones de filtro disponibles (`facetas`), el panel de filtros de la referencia (FiltrosJoyeria): categoría, color, material y rango de precio, con su
+ * Sin búsqueda por texto y con las opciones de filtro disponibles (`facetas`), el panel de filtros de la referencia (FiltrosJoyeria): línea (si el negocio las tiene), categoría, color, material y rango de precio, con su
  * conteo por opción (escritorio: columna fija; celular: botón «Filtrar» y hoja inferior). Con búsqueda por texto, o si el catálogo es demasiado grande para contar, la columna de categorías
  * y la fila deslizable de siempre. Server Component.
  */
@@ -14,6 +14,7 @@ import { EnlaceIntencion } from "@/components/catalogo-publico/tienda/EnlaceInte
 import { FiltrosJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FiltrosJoyeria";
 import { indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
 import { SIN_FILTROS, hayFiltros as hayFiltrosDe, urlFiltros, type FacetasCatalogo, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
+import type { LineaConfig } from "@/lib/catalogo/lineas";
 import type { PublicCatalogPage, PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 
 function cn(...cls: Array<string | false | null | undefined>) {
@@ -34,6 +35,7 @@ export function ListadoJoyeria({
   tile,
   filtros = SIN_FILTROS,
   facetas = null,
+  lineas = [],
 }: {
   data: PublicCatalogPage;
   basePath: string;
@@ -46,6 +48,8 @@ export function ListadoJoyeria({
   filtros?: FiltrosCatalogo;
   /** Opciones de filtro con sus conteos; null = sin panel de filtros (búsqueda por texto, o un catálogo demasiado grande para contar). */
   facetas?: FacetasCatalogo | null;
+  /** Las líneas del negocio (Plata, Rodio…). Con UNA elegida en la dirección, la página es la de esa línea: su nombre, y las categorías (TODAS, tenga o no piezas) para moverse dentro de ella. */
+  lineas?: readonly LineaConfig[];
 }) {
   const conPanel = !q && facetas !== null;
   const filtrado = conPanel && hayFiltrosDe(filtros);
@@ -53,6 +57,10 @@ export function ListadoJoyeria({
   const totalPaginas = data.pageCount;
   const idCategoria = conPanel ? (filtros.categorias.length === 1 ? filtros.categorias[0] : undefined) : categoria;
   const categoriaActual = idCategoria ? data.categories.find((c) => c.id === idCategoria)?.name : undefined;
+  // La página de una línea: una sola línea elegida (con varias es un filtro más, como siempre). El conteo de cada categoría dentro de ella lo trae el servidor en `facetas.lineas`.
+  const claveLinea = conPanel && filtros.lineas?.length === 1 ? filtros.lineas[0] : undefined;
+  const lineaActual = claveLinea ? lineas.find((l) => l.clave === claveLinea) : undefined;
+  const conteoLinea = lineaActual ? facetas?.lineas?.find((l) => l.clave === lineaActual.clave) : undefined;
   const cuenta = data.total === 1 ? "1 producto" : `${data.total.toLocaleString("es-CO")} productos`;
   const enlacePagina = (pagina: number) => (conPanel ? urlFiltros(basePath, filtros, pagina) : href(basePath, { q, categoria, pagina }));
 
@@ -151,7 +159,35 @@ export function ListadoJoyeria({
                   </span>
                 )}
               </li>
-              {hayFiltros && (
+              {hayFiltros && lineaActual && (
+                <>
+                  <li className="flex items-center gap-2">
+                    <span className="text-[var(--joy-oro)]" aria-hidden>
+                      /
+                    </span>
+                    {categoriaActual ? (
+                      <Link href={urlFiltros(basePath, { ...SIN_FILTROS, lineas: [lineaActual.clave] })} className="transition-colors hover:text-[var(--tienda-oro)]">
+                        {lineaActual.etiqueta}
+                      </Link>
+                    ) : (
+                      <span className="font-medium text-fg" aria-current="page">
+                        {lineaActual.etiqueta}
+                      </span>
+                    )}
+                  </li>
+                  {categoriaActual && (
+                    <li className="flex items-center gap-2">
+                      <span className="text-[var(--joy-oro)]" aria-hidden>
+                        /
+                      </span>
+                      <span className="font-medium text-fg" aria-current="page">
+                        {categoriaActual}
+                      </span>
+                    </li>
+                  )}
+                </>
+              )}
+              {hayFiltros && !lineaActual && (
                 <li className="flex items-center gap-2">
                   <span className="text-[var(--joy-oro)]" aria-hidden>
                     /
@@ -167,6 +203,29 @@ export function ListadoJoyeria({
             <h1 className="font-serif-tienda text-[34px] font-medium leading-tight tracking-[0.04em] text-fg sm:text-[44px]">{titulo}</h1>
             <p className="mt-2 text-sm leading-6 text-mist sm:text-base">{cuenta}</p>
           </div>
+          {/* Las categorías de la línea: en el celular una sola fila que se desliza (como las del listado de siempre); desde la tableta, todas a la vista en varias filas. */}
+          {lineaActual && data.categories.length > 0 && (
+            <nav aria-label={`Categorías de ${lineaActual.etiqueta}`} className="tienda-scroll -mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+              <EnlaceIntencion href={urlFiltros(basePath, { ...filtros, categorias: [] })} className={cn("joy-chip", !idCategoria && "joy-chip-activo")} aria-current={!idCategoria ? "page" : undefined}>
+                Toda la línea
+              </EnlaceIntencion>
+              {data.categories.map((c) => {
+                const n = conteoLinea?.categorias.find((x) => x.id === c.id)?.n ?? 0;
+                const activa = idCategoria === c.id;
+                return (
+                  <EnlaceIntencion key={c.id} href={urlFiltros(basePath, { ...filtros, categorias: [c.id] })} className={cn("joy-chip", activa && "joy-chip-activo")} aria-current={activa ? "page" : undefined}>
+                    {c.name}
+                    {n > 0 && (
+                      <>
+                        {" "}
+                        <span className="tabular-nums opacity-70">({n})</span>
+                      </>
+                    )}
+                  </EnlaceIntencion>
+                );
+              })}
+            </nav>
+          )}
         </div>
       </header>
 

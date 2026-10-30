@@ -2,7 +2,7 @@ import { unstable_cache } from "next/cache";
 import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { PriceContext } from "@/lib/catalogo/domain";
-import { filtrosDeTexto } from "@/lib/catalogo/filtros";
+import { consultaDeCatalogoPublico } from "@/lib/catalogo/consulta-publica";
 import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
 import { cargarMultimediaPublica } from "@/lib/cms-comercial/multimedia-publica";
@@ -29,7 +29,7 @@ const servicio = () => createPublicCatalogService({ repo: repositorioConPrecios(
  */
 export const cargarCatalogoPublico = cache(
   (slug: string, context: PriceContext, token: string | undefined, q: string | undefined, categoria: string | undefined, pagina: number, filtros?: string, opciones?: boolean) =>
-    servicio().getCatalog({ slug, context, token, q, categoryId: categoria, page: pagina, ...(filtros ? { filters: filtrosDeTexto(filtros) } : {}), ...(opciones ? { facets: true } : {}) }),
+    servicio().getCatalog(consultaDeCatalogoPublico({ slug, context, token, q, categoria, pagina, filtros, opciones })),
 );
 
 /** Marco de la tienda (layout): identidad, categorías y WhatsApp. Compartido con las páginas de la misma petición. */
