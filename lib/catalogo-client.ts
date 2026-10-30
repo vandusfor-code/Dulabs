@@ -64,6 +64,8 @@ export interface ProductListParams {
   q?: string;
   categoryId?: string;
   status?: StatusFilter;
+  /** Solo en tiendas con líneas: «sin» (las piezas sin línea) o la clave de una línea. */
+  linea?: string;
   page?: number;
   pageSize?: number;
 }
@@ -122,6 +124,7 @@ export function createCatalogClient(accessToken: string) {
       if (params.q) qs.set("q", params.q);
       if (params.categoryId) qs.set("categoryId", params.categoryId);
       if (params.status) qs.set("status", params.status);
+      if (params.linea) qs.set("linea", params.linea);
       if (params.page) qs.set("page", String(params.page));
       if (params.pageSize) qs.set("pageSize", String(params.pageSize));
       return call(accessToken, `/productos?${qs.toString()}`);

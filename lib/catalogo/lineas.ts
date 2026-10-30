@@ -49,7 +49,7 @@ function normalizar(valor: string): string {
     .trim();
 }
 
-const palabrasDe = (valor: string | null | undefined): string[] => {
+export const palabrasDe = (valor: string | null | undefined): string[] => {
   const limpio = valor ? normalizar(valor) : "";
   return limpio === "" ? [] : limpio.split(" ");
 };
@@ -82,6 +82,142 @@ export function lineasDeMaterial(material: string | null | undefined, lineas: re
   const palabras = palabrasDe(material);
   if (palabras.length === 0) return [];
   return lineas.filter((l) => pertenece(palabras, formasDe(l))).map((l) => l.clave);
+}
+
+/** Los nombres de las líneas a las que pertenece un material, en el orden de la configuración (vacío si no está en ninguna). */
+export function etiquetasDeLineas(material: string | null | undefined, lineas: readonly LineaConfig[]): string[] {
+  const palabras = palabrasDe(material);
+  if (palabras.length === 0) return [];
+  return lineas.filter((l) => pertenece(palabras, formasDe(l))).map((l) => l.etiqueta);
+}
+
+// ---------------------------------------------------------------------------
+// Clasificar una pieza en una línea desde el panel. La línea de una pieza ES su campo «Material»: elegirla escribe ahí, sin datos nuevos ni migración.
+// ---------------------------------------------------------------------------
+
+/** Valor del filtro del panel para «las piezas que no están en ninguna línea». Ninguna línea de la configuración puede usar esta clave. */
+export const LINEA_SIN = "sin";
+
+/** Lo que admite el campo «Material» (igual a `CATALOG_LIMITS.material`: una prueba vigila que no se separen). */
+export const LARGO_MAX_MATERIAL = 80;
+
+interface PalabraEnTexto {
+  palabra: string;
+  /** Dónde empieza y dónde termina (sin incluir) en el texto ORIGINAL. */
+  ini: number;
+  fin: number;
+}
+
+/**
+ * null = una tilde o marca que `normalizar` borra sin cortar la palabra; "" = un separador; otra cosa = las letras y números que aporta. Aplica a UN carácter las mismas reglas de `normalizar`
+ * (una prueba comprueba que las dos dan siempre las mismas palabras).
+ */
+function normalizarCaracter(caracter: string): string | null {
+  const sinTilde = caracter
+    .replace(/ñ/gi, "\u0000")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\u0000/g, "ñ")
+    .toLowerCase();
+  if (sinTilde === "") return null;
+  return sinTilde.replace(/[^a-z0-9ñ]/g, "");
+}
+
+/** Las mismas palabras que `palabrasDe`, pero con dónde están en el texto ORIGINAL: así se puede cambiar una sola palabra sin tocar el resto de lo que la persona escribió. */
+export function palabrasConPosicion(texto: string): PalabraEnTexto[] {
+  const palabras: PalabraEnTexto[] = [];
+  let actual: PalabraEnTexto | null = null;
+  let pos = 0;
+  for (const caracter of texto) {
+    const siguiente = pos + caracter.length;
+    const limpio = normalizarCaracter(caracter);
+    if (limpio === null) {
+      if (actual) actual.fin = siguiente;
+    } else if (limpio === "") {
+      actual = null;
+    } else {
+      if (!actual) {
+        actual = { palabra: "", ini: pos, fin: siguiente };
+        palabras.push(actual);
+      }
+      actual.palabra += limpio;
+      actual.fin = siguiente;
+    }
+    pos = siguiente;
+  }
+  return palabras;
+}
+
+function enPosicion(palabras: readonly PalabraEnTexto[], desde: number, frase: readonly string[]): boolean {
+  return desde + frase.length <= palabras.length && frase.every((p, j) => palabras[desde + j].palabra === p);
+}
+
+/** Cambia cada aparición de la línea `vieja` en el texto por `nuevo` y deja todo lo demás como estaba. */
+function cambiarLinea(texto: string, vieja: LineaConfig, nuevo: string): string {
+  const palabras = palabrasConPosicion(texto);
+  const formas = formasDe(vieja);
+  let salida = "";
+  let desde = 0;
+  for (let i = 0; i < palabras.length; ) {
+    let largo = 0;
+    for (const forma of formas) if (forma.length > largo && enPosicion(palabras, i, forma)) largo = forma.length;
+    if (largo === 0) {
+      i++;
+      continue;
+    }
+    salida += texto.slice(desde, palabras[i].ini) + nuevo;
+    desde = palabras[i + largo - 1].fin;
+    i += largo;
+  }
+  return salida + texto.slice(desde);
+}
+
+/** Como se escribe la línea en el material: su nombre, salvo que sus alias no lo reconozcan (entonces su primer alias; así lo escrito SIEMPRE queda en la línea). */
+function nombreEscrito(linea: LineaConfig): string {
+  return coincideLinea(linea.etiqueta, linea) ? linea.etiqueta : (linea.alias?.[0] ?? linea.etiqueta);
+}
+
+/** Recorta sin dejar un pedazo de palabra al final (un pedazo podría leerse como el nombre de otra línea). */
+function recortarEnPalabra(texto: string, max: number): string {
+  if (max <= 0) return "";
+  if (texto.length <= max) return texto;
+  let corte = texto.slice(0, max).replace(/[\uD800-\uDBFF]$/, "");
+  if (/[\p{L}\p{M}\p{N}]/u.test(texto[max] ?? "") && /[\p{L}\p{M}\p{N}]$/u.test(corte)) corte = corte.replace(/[\p{L}\p{M}\p{N}]+$/u, "");
+  return corte.replace(/[\s·,;:/|-]+$/u, "");
+}
+
+/**
+ * El texto de «Material» que deja a la pieza en esa línea, cambiando lo mínimo:
+ *   - ya está en la línea: igual (nunca se reescribe lo que ya sirve);
+ *   - sin material: el nombre de la línea («Plata»);
+ *   - con un material que no es de ninguna línea («Oro laminado 18k»): «Plata · Oro laminado 18k» (no se pierde lo escrito);
+ *   - con el de OTRA línea («Rodio · 3cm»): solo cambia esa palabra («Plata · 3cm»);
+ *   - con el de varias líneas («Acero y Rodio»): solo el nombre de la línea elegida.
+ * Cabe siempre en el campo (80) y lo que devuelve SIEMPRE pertenece a la línea elegida y a ninguna que la pieza no tuviera. Una clave que no es de la configuración no cambia nada.
+ */
+export function materialConLinea(material: string | null | undefined, clave: string, lineas: readonly LineaConfig[]): string {
+  const original = material ?? "";
+  const elegida = lineas.find((l) => l.clave === clave);
+  if (!elegida) return original;
+  const palabras = palabrasDe(original);
+  const actuales = lineas.filter((l) => pertenece(palabras, formasDe(l)));
+  if (actuales.some((l) => l.clave === clave)) return original;
+
+  const nombre = nombreEscrito(elegida);
+  const texto = original.trim();
+  if (texto === "") return nombre;
+
+  let nuevo: string;
+  if (actuales.length === 0) {
+    const resto = recortarEnPalabra(texto, LARGO_MAX_MATERIAL - nombre.length - 3);
+    nuevo = resto === "" ? nombre : `${nombre} · ${resto}`;
+  } else if (actuales.length === 1) {
+    nuevo = cambiarLinea(texto, actuales[0], nombre).replace(/\s+/g, " ").trim();
+  } else {
+    nuevo = nombre;
+  }
+  const sirve = nuevo.length <= LARGO_MAX_MATERIAL && coincideLinea(nuevo, elegida) && (actuales.length !== 1 || !coincideLinea(nuevo, actuales[0]));
+  return sirve ? nuevo : nombre;
 }
 
 /** Lo mínimo de un producto para ubicarlo en una línea y en una categoría. */

@@ -37,7 +37,8 @@ import {
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
 import { SIN_FILTROS, calcularFacetas, cumpleFiltros, hayFiltros, soloUnaCategoria, type FacetasCatalogo, type FilaFaceta, type FiltrosCatalogo, type OpcionFaceta } from "@/lib/catalogo/filtros";
-import { clavesConocidas, type LineaConfig } from "@/lib/catalogo/lineas";
+import { lineasDeLaTienda } from "@/lib/catalogo/joyeria";
+import { LINEA_SIN, clavesConocidas, lineasDeMaterial, type LineaConfig } from "@/lib/catalogo/lineas";
 import { PreciosNoDisponibles, precioQueRige, type EvaluadorPrecios } from "@/lib/catalogo/precios";
 import type { CatalogRepository, FilaFiltrable, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
 import {
@@ -172,8 +173,44 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
     await repo.removeObjects(paths);
   }
 
+  /** Las líneas de la tienda de este negocio (Plata, Rodio…), de la configuración de su tienda pública; vacío si no tiene (entonces el listado del panel es el de siempre). */
+  async function lineasDelTenant(tenantId: string): Promise<readonly LineaConfig[]> {
+    const publicacion = await repo.getPublication(tenantId);
+    return publicacion ? lineasDeLaTienda(publicacion.slug) : [];
+  }
+
+  /**
+   * Listado del panel de UNA línea (o de las piezas «sin línea»). La línea sale del texto libre de «Material», así que no se puede pedir a la base: se leen por lotes las piezas que cumplen la búsqueda,
+   * la categoría y el estado, se dejan las de la línea y se pagina aquí. Con tope: un catálogo enorme pide acotar en vez de leer sin fin.
+   */
+  async function listProductsByLine(actor: CatalogActor, query: ProductListQuery, lineas: readonly LineaConfig[], elegida: string): Promise<ProductPage> {
+    const filtro = { search: normalizeSearch(query.q), categoryId: query.categoryId, status: query.status };
+    const cumple = (p: CatalogProduct) => {
+      const claves = lineasDeMaterial(p.material, lineas);
+      return elegida === LINEA_SIN ? claves.length === 0 : claves.includes(elegida);
+    };
+    const coinciden: CatalogProduct[] = [];
+    for (let leidos = 0; ; ) {
+      const lote = await repo.listProducts(actor.tenantId, { ...filtro, offset: leidos, limit: LINEA_LOTE });
+      coinciden.push(...lote.items.filter(cumple));
+      leidos += lote.items.length;
+      if (lote.items.length === 0 || leidos >= lote.total) break;
+      if (leidos >= LINEA_FILTRO_MAX) throw new CatalogError("LIMIT_REACHED", "Son demasiados productos para filtrar por línea: acota la búsqueda o elige una categoría.");
+    }
+    const desde = (query.page - 1) * query.pageSize;
+    const pagina = coinciden.slice(desde, desde + query.pageSize);
+    const primaries = await repo.listPrimaryMedia(actor.tenantId, pagina.map((p) => p.id));
+    const byProduct = new Map(primaries.map((m) => [m.productId, m]));
+    return { items: pagina.map((p) => withPrimary(p, byProduct.get(p.id))), total: coinciden.length, page: query.page, pageSize: query.pageSize };
+  }
+
   return {
     async listProducts(actor: CatalogActor, query: ProductListQuery): Promise<ProductPage> {
+      if (query.linea) {
+        // Solo cuenta en una tienda con líneas y con una línea que ella tenga: en cualquier otro caso se ignora y el listado es el de siempre.
+        const lineas = await lineasDelTenant(actor.tenantId);
+        if (lineas.length > 0 && (query.linea === LINEA_SIN || lineas.some((l) => l.clave === query.linea))) return listProductsByLine(actor, query, lineas, query.linea);
+      }
       const { items, total } = await repo.listProducts(actor.tenantId, {
         search: normalizeSearch(query.q),
         categoryId: query.categoryId,
@@ -508,6 +545,10 @@ function conLineasConocidas(f: FiltrosCatalogo, lineas: readonly LineaConfig[] |
 /** Productos activos que se leen de una vez para filtrar y contar en memoria (por lote) y tope: un catálogo más grande no ofrece filtros por color, material ni precio. */
 export const FILTRO_LOTE = 500;
 export const FILTRO_MAX = 2000;
+
+/** Lo mismo para el listado del PANEL por línea (todos los estados, no solo los activos): por lotes y hasta este tope. */
+export const LINEA_LOTE = 500;
+export const LINEA_FILTRO_MAX = 5000;
 
 const filaDeProducto = (p: CatalogProduct): FilaFiltrable => ({ reference: p.reference, categoryId: p.categoryId, color: p.color, material: p.material, pricing: p.pricing });
 

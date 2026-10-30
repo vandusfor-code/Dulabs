@@ -1,10 +1,11 @@
 "use client";
 
 import { useId, useState } from "react";
-import { Hash, Loader2, Plus } from "lucide-react";
+import { Check, Hash, Loader2, Plus } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { CATALOG_LIMITS, type CatalogCategory } from "@/lib/catalogo/domain";
 import type { ProductFormErrors, ProductFormState } from "@/lib/catalogo/form";
+import { etiquetasDeLineas, lineasDeMaterial, materialConLinea, type LineaConfig } from "@/lib/catalogo/lineas";
 import type { CatalogClient } from "@/lib/catalogo-client";
 import { CField, PriceInput, ReferenceTag, StockInput, cn, inputCls } from "@/components/dashboard/catalogo/ui";
 
@@ -129,6 +130,53 @@ function CategorySelect({
   );
 }
 
+/** Línea de la tienda (Plata, Rodio…): la línea de una pieza ES su campo Material, así que elegirla escribe ahí (sin datos nuevos) y el estado de abajo dice dónde aparecerá la pieza. */
+function LineaDeLaTienda({ id, material, lineas, onChange, disabled }: { id: string; material: string; lineas: readonly LineaConfig[]; onChange: (material: string) => void; disabled?: boolean }) {
+  const { t } = useI18n();
+  const claves = lineasDeMaterial(material, lineas);
+  const nombres = etiquetasDeLineas(material, lineas);
+  const lista = nombres.length > 1 ? `${nombres.slice(0, -1).join(", ")} ${t("y", "and")} ${nombres[nombres.length - 1]}` : (nombres[0] ?? "");
+  const estado =
+    nombres.length === 0
+      ? t("Sin línea: en la tienda esta pieza no aparece dentro de ninguna línea.", "No line: in the store this piece does not appear under any line.")
+      : nombres.length === 1
+        ? t(`En la tienda aparece en la línea ${lista}.`, `In the store it appears under the ${lista} line.`)
+        : t(`En la tienda aparece en las líneas ${lista}.`, `In the store it appears under the ${lista} lines.`);
+  return (
+    <div role="radiogroup" aria-labelledby={`${id}-etiqueta`}>
+      <p id={`${id}-etiqueta`} className="mb-1.5 block text-xs font-medium text-mist">
+        {t("Línea de la tienda", "Store line")}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {lineas.map((l) => {
+          const activa = claves.includes(l.clave);
+          return (
+            <button
+              key={l.clave}
+              type="button"
+              role="radio"
+              aria-checked={activa}
+              disabled={disabled}
+              onClick={() => onChange(materialConLinea(material, l.clave, lineas))}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:opacity-60",
+                activa ? "border-lime/60 bg-lime/10 font-medium text-fg" : "border-edge text-mist hover:border-lime/40 hover:text-fg",
+              )}
+            >
+              {activa && <Check className="size-3.5 text-lime-text" aria-hidden />}
+              {l.etiqueta}
+            </button>
+          );
+        })}
+      </div>
+      <p aria-live="polite" data-estado-linea className={cn("mt-1.5 text-[11px]", nombres.length === 0 ? "text-amber-400" : "text-mist/80")}>
+        {estado}
+      </p>
+      <p className="mt-0.5 text-[11px] text-mist/80">{t("La línea se guarda en el campo Material. Para quitarla, edita el Material.", "The line is saved in the Material field. To remove it, edit the Material.")}</p>
+    </div>
+  );
+}
+
 export function ProductFields({
   value,
   onChange,
@@ -138,6 +186,7 @@ export function ProductFields({
   client,
   disabled,
   stockUntracked,
+  lineas,
 }: {
   value: ProductFormState;
   onChange: (v: ProductFormState) => void;
@@ -148,6 +197,8 @@ export function ProductFields({
   disabled?: boolean;
   /** Producto legado que aún no controla inventario (el stock es opcional hasta definirlo). */
   stockUntracked?: boolean;
+  /** Las líneas de la tienda de este negocio (Plata, Rodio…). Sin ellas (o vacías) no se ofrece la clasificación y el formulario es el de siempre. */
+  lineas?: readonly LineaConfig[];
 }) {
   const { t } = useI18n();
   const ids = useId();
@@ -220,6 +271,8 @@ export function ProductFields({
           <input id={`${ids}-color`} className={inputCls} value={value.color} maxLength={80} disabled={disabled} placeholder={t("Ej. Dorado", "e.g. Gold")} onChange={(e) => set("color", e.target.value)} />
         </CField>
       </div>
+
+      {lineas && lineas.length > 0 && <LineaDeLaTienda id={`${ids}-linea`} material={value.material} lineas={lineas} onChange={(material) => set("material", material)} disabled={disabled} />}
 
       <CField label={t("Descripción", "Description")} htmlFor={`${ids}-description`}>
         <textarea
