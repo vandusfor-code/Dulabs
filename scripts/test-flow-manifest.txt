@@ -200,6 +200,7 @@ lib/amore-entrada-gemini.test.ts
 lib/amore-entrada-router.test.ts
 lib/amore-saludo-unico.test.ts
 lib/amore-registro-vigencia.test.ts
+lib/amore-compra-vigencia.test.ts
 lib/amore-pide-cita.test.ts
 lib/amore-menu-bienvenida.test.ts
 lib/amore-recordatorio-citas.test.ts

@@ -29,6 +29,12 @@ import {
   MENSAJE_BIENVENIDA_1,
   MENSAJE_BIENVENIDA_2,
   MENSAJE_CONSULTA_LA_ATIENDE_UNA_PERSONA,
+  MENSAJE_COMPRA_MENU,
+  MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE,
+  MENSAJE_COMPRA_OPCION_INVALIDA,
+  MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE,
+  MENSAJE_COMPRA_RECORDATORIO_PAGO,
+  construirMensajeCompraSaludo,
   MENSAJE_DIA_INVALIDO,
   MENSAJE_REGISTRO_DIA,
   MENSAJE_REGISTRO_MES,
@@ -876,5 +882,109 @@ describe("J. Registro de clienta a medias (heredado): ya no secuestra la convers
       assert.equal(bot.entrada()!.modo, "gemini", modo);
       assert.deepEqual(bot.tablas.dulabs_clientes_conocidos, [], `${modo}: «Sí» no se guarda como dato de la clienta`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// El flujo de COMPRA de la tienda (botón «Comprar») se quedaba con todos los mensajes de la clienta: «No reconocí esa opción» o el recordatorio de pago, sin tope, aunque una persona
+// del equipo ya le estuviera escribiendo. Aquí se prueba, sobre el pipeline real, que ya no secuestra la conversación y que el recorrido normal de la compra NO cambió
+// (la regla en sí: lib/amore-compra-vigencia.test.ts).
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+/** Deja a la clienta con un flujo de compra abierto, tal como lo dejó el asistente al entrar por el botón «Comprar». */
+function sembrarFlujoDeCompra(bot: ReturnType<typeof crearBot>, modo: "compra_producto_opcion" | "compra_esperando_pago") {
+  (bot.tablas.dulabs_amore_entrada ??= []).push({
+    id: 1,
+    tenant_id: T,
+    telefono_cliente: TEL,
+    modo,
+    ultimo_wamid_procesado: "w-viejo",
+    notificado_a_jessica: false,
+    producto_interes_nombre: "Aretes de plata",
+    atencion_humana_desde: null,
+    intentos_fallidos_consecutivos: 0,
+  });
+}
+const LINK_COMPRAR = (producto: string) => `Hola, estoy interesada en este producto: ${producto}`;
+
+describe("K. Compra de la tienda: el flujo ya no secuestra la conversación", () => {
+  let restaurarLogs: () => void = () => {};
+  beforeEach(() => {
+    restaurarLogs = silenciarLogs();
+  });
+  afterEach(() => restaurarLogs());
+
+  it("K1 menú pendiente + una persona del equipo le escribió: la charla sigue y el asistente se CALLA (sin «No reconocí esa opción»)", async () => {
+    const bot = crearBot();
+    sembrarFlujoDeCompra(bot, "compra_producto_opcion");
+    bot.registrarSaliente("humano", { texto: "Te queda en 230 mil" });
+    for (const texto of ["Gracias, listo", "¿Y el tinte es el mismo?", "Nos vemos mañana"]) {
+      assert.deepEqual((await bot.decir(texto)).respuestas, [], texto);
+    }
+    assert.equal(bot.entrada()!.modo, "gemini", "el flujo quedó soltado");
+  });
+
+  it("K2 esperando el pago + una persona atiende: el asistente calla sin cerrar el flujo, y un «Ya pagué» posterior sigue avisando a Jessica", async () => {
+    const bot = crearBot();
+    sembrarFlujoDeCompra(bot, "compra_esperando_pago");
+    bot.registrarSaliente("humano", { texto: "Ya te confirmo el envío" });
+    assert.deepEqual((await bot.decir("gracias")).respuestas, []);
+    assert.equal(bot.entrada()!.modo, "compra_esperando_pago", "el flujo sigue abierto");
+
+    const pago = await bot.decir("Ya pagué");
+    assert.ok(pago.respuestas.includes(MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE));
+    assert.ok(pago.aJessica.length >= 1, "Jessica recibe el aviso del pago");
+    assert.equal(bot.entrada()!.modo, "atencion_humana");
+  });
+
+  it("K3 con la compra pendiente la clienta pide una cita: recibe el enlace de reserva (antes recibía el recordatorio de pago)", async () => {
+    const bot = crearBot();
+    sembrarFlujoDeCompra(bot, "compra_esperando_pago");
+    bot.registrarSaliente("automatico", { texto: MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE, hace: 60_000 });
+    assert.deepEqual((await bot.decir("quiero una cita")).respuestas, [MENSAJE_RESERVA_POR_ENLACE]);
+    assert.equal(bot.entrada()!.modo, "gemini");
+  });
+
+  it("K4 dos avisos «No reconocí esa opción» y la clienta sigue sin elegir: se deja de insistir (nunca más de dos)", async () => {
+    const bot = crearBot({ persistirEnviados: true });
+    sembrarFlujoDeCompra(bot, "compra_producto_opcion");
+    bot.registrarSaliente("automatico", { texto: MENSAJE_COMPRA_MENU, hace: 60_000 });
+    const respuestasPorMensaje: string[][] = [];
+    for (const texto of ["jajaja", "ok", "gracias", "dale"]) respuestasPorMensaje.push((await bot.decir(texto)).respuestas);
+    assert.deepEqual(respuestasPorMensaje, [[MENSAJE_COMPRA_OPCION_INVALIDA], [MENSAJE_COMPRA_OPCION_INVALIDA], [], []]);
+    assert.equal(bot.entrada()!.modo, "gemini");
+  });
+
+  it("K5 el recorrido NORMAL no cambió: «Comprar» -> menú -> «1» -> llave de pago -> un solo recordatorio -> «Ya pagué» avisa a Jessica", async () => {
+    const bot = crearBot({ persistirEnviados: true });
+    assert.deepEqual((await bot.decir(LINK_COMPRAR("Aretes de plata"))).respuestas, [construirMensajeCompraSaludo("Aretes de plata"), MENSAJE_COMPRA_MENU]);
+    assert.equal(bot.entrada()!.modo, "compra_producto_opcion");
+    assert.deepEqual((await bot.decir("1")).respuestas, [MENSAJE_COMPRA_METODOS_PAGO_PENDIENTE]);
+    assert.equal(bot.entrada()!.modo, "compra_esperando_pago");
+    assert.deepEqual((await bot.decir("ok gracias")).respuestas, [MENSAJE_COMPRA_RECORDATORIO_PAGO], "el primer mensaje tras las instrucciones recibe el recordatorio");
+    assert.deepEqual((await bot.decir("dale")).respuestas, [], "el recordatorio se manda UNA vez seguida");
+    const pago = await bot.decir("Ya pagué");
+    assert.ok(pago.respuestas.includes(MENSAJE_COMPRA_PAGO_REGISTRADO_CLIENTE));
+    assert.ok(pago.aJessica.length >= 1);
+    assert.equal(bot.entrada()!.modo, "atencion_humana");
+  });
+
+  it("K6 un botón «Comprar» NUEVO con el flujo anterior pendiente: reinicia con el producto nuevo (antes recibía «No reconocí esa opción»)", async () => {
+    for (const modo of ["compra_producto_opcion", "compra_esperando_pago"] as const) {
+      const bot = crearBot();
+      sembrarFlujoDeCompra(bot, modo);
+      assert.deepEqual((await bot.decir(LINK_COMPRAR("Collar de perlas"))).respuestas, [construirMensajeCompraSaludo("Collar de perlas"), MENSAJE_COMPRA_MENU], modo);
+      assert.equal(bot.entrada()!.modo, "compra_producto_opcion", modo);
+      assert.equal(bot.entrada()!.producto_interes_nombre, "Collar de perlas", modo);
+    }
+  });
+
+  it("K7 «2» (hablar con una asesora) sigue pasando a atención humana y avisa a Jessica", async () => {
+    const bot = crearBot({ persistirEnviados: true });
+    await bot.decir(LINK_COMPRAR("Aretes de plata"));
+    const r = await bot.decir("2");
+    assert.ok(r.respuestas.length >= 1);
+    assert.ok(r.aJessica.length >= 1, "Jessica recibe el aviso");
+    assert.equal(bot.entrada()!.modo, "atencion_humana");
   });
 });

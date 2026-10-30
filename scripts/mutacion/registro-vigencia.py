@@ -49,11 +49,15 @@ M = [
     ("L05", "el límite pedido se ignora", LECTOR, ".limit(params.limite ?? LIMITE_POR_DEFECTO)", ".limit(LIMITE_POR_DEFECTO)", T_LECTOR),
     ("L06", "un origen desconocido se toma por válido", LECTOR, 'origen: fila.origen === "humano" || fila.origen === "automatico" ? fila.origen : null,', 'origen: (fila.origen as "humano" | "automatico" | null | undefined) ?? null,', T_LECTOR),
     # --- el gate de registro ---
-    ("R01", "el gate nunca suelta un registro abandonado", ROUTER, "if (motivoAbandono) {", "if (false) {", T_ROUTER + T_PIPE),
+    ("R01", "el gate nunca suelta un registro abandonado", ROUTER, 'if (motivoAbandono && !(motivoAbandono === "sin_respuesta_valida" && esRespuestaValidaDelRegistro(fila.modo, texto))) {', "if (false) {", T_ROUTER + T_PIPE),
     ("R02", "al soltar el registro se marca el mensaje como ya atendido (se pierde)", ROUTER, SUELTA, '{ modo: "gemini", ultimoWamidProcesado: params.wamid });\n      return { manejado: false };', T_ROUTER + T_PIPE),
     ("R03", "al soltar el registro el mensaje se da por manejado (nadie más lo ve)", ROUTER, SUELTA, '{ modo: "gemini" });\n      return { manejado: true };', T_ROUTER + T_PIPE),
     ("R04", "el registro no se suelta de verdad (sigue en el mismo paso)", ROUTER, SUELTA, "{});\n      return { manejado: false };", T_ROUTER + T_PIPE),
     ("R05", "se lee un solo mensaje del historial (no alcanza para contar avisos)", ROUTER, "limite: SALIENTES_A_REVISAR }", "limite: 1 }", T_ROUTER + T_PIPE),
+    ("R06", "una respuesta válida se descarta por los avisos anteriores", ROUTER, 'if (motivoAbandono && !(motivoAbandono === "sin_respuesta_valida" && esRespuestaValidaDelRegistro(fila.modo, texto))) {', "if (motivoAbandono) {", T_ROUTER),
+    ("R07", "el paso del día no reconoce una fecha completa («3 de enero») como respuesta válida", ROUTER, 'return parseCumpleanosNatural(texto).ok || parseDiaCumpleanos(texto) !== null;', "return parseDiaCumpleanos(texto) !== null;", T_ROUTER),
+    ("R08", "el paso del día toma cualquier mensaje por respuesta válida", ROUTER, 'if (modo === "registro_dia") return parseCumpleanosNatural(texto).ok || parseDiaCumpleanos(texto) !== null;', 'if (modo === "registro_dia") return true;', T_ROUTER),
+    ("R09", "el paso del mes toma cualquier mensaje por respuesta válida", ROUTER, 'if (modo === "registro_mes") return parseMesCumpleanos(texto) !== null;', 'if (modo === "registro_mes") return true;', T_ROUTER),
 ]
 
 
