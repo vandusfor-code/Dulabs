@@ -29,6 +29,8 @@ import { modoBotAmore, type ModoBotAmore } from "@/lib/amore-bot-modo";
 import { pideCitaNueva } from "@/lib/amore-pide-cita";
 import { opcionDelMenuBienvenida } from "@/lib/amore-menu-bienvenida";
 import { ultimoSalienteLoEscribioUnaPersona } from "@/lib/chats/ultimo-saliente";
+import { leerSalientesRecientes } from "@/lib/chats/salientes-recientes";
+import { motivoAbandonoRegistro, SALIENTES_A_REVISAR } from "@/lib/amore-registro-vigencia";
 import { nombreConocido, recordarNombreCliente, clienteConocidoCompleto } from "@/lib/clientes-conocidos";
 import { parseDiaCumpleanos, parseMesCumpleanos, parseCumpleanosNatural } from "@/lib/cumpleanos/parse-cumpleanos-natural";
 import { obtenerHistorialRecienteChat } from "@/lib/chats/historial-reciente";
@@ -791,6 +793,10 @@ export interface InterceptarRegistroClienteDeps {
   buscarClienteConocido?: typeof clienteConocidoCompleto;
   /** Inyectable para tests -- default real: iniciarNuevaSesionAgendaV2 (lib/agenda-v2/router.ts), sin deps custom. */
   iniciarAgendaV2?: (params: { supabase: SupabaseClient; idTenant: string; telefono: string; wamid: string }) => Promise<void>;
+  /** Últimos mensajes enviados a la clienta (quién los escribió, texto y hora) para saber si el registro sigue vivo (lib/amore-registro-vigencia.ts). Default real: lib/chats/salientes-recientes.ts. */
+  leerSalientesRecientes?: typeof leerSalientesRecientes;
+  /** Reloj en milisegundos, inyectable para tests -- default real: Date.now. */
+  ahoraMs?: () => number;
 }
 
 /**
@@ -813,6 +819,13 @@ export interface InterceptarRegistroClienteDeps {
  * curso -- así procesarMensajeConAgendaV2/procesarEntradaAmore siguen
  * exactamente igual que hoy para cualquier conversación que no esté
  * registrándose.
+ *
+ * Un registro que ya NO está vivo no se retoma (lib/amore-registro-vigencia.ts:
+ * una persona del equipo ya le escribió, lleva horas sin respuesta, o ya se le
+ * repitió dos veces «necesito un día válido»): se suelta (modo 'gemini'), SIN
+ * mandar nada y SIN marcar el wamid, y el mensaje sigue su camino por las demás
+ * capas como el de cualquier otra clienta. Antes este gate se quedaba con todos
+ * sus mensajes para siempre y repetía «Necesito un día válido entre 1 y 31».
  */
 export async function interceptarRegistroClienteAmore(
   params: { supabase: SupabaseClient; idTenant: string; telefono: string; texto: string; wamid: string },
@@ -830,6 +843,8 @@ export async function interceptarRegistroClienteAmore(
   const recordarNombre = deps.recordarNombreCliente ?? recordarNombreCliente;
   const buscarCliente = deps.buscarClienteConocido ?? clienteConocidoCompleto;
   const iniciarAgendaV2 = deps.iniciarAgendaV2 ?? ((p) => iniciarNuevaSesionAgendaV2(p));
+  const leerSalientes = deps.leerSalientesRecientes ?? leerSalientesRecientes;
+  const ahoraMs = deps.ahoraMs ?? Date.now;
 
   const phoneNumberId = phoneNumberIdSintetico(params.idTenant);
 
@@ -855,6 +870,19 @@ export async function interceptarRegistroClienteAmore(
     // Mismo wamid ya procesado -- nunca se reenvía nada ni se reprocesa.
     if (fila.ultimoWamidProcesado === params.wamid) {
       return { manejado: true };
+    }
+
+    // ¿Sigue vivo este registro? Si una persona del equipo ya le escribió, si lleva horas sin respuesta o si ya se le insistió dos veces con «necesito un día/mes válido»,
+    // NO se retoma: se suelta en silencio y el mensaje sigue su camino. A propósito NO se marca el wamid: las capas siguientes deben tratar este mensaje como nuevo (si pide
+    // una cita recibe el enlace; si no, el asistente se calla), y su propia idempotencia lo marca después.
+    const motivoAbandono = motivoAbandonoRegistro(
+      await leerSalientes(params.supabase, { idTenant: params.idTenant, telefono: params.telefono, limite: SALIENTES_A_REVISAR }),
+      ahoraMs(),
+    );
+    if (motivoAbandono) {
+      console.info(`[amore-entrada] registro de clienta abandonado (${motivoAbandono}) en modo ${fila.modo} tenant=${params.idTenant} -- se suelta y el mensaje sigue su camino`);
+      await actualizarEntrada(params.supabase, fila.id, { modo: "gemini" });
+      return { manejado: false };
     }
 
     const texto = params.texto.trim();

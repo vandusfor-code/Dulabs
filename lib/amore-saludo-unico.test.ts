@@ -14,7 +14,7 @@
  */
 delete process.env.AMORE_BOT_MODO; // se prueba el valor POR DEFECTO
 
-import { describe, it, afterEach } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { atenderMensajeWhatsAppQR, type DepsPipelineWhatsAppQR } from "@/lib/whatsapp-qr-pipeline";
 import { iniciarNuevaSesionAgendaV2, iniciarGestionCitasAgendaV2, type AgendaV2RouterDeps } from "@/lib/agenda-v2/router";
@@ -25,7 +25,16 @@ import { ultimoSalienteLoEscribioUnaPersona } from "@/lib/chats/ultimo-saliente"
 import { AMORE_TENANT_ID, phoneNumberIdWhatsappQr } from "@/lib/nylas/nylas-grant";
 import { AMORE_ESCENARIOS_SEED } from "@/lib/bot-escenarios/seed-amore";
 import type { EscenarioRow } from "@/lib/bot-escenarios/tipos";
-import { MENSAJE_BIENVENIDA_1, MENSAJE_BIENVENIDA_2, MENSAJE_CONSULTA_LA_ATIENDE_UNA_PERSONA, NUMERO_JESSICA } from "@/lib/amore-entrada-gemini";
+import {
+  MENSAJE_BIENVENIDA_1,
+  MENSAJE_BIENVENIDA_2,
+  MENSAJE_CONSULTA_LA_ATIENDE_UNA_PERSONA,
+  MENSAJE_DIA_INVALIDO,
+  MENSAJE_REGISTRO_DIA,
+  MENSAJE_REGISTRO_MES,
+  MENSAJE_REGISTRO_NOMBRE,
+  NUMERO_JESSICA,
+} from "@/lib/amore-entrada-gemini";
 import { MENSAJE_RESERVA_POR_ENLACE } from "@/lib/mi-cita/mensajes";
 import { crearSupabaseEnMemoria, type TablasEnMemoria } from "@/lib/test-helpers/supabase-en-memoria";
 import { instalarNylasFalso, calendarioNylas, type RespuestaNylas } from "@/lib/test-helpers/nylas-falso";
@@ -125,6 +134,8 @@ interface OpcionesBot {
   saludoInicial?: NonNullable<DepsPipelineWhatsAppQR["saludoInicial"]>;
   /** Sobrescribe las dependencias de la capa de entrada AMORE. */
   entradaAmore?: NonNullable<DepsPipelineWhatsAppQR["entradaAmore"]>;
+  /** Como el worker de producción: cada mensaje que el asistente le manda a la clienta queda guardado en Chats (origen «automatico»). Sin esto solo se capturan en `enviados`. */
+  persistirEnviados?: boolean;
 }
 
 function crearBot(opciones: OpcionesBot = {}) {
@@ -142,6 +153,7 @@ function crearBot(opciones: OpcionesBot = {}) {
     liberarCandadoChat: async () => {},
     enviarMensajeWhatsApp: (async (p: { telefono: string; mensaje: string; origen?: string }) => {
       enviados.push({ telefono: p.telefono, mensaje: p.mensaje, origen: p.origen });
+      if (opciones.persistirEnviados && p.telefono === TEL) registrarSaliente("automatico", { texto: p.mensaje });
       return { ok: true };
     }) as unknown as AgendaV2RouterDeps["enviarMensajeWhatsApp"],
   };
@@ -216,12 +228,20 @@ function crearBot(opciones: OpcionesBot = {}) {
   const avanzarReloj = (ms: number) => {
     desfaseRelojMs += ms;
   };
-  /** Como si una persona del equipo (o el asistente) le hubiera escrito a la clienta: lo que el worker guarda en Chats. */
-  function registrarSaliente(origen: "humano" | "automatico") {
+  /** Como si una persona del equipo (o el asistente) le hubiera escrito a la clienta: lo que el worker guarda en Chats. `hace` = hace cuántos milisegundos se lo envió. */
+  function registrarSaliente(origen: "humano" | "automatico", opciones: { texto?: string; hace?: number } = {}) {
     const conversaciones = (tablas.dulabs_chat_conversaciones ??= []);
     if (!conversaciones.some((c) => c.id === 9)) conversaciones.push({ id: 9, id_tenant: T, telefono: TEL });
     const mensajes = (tablas.dulabs_chat_mensajes ??= []);
-    mensajes.push({ id: mensajes.length + 1, id_tenant: T, conversacion_id: 9, direccion: "saliente", origen, texto: "x" });
+    mensajes.push({
+      id: mensajes.length + 1,
+      id_tenant: T,
+      conversacion_id: 9,
+      direccion: "saliente",
+      origen,
+      texto: opciones.texto ?? "x",
+      enviado_en: new Date(Date.now() - (opciones.hace ?? 0)).toISOString(),
+    });
   }
   return { decir, db, tablas, sesion, sesiones, entrada, citaReal, reprogramaciones, avanzarReloj, registrarSaliente, enviados, llamadasIA, llamadasFlowEngine };
 }
@@ -766,6 +786,95 @@ describe("I. ¿Una persona del equipo fue la última en escribirle? (lib/chats/u
       assert.equal(await ultimoSalienteLoEscribioUnaPersona(roto, { idTenant: T, telefono: TEL }), false);
     } finally {
       restaurarLogs();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// Caso real de AMORE (2026-10-29): clientas atrapadas en «registro_dia» recibían «Necesito un día válido entre 1 y 31» con CADA mensaje suyo («Gracias, listo», «Nos vemos mañana»),
+// también mientras una persona del equipo les contestaba desde el celular. El registro por chat ya no arranca (las citas nuevas van por el enlace), así que esos registros atrapados
+// son VIEJOS y nadie los cerraba. Aquí se prueba, sobre el pipeline real, que ya no secuestran la conversación (la regla en sí: lib/amore-registro-vigencia.test.ts).
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+/** Deja a la clienta a medias en el registro por chat, tal como lo dejó el asistente hace tiempo (el estado que hay hoy en la base de producción). */
+function sembrarRegistroAtascado(bot: ReturnType<typeof crearBot>, modo: "registro_nombre" | "registro_dia" | "registro_mes") {
+  (bot.tablas.dulabs_amore_entrada ??= []).push({
+    id: 1,
+    tenant_id: T,
+    telefono_cliente: TEL,
+    modo,
+    ultimo_wamid_procesado: "w-viejo",
+    notificado_a_jessica: false,
+    producto_interes_nombre: null,
+    atencion_humana_desde: null,
+    intentos_fallidos_consecutivos: 0,
+  });
+}
+
+describe("J. Registro de clienta a medias (heredado): ya no secuestra la conversación", () => {
+  let restaurarLogs: () => void = () => {};
+  beforeEach(() => {
+    restaurarLogs = silenciarLogs();
+  });
+  afterEach(() => restaurarLogs());
+
+  it("J1 una persona del equipo le escribió: la clienta sigue la charla y el asistente se CALLA (sin «Necesito un día válido»)", async () => {
+    const bot = crearBot({ clienteRegistrado: false });
+    sembrarRegistroAtascado(bot, "registro_dia");
+    bot.registrarSaliente("humano", { texto: "Te queda en 230 mil" });
+    for (const texto of ["Gracias, listo", "Nos vemos mañana", "¿Y el tinte es el mismo?"]) {
+      const { respuestas } = await bot.decir(texto);
+      assert.deepEqual(respuestas, [], texto);
+    }
+    assert.equal(bot.entrada()!.modo, "gemini", "el registro quedó soltado");
+  });
+
+  it("J2 registro a medias de hace días (nadie le escribe desde entonces): su siguiente mensaje es una conversación NUEVA, no su nombre", async () => {
+    const bot = crearBot({ clienteRegistrado: false });
+    sembrarRegistroAtascado(bot, "registro_nombre");
+    bot.registrarSaliente("automatico", { texto: MENSAJE_REGISTRO_NOMBRE, hace: 3 * 24 * 60 * 60 * 1000 });
+    const { respuestas } = await bot.decir("Hola buenas tardes");
+    assert.deepEqual(respuestas, []);
+    assert.equal(bot.entrada()!.modo, "gemini");
+    assert.deepEqual(bot.tablas.dulabs_clientes_conocidos, [], "«Hola buenas tardes» no queda guardado como su nombre");
+  });
+
+  it("J3 el mensaje que la suelta NO se pierde: si en ese mismo mensaje pide una cita, recibe el enlace de reserva", async () => {
+    const bot = crearBot({ clienteRegistrado: false });
+    sembrarRegistroAtascado(bot, "registro_dia");
+    bot.registrarSaliente("humano", { texto: "Te queda en 230 mil" });
+    assert.deepEqual((await bot.decir("quiero una cita")).respuestas, [MENSAJE_RESERVA_POR_ENLACE]);
+    assert.equal(bot.entrada()!.modo, "gemini");
+  });
+
+  it("J4 dos avisos de «día válido» seguidos y la clienta sigue sin contestarlo: se deja de insistir (nunca más de dos)", async () => {
+    const bot = crearBot({ clienteRegistrado: false, persistirEnviados: true });
+    sembrarRegistroAtascado(bot, "registro_dia");
+    bot.registrarSaliente("automatico", { texto: MENSAJE_REGISTRO_DIA, hace: 60_000 });
+    const respuestasPorMensaje: string[][] = [];
+    for (const texto of ["jajaja", "ok", "gracias", "¿y mañana?", "dale"]) respuestasPorMensaje.push((await bot.decir(texto)).respuestas);
+    assert.deepEqual(respuestasPorMensaje, [[MENSAJE_DIA_INVALIDO], [MENSAJE_DIA_INVALIDO], [], [], []]);
+    assert.equal(bot.entrada()!.modo, "gemini");
+  });
+
+  it("J5 un registro VIVO (el aviso es de hace un minuto) sigue funcionando: día, mes y al final el enlace de reserva", async () => {
+    const bot = crearBot({ clienteRegistrado: true });
+    sembrarRegistroAtascado(bot, "registro_dia");
+    bot.registrarSaliente("automatico", { texto: MENSAJE_REGISTRO_DIA, hace: 60_000 });
+    assert.deepEqual((await bot.decir("15")).respuestas, [MENSAJE_REGISTRO_MES]);
+    assert.equal(bot.entrada()!.modo, "registro_mes");
+    assert.deepEqual((await bot.decir("marzo")).respuestas, [MENSAJE_RESERVA_POR_ENLACE]);
+    assert.equal(bot.entrada()!.modo, "gemini");
+  });
+
+  it("J6 todos los pasos del registro (nombre, día, mes) se sueltan igual cuando una persona ya atiende", async () => {
+    for (const modo of ["registro_nombre", "registro_dia", "registro_mes"] as const) {
+      const bot = crearBot({ clienteRegistrado: false });
+      sembrarRegistroAtascado(bot, modo);
+      bot.registrarSaliente("humano", { texto: "¿Te sirve a las 3?" });
+      assert.deepEqual((await bot.decir("Sí")).respuestas, [], modo);
+      assert.equal(bot.entrada()!.modo, "gemini", modo);
+      assert.deepEqual(bot.tablas.dulabs_clientes_conocidos, [], `${modo}: «Sí» no se guarda como dato de la clienta`);
     }
   });
 });

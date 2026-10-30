@@ -199,12 +199,14 @@ lib/cumpleanos/parse-cumpleanos-natural.test.ts
 lib/amore-entrada-gemini.test.ts
 lib/amore-entrada-router.test.ts
 lib/amore-saludo-unico.test.ts
+lib/amore-registro-vigencia.test.ts
 lib/amore-pide-cita.test.ts
 lib/amore-menu-bienvenida.test.ts
 lib/amore-recordatorio-citas.test.ts
 app/api/cron/recordatorios-citas/route.test.ts
 lib/comunicaciones/config.test.ts
 lib/chats/historial-reciente.test.ts
+lib/chats/salientes-recientes.test.ts
 lib/amore-inventario.test.ts
 lib/amore-inventario-excel.test.ts
 lib/amore-inventario-ventas.test.ts

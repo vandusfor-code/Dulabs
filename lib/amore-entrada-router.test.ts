@@ -11,7 +11,7 @@
  */
 process.env.AMORE_BOT_MODO = "completo";
 
-import { describe, it, after } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -28,7 +28,19 @@ import {
 } from "@/lib/amore-entrada-router";
 import type { ProductoInventario } from "@/lib/amore-inventario";
 import type { EntradaAmore, ModoEntradaAmore } from "@/lib/amore-entrada-sesiones";
-import { MENSAJE_TRANSFERENCIA_ERROR_TECNICO, MENSAJE_ATENCION_HUMANA_CLIENTE, NUMERO_JESSICA, type ResultadoClasificacionGemini } from "@/lib/amore-entrada-gemini";
+import {
+  MENSAJE_TRANSFERENCIA_ERROR_TECNICO,
+  MENSAJE_ATENCION_HUMANA_CLIENTE,
+  NUMERO_JESSICA,
+  MENSAJE_DIA_INVALIDO,
+  MENSAJE_MES_INVALIDO,
+  MENSAJE_REGISTRO_CANCELADO,
+  MENSAJE_REGISTRO_DIA,
+  MENSAJE_REGISTRO_NOMBRE,
+  type ResultadoClasificacionGemini,
+} from "@/lib/amore-entrada-gemini";
+import { REGISTRO_VENCE_MS, SALIENTES_A_REVISAR } from "@/lib/amore-registro-vigencia";
+import type { SalienteReciente } from "@/lib/chats/salientes-recientes";
 import { AMORE_TENANT_ID } from "@/lib/nylas/nylas-grant";
 
 const FAKE_SUPABASE = {} as SupabaseClient;
@@ -234,6 +246,9 @@ function crearFakeClientesConocidos() {
   };
 }
 
+/** «Ahora» de las pruebas del registro: fijo, para que "hace 7 horas" no dependa del reloj de quien corre la suite. */
+const AHORA_REGISTRO = Date.parse("2026-10-29T16:00:00-05:00");
+
 function armarDepsRegistro(
   overrides: Partial<InterceptarRegistroClienteDeps> = {},
   entradasCompartidas?: ReturnType<typeof crearFakeEntradas>,
@@ -253,6 +268,9 @@ function armarDepsRegistro(
     recordarNombreCliente: clientes.recordarNombreCliente,
     buscarClienteConocido: clientes.buscarClienteConocido,
     iniciarAgendaV2: iniciarAgenda.iniciarAgendaV2,
+    // Sin historial de mensajes enviados el registro sigue exactamente como siempre; las pruebas del abandono (Test R) inyectan uno.
+    leerSalientesRecientes: async () => [],
+    ahoraMs: () => AHORA_REGISTRO,
     ...overrides,
   };
   return { deps, entradas, clientes, envios, candado, iniciarAgenda };
@@ -1267,6 +1285,223 @@ describe("Test M -- otro tenant: comportamiento intacto", () => {
     assert.equal(candado.llamadas.length, 0);
     assert.equal(entradas.filas.length, 0);
     assert.equal(clientes.clientes.size, 0);
+  });
+});
+
+// --- Un registro ABANDONADO no se retoma ----------------------------------
+// Caso real de AMORE (2026-10-29): una clienta atrapada en «registro_dia» recibía «Necesito un día válido entre 1 y 31» con CADA mensaje suyo («Gracias, listo», «Nos vemos el
+// miércoles»), también mientras una persona del equipo le contestaba desde el celular. El registro por chat ya no arranca (las citas nuevas van por el enlace), así que esos
+// registros atrapados son viejos y nadie los cerraba. Ahora se sueltan en silencio y el mensaje sigue su camino (lib/amore-registro-vigencia.ts).
+
+const MIN_REGISTRO = 60_000;
+const haceRegistro = (ms: number) => new Date(AHORA_REGISTRO - ms).toISOString();
+const botDijo = (texto: string, haceMs = 2 * MIN_REGISTRO): SalienteReciente => ({ origen: "automatico", texto, enviadoEn: haceRegistro(haceMs) });
+const personaDijo = (texto: string, haceMs = 2 * MIN_REGISTRO): SalienteReciente => ({ origen: "humano", texto, enviadoEn: haceRegistro(haceMs) });
+/** Los últimos mensajes ENVIADOS a la clienta, del más nuevo al más viejo (como los entrega lib/chats/salientes-recientes.ts). */
+const historialEnviado = (...salientes: SalienteReciente[]): Partial<InterceptarRegistroClienteDeps> => ({ leerSalientesRecientes: async () => salientes });
+
+describe("Test R -- un registro abandonado NO se retoma: se suelta en silencio y el mensaje sigue su camino", () => {
+  const consola = console.info;
+  before(() => {
+    console.info = () => {}; // el aviso «registro abandonado» es solo para el log de producción
+  });
+  after(() => {
+    console.info = consola;
+  });
+
+  for (const modo of ["registro_nombre", "registro_dia", "registro_mes"] as const) {
+    it(`modo ${modo}: una persona del equipo ya le escribió -> manejado:false, no manda nada, no guarda nada, vuelve a 'gemini'`, async () => {
+      const entradas = crearFakeEntradas();
+      const clientes = crearFakeClientesConocidos();
+      const fila = await crearFilaEnRegistro(entradas, modo);
+      const { deps, envios, iniciarAgenda } = armarDepsRegistro(historialEnviado(personaDijo("Te queda en 230 mil"), botDijo(MENSAJE_REGISTRO_DIA, 10 * MIN_REGISTRO)), entradas, clientes);
+
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "Gracias, listo", wamid: "w1" }, deps);
+
+      assert.deepEqual(r, { manejado: false });
+      assert.equal(fila.modo, "gemini", "el registro queda soltado");
+      assert.equal(fila.ultimoWamidProcesado, "w0", "NO se marca el wamid: las capas siguientes deben tratar este mensaje como nuevo");
+      assert.equal(envios.enviados.length, 0, "a quien ya atiende una persona no se le repite nada");
+      assert.equal(clientes.clientes.size, 0, "«Gracias, listo» no se guarda como su nombre ni como su cumpleaños");
+      assert.equal(iniciarAgenda.llamadas.length, 0);
+    });
+  }
+
+  it("el caso de la captura: tres mensajes seguidos de la clienta mientras la atiende una persona -> NINGÚN aviso", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+    const { deps, envios } = armarDepsRegistro(historialEnviado(personaDijo("Te queda en 230 mil"), botDijo(MENSAJE_DIA_INVALIDO, 20 * MIN_REGISTRO)), entradas);
+    for (const [i, texto] of ["Gracias, listo", "Nos vemos mañana", "¿Y el tinte es el mismo?"].entries()) {
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto, wamid: `w${i + 1}` }, deps);
+      assert.deepEqual(r, { manejado: false }, texto);
+    }
+    assert.equal(envios.enviados.length, 0, "ni «Necesito un día válido» ni nada: el equipo conversa y el asistente no interrumpe");
+    assert.equal(fila.modo, "gemini");
+  });
+
+  it("registro_nombre vencido: «Hola buenas tardes» (una conversación NUEVA) no se guarda como su nombre", async () => {
+    const entradas = crearFakeEntradas();
+    const clientes = crearFakeClientesConocidos();
+    const fila = await crearFilaEnRegistro(entradas, "registro_nombre");
+    const { deps, envios } = armarDepsRegistro(historialEnviado(botDijo(MENSAJE_REGISTRO_NOMBRE, REGISTRO_VENCE_MS + 1)), entradas, clientes);
+
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "Hola buenas tardes", wamid: "w1" }, deps);
+
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(fila.modo, "gemini");
+    assert.equal(clientes.clientes.size, 0, "«Hola buenas tardes» no queda como nombre de la clienta");
+    assert.equal(envios.enviados.length, 0);
+  });
+
+  it("en el límite exacto de REGISTRO_VENCE_MS el registro todavía está vivo: su respuesta se acepta como siempre", async () => {
+    const entradas = crearFakeEntradas();
+    const clientes = crearFakeClientesConocidos();
+    const fila = await crearFilaEnRegistro(entradas, "registro_nombre");
+    const { deps } = armarDepsRegistro(historialEnviado(botDijo(MENSAJE_REGISTRO_NOMBRE, REGISTRO_VENCE_MS)), entradas, clientes);
+
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "María", wamid: "w1" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "registro_dia");
+    assert.equal(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`)?.nombre, "María");
+  });
+
+  for (const [modo, aviso] of [
+    ["registro_dia", MENSAJE_DIA_INVALIDO],
+    ["registro_mes", MENSAJE_MES_INVALIDO],
+  ] as const) {
+    it(`modo ${modo}: después de DOS avisos seguidos «${aviso.slice(0, 22)}…» se deja de insistir -> manejado:false y en silencio`, async () => {
+      const entradas = crearFakeEntradas();
+      const fila = await crearFilaEnRegistro(entradas, modo);
+      const { deps, envios } = armarDepsRegistro(historialEnviado(botDijo(aviso, MIN_REGISTRO), botDijo(aviso, 2 * MIN_REGISTRO), botDijo(MENSAJE_REGISTRO_DIA, 3 * MIN_REGISTRO)), entradas);
+
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "jajaja", wamid: "w1" }, deps);
+
+      assert.deepEqual(r, { manejado: false });
+      assert.equal(fila.modo, "gemini");
+      assert.equal(envios.enviados.length, 0);
+    });
+
+    it(`modo ${modo}: con UN solo aviso todavía se le repite, exactamente igual que antes`, async () => {
+      const entradas = crearFakeEntradas();
+      const clientes = crearFakeClientesConocidos();
+      clientes.clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`, { nombre: "Laura", cumpleDia: 10, cumpleMes: null });
+      const fila = await crearFilaEnRegistro(entradas, modo);
+      const { deps, envios } = armarDepsRegistro(historialEnviado(botDijo(aviso, MIN_REGISTRO), botDijo(MENSAJE_REGISTRO_DIA, 2 * MIN_REGISTRO)), entradas, clientes);
+
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "jajaja", wamid: "w1" }, deps);
+
+      assert.equal(r.manejado, true);
+      assert.equal(fila.modo, modo, "sigue en el mismo paso");
+      assert.equal(envios.enviados.at(-1)!.mensaje, aviso);
+    });
+  }
+
+  it("«cancelar» con una persona atendiendo: se suelta en silencio (no se le manda «cancelé el registro»)", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+    const { deps, envios } = armarDepsRegistro(historialEnviado(personaDijo("Te queda en 230 mil")), entradas);
+
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "cancelar", wamid: "w1" }, deps);
+
+    assert.deepEqual(r, { manejado: false });
+    assert.equal(fila.modo, "gemini");
+    assert.equal(envios.enviados.length, 0);
+  });
+
+  it("«cancelar» con el registro VIVO sigue funcionando como siempre (mensaje de cancelación)", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+    const { deps, envios } = armarDepsRegistro(historialEnviado(botDijo(MENSAJE_REGISTRO_DIA)), entradas);
+
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "cancelar", wamid: "w1" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "gemini");
+    assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_REGISTRO_CANCELADO);
+  });
+
+  it("un registro VIVO (el aviso es reciente) sigue su curso normal: «15» avanza al mes", async () => {
+    const entradas = crearFakeEntradas();
+    const clientes = crearFakeClientesConocidos();
+    clientes.clientes.set(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`, { nombre: "Camila", cumpleDia: null, cumpleMes: null });
+    const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+    const { deps, envios } = armarDepsRegistro(historialEnviado(botDijo(MENSAJE_REGISTRO_DIA, 30_000)), entradas, clientes);
+
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "15", wamid: "w1" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "registro_mes");
+    assert.equal(clientes.clientes.get(`whatsapp-qr:${AMORE_TENANT_ID}|${TEL_REGISTRO}`)?.cumpleDia, 15);
+    assert.equal(envios.enviados.length, 1);
+  });
+
+  it("si el historial no se pudo leer (null) el registro sigue como siempre: nunca se suelta a ciegas", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+    const { deps, envios } = armarDepsRegistro({ leerSalientesRecientes: async () => null }, entradas);
+
+    const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, deps);
+
+    assert.equal(r.manejado, true);
+    assert.equal(fila.modo, "registro_dia");
+    assert.equal(envios.enviados.at(-1)!.mensaje, MENSAJE_DIA_INVALIDO);
+  });
+
+  it("ya soltado, el siguiente mensaje (o el mismo reentregado) pasa de largo sin escribir nada", async () => {
+    const entradas = crearFakeEntradas();
+    const fila = await crearFilaEnRegistro(entradas, "registro_dia");
+    const { deps, envios } = armarDepsRegistro(historialEnviado(personaDijo("Te queda en 230 mil")), entradas);
+
+    await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "Gracias, listo", wamid: "w1" }, deps);
+    for (const wamid of ["w1", "w2"]) {
+      const r = await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "Nos vemos mañana", wamid }, deps);
+      assert.deepEqual(r, { manejado: false }, wamid);
+    }
+    assert.equal(fila.modo, "gemini");
+    assert.equal(envios.enviados.length, 0);
+  });
+
+  it("lee el historial de ESA clienta y de ese negocio, y solo lo necesario", async () => {
+    const entradas = crearFakeEntradas();
+    await crearFilaEnRegistro(entradas, "registro_dia");
+    const consultas: { idTenant: string; telefono: string; limite?: number }[] = [];
+    const { deps } = armarDepsRegistro(
+      {
+        leerSalientesRecientes: async (_s, p) => {
+          consultas.push(p);
+          return [];
+        },
+      },
+      entradas,
+    );
+    await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, deps);
+    assert.deepEqual(consultas, [{ idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, limite: SALIENTES_A_REVISAR }]);
+  });
+
+  it("sin registro en curso (o mensaje ya procesado) NO consulta el historial: este gate corre con CADA mensaje de AMORE", async () => {
+    let consultas = 0;
+    const lector: Partial<InterceptarRegistroClienteDeps> = {
+      leerSalientesRecientes: async () => {
+        consultas++;
+        return [];
+      },
+    };
+    // Sin fila.
+    const sinFila = armarDepsRegistro(lector);
+    await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, sinFila.deps);
+    // Conversación normal.
+    const entradasGemini = crearFakeEntradas();
+    await crearFilaEnRegistro(entradasGemini, "gemini");
+    await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, armarDepsRegistro(lector, entradasGemini).deps);
+    // Registro en curso pero ese wamid ya se procesó.
+    const entradasYaProcesado = crearFakeEntradas();
+    await crearFilaEnRegistro(entradasYaProcesado, "registro_dia", "w1");
+    await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: AMORE_TENANT_ID, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, armarDepsRegistro(lector, entradasYaProcesado).deps);
+    // Otro negocio.
+    await interceptarRegistroClienteAmore({ supabase: FAKE_SUPABASE, idTenant: OTRO_TENANT, telefono: TEL_REGISTRO, texto: "hola", wamid: "w1" }, armarDepsRegistro(lector).deps);
+
+    assert.equal(consultas, 0);
   });
 });
 
