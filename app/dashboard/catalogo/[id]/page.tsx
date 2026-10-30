@@ -11,6 +11,7 @@ import type { CatalogCategory, CatalogImage, CatalogProductDetail } from "@/lib/
 import { diffProductForm, productFormFrom, validateProductForm, type ProductFormErrors, type ProductFormState } from "@/lib/catalogo/form";
 import type { UploadStage } from "@/lib/catalogo-client";
 import { ProductFields, ReferenceField } from "@/components/dashboard/catalogo/ProductFields";
+import { useLineasDelNegocio } from "@/components/dashboard/catalogo/use-lineas";
 import { ProductImage, StatusBadge, actionBtn, cn, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
 
 const MAX_IMAGES = 12;
@@ -20,6 +21,8 @@ export default function ProductoPage() {
   const toast = useCatalogToast();
   const { id } = useParams<{ id: string }>();
   const { client, canWrite } = useCatalogAccess();
+  // Las líneas de la tienda (Plata, Rodio…): solo en negocios que las tienen.
+  const lineas = useLineasDelNegocio(client);
 
   const [product, setProduct] = useState<CatalogProductDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -299,6 +302,7 @@ export default function ProductoPage() {
               client={client}
               disabled={readOnly || saving}
               stockUntracked={!product.tracksStock}
+              lineas={lineas}
             />
 
             {readOnly ? (

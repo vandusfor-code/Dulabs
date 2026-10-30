@@ -329,6 +329,14 @@ export const productListQuerySchema = z.object({
     .transform((v) => (v ? v : undefined)),
   categoryId: uuid.optional(),
   status: z.enum(STATUS_FILTERS).default("ALL"),
+  /** Solo en tiendas con líneas (Plata, Rodio…): «sin» = las piezas que no están en ninguna línea; una clave = las piezas de esa línea. Vacío = todas. */
+  linea: z
+    .string()
+    .trim()
+    .max(30)
+    .refine((v) => v === "" || /^(?:sin|[a-z0-9]+(?:-[a-z0-9]+)*)$/.test(v), { message: "La línea no es válida." })
+    .transform((v) => (v ? v : undefined))
+    .optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(CATALOG_LIMITS.pageSizeMax).default(CATALOG_LIMITS.pageSizeDefault),
 });

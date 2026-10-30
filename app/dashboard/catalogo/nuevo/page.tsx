@@ -11,6 +11,7 @@ import { emptyProductForm, toProductDraft, validateProductForm, type ProductForm
 import type { UploadStage } from "@/lib/catalogo-client";
 import { ProductFields, ReferenceField } from "@/components/dashboard/catalogo/ProductFields";
 import { ImageDropzone, usePickedImage } from "@/components/dashboard/catalogo/ImageDropzone";
+import { useLineasDelNegocio } from "@/components/dashboard/catalogo/use-lineas";
 import { ProductImage, actionBtn, cn, formatPrice, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
 
 type Fase = "editando" | "guardando" | "subiendo";
@@ -30,6 +31,8 @@ export default function NuevoProductoPage() {
   const { t } = useI18n();
   const router = useRouter();
   const { client, canWrite, ready } = useCatalogAccess();
+  // Las líneas de la tienda (Plata, Rodio…): solo en negocios que las tienen.
+  const lineas = useLineasDelNegocio(client);
 
   const [form, setForm] = useState<ProductFormState>(emptyProductForm);
   const [errors, setErrors] = useState<ProductFormErrors>({});
@@ -150,6 +153,7 @@ export default function NuevoProductoPage() {
               onCategoryCreated={(c) => setCategories((all) => [...all, c].sort((a, b) => a.name.localeCompare(b.name, "es")))}
               client={client}
               disabled={ocupado}
+              lineas={lineas}
             />
 
             {errorServidor && <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-sm text-red-400">{errorServidor}</p>}

@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, ClipboardList, FileSpreadsheet, PackagePlus, Plus, Search, Tags, X } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
-import type { CatalogCategory, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
+import type { CatalogCategory, CatalogProduct, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
+import { LINEA_SIN, materialConLinea } from "@/lib/catalogo/lineas";
 import { CatalogLinks } from "@/components/dashboard/catalogo/CatalogLinks";
 import { CategoriasDialog } from "@/components/dashboard/catalogo/CategoriasDialog";
 import { ProductList, ProductListSkeleton } from "@/components/dashboard/catalogo/ProductList";
-import { actionBtn, cn, inputCls, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
+import { useLineasDelNegocio } from "@/components/dashboard/catalogo/use-lineas";
+import { actionBtn, cn, inputCls, primaryBtn, useCatalogAccess, useCatalogToast } from "@/components/dashboard/catalogo/ui";
 
 const PAGE_SIZE = 30;
 
@@ -18,11 +20,17 @@ type Resultado = { key: string; page: ProductPage | null; error: string | null }
 export default function CatalogoPage() {
   const { t } = useI18n();
   const { client, cms, canWrite } = useCatalogAccess();
+  const toast = useCatalogToast();
+  // Las líneas de la tienda (Plata, Rodio…), solo en negocios que las tienen: sin ellas esta pantalla es exactamente la de siempre.
+  const lineas = useLineasDelNegocio(client);
 
   const [busqueda, setBusqueda] = useState("");
   const [q, setQ] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [status, setStatus] = useState<StatusFilter>("ALL");
+  const [linea, setLinea] = useState("");
+  // Productos cuya línea se está guardando desde la lista (id -> línea elegida).
+  const [asignando, setAsignando] = useState<ReadonlyMap<string, string>>(new Map());
   const [page, setPage] = useState(1);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [categoriasAbierto, setCategoriasAbierto] = useState(false);
@@ -50,24 +58,56 @@ export default function CatalogoPage() {
     };
   }, [client]);
 
-  const key = useMemo(() => JSON.stringify({ q, categoryId, status, page, recarga }), [q, categoryId, status, page, recarga]);
+  const key = useMemo(() => JSON.stringify({ q, categoryId, status, linea, page, recarga }), [q, categoryId, status, linea, page, recarga]);
 
   useEffect(() => {
     if (!client) return;
     let vivo = true;
-    void client.listProducts({ q: q || undefined, categoryId: categoryId || undefined, status, page, pageSize: PAGE_SIZE }).then((r) => {
+    void client.listProducts({ q: q || undefined, categoryId: categoryId || undefined, status, linea: linea || undefined, page, pageSize: PAGE_SIZE }).then((r) => {
       if (!vivo) return; // respuesta vieja: nunca pisa a la actual
       setResultado({ key, page: r.ok ? r.data : null, error: r.ok ? null : r.error.message });
     });
     return () => {
       vivo = false;
     };
-  }, [client, key, q, categoryId, status, page]);
+  }, [client, key, q, categoryId, status, linea, page]);
 
   const cargando = resultado?.key !== key;
   const data = resultado?.page ?? null;
   const totalPaginas = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  const hayFiltros = Boolean(q || categoryId || status !== "ALL");
+  const hayFiltros = Boolean(q || categoryId || status !== "ALL" || linea);
+
+  // El filtro de línea de AHORA: al terminar de guardar se mira este y no el de cuando se empezó (la persona pudo cambiarlo mientras tanto).
+  const lineaDelFiltro = useRef(linea);
+  useEffect(() => {
+    lineaDelFiltro.current = linea;
+  }, [linea]);
+
+  /**
+   * Cambia la línea de una pieza desde la lista: la línea ES su «Material», así que se escribe ahí y se guarda como cualquier edición del producto. Con un filtro de línea puesto la pieza puede
+   * dejar de pertenecer a esta lista (p. ej. ya no está «sin línea»), así que se vuelve a pedir la página: la lista de pendientes se va vaciando sola. Sin filtro, solo se cambia la fila.
+   */
+  const asignarLinea = async (producto: CatalogProduct, clave: string) => {
+    if (!client || asignando.has(producto.id)) return;
+    const material = materialConLinea(producto.material, clave, lineas);
+    if (material === (producto.material ?? "")) return;
+    setAsignando((m) => new Map(m).set(producto.id, clave));
+    const r = await client.updateProduct(producto.id, { material: material === "" ? null : material });
+    setAsignando((m) => {
+      const resto = new Map(m);
+      resto.delete(producto.id);
+      return resto;
+    });
+    if (!r.ok) {
+      toast(r.error.message, "error");
+      return;
+    }
+    const nombre = lineas.find((l) => l.clave === clave)?.etiqueta ?? clave;
+    toast(t(`«${producto.name}» quedó en la línea ${nombre}.`, `“${producto.name}” is now in the ${nombre} line.`));
+    const actualizado = r.data.product;
+    if (lineaDelFiltro.current) setRecarga((n) => n + 1);
+    else setResultado((previo) => (previo?.page ? { ...previo, page: { ...previo.page, items: previo.page.items.map((x) => (x.id === actualizado.id ? actualizado : x)) } } : previo));
+  };
 
   const cambiarPagina = (p: number) => {
     setPage(p);
@@ -89,6 +129,7 @@ export default function CatalogoPage() {
     setQ("");
     setCategoryId("");
     setStatus("ALL");
+    setLinea("");
     setPage(1);
   };
 
@@ -170,6 +211,25 @@ export default function CatalogoPage() {
                 </option>
               ))}
             </select>
+            {lineas.length > 0 && (
+              <select
+                value={linea}
+                onChange={(e) => {
+                  setLinea(e.target.value);
+                  setPage(1);
+                }}
+                aria-label={t("Filtrar por línea", "Filter by line")}
+                className={cn(inputCls, "sm:w-44")}
+              >
+                <option value="">{t("Todas las líneas", "All lines")}</option>
+                <option value={LINEA_SIN}>{t("Sin línea", "No line")}</option>
+                {lineas.map((l) => (
+                  <option key={l.clave} value={l.clave}>
+                    {l.etiqueta}
+                  </option>
+                ))}
+              </select>
+            )}
             <div role="radiogroup" aria-label={t("Estado", "Status")} className="inline-flex shrink-0 rounded-lg border border-edge bg-ink p-1">
               {estados.map((e) => (
                 <button
@@ -217,8 +277,17 @@ export default function CatalogoPage() {
             hayFiltros ? (
               <div className="rounded-2xl border border-edge bg-card px-6 py-14 text-center">
                 <Search className="mx-auto size-6 text-mist" />
-                <p className="mt-3 text-sm font-medium text-fg">{t("Sin resultados", "No results")}</p>
-                <p className="mt-1 text-sm text-mist">{t("Prueba con otro nombre, referencia o filtro.", "Try another name, reference or filter.")}</p>
+                {linea === LINEA_SIN && !q && !categoryId && status === "ALL" ? (
+                  <>
+                    <p className="mt-3 text-sm font-medium text-fg">{t("Todas tus piezas ya están en una línea", "All your pieces are already in a line")}</p>
+                    <p className="mt-1 text-sm text-mist">{t("No queda ninguna sin clasificar.", "None are left to classify.")}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-3 text-sm font-medium text-fg">{t("Sin resultados", "No results")}</p>
+                    <p className="mt-1 text-sm text-mist">{t("Prueba con otro nombre, referencia o filtro.", "Try another name, reference or filter.")}</p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-edge bg-card px-6 py-16 text-center">
@@ -244,7 +313,7 @@ export default function CatalogoPage() {
               </div>
             )
           ) : data ? (
-            <ProductList products={data.items} dimmed={cargando} />
+            <ProductList products={data.items} dimmed={cargando} clasificacion={lineas.length > 0 ? { lineas, puedeAsignar: canWrite, asignando, onAsignar: asignarLinea } : undefined} />
           ) : null}
         </div>
 
