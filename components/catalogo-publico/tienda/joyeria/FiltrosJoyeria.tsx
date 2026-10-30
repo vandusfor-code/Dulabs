@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Filtros del listado del tema "joyeria" (Bloque 30): categoría, color, material y rango de precio, como el panel de la referencia. SOLO presentación y navegación: muestra las opciones
- * y los conteos que ya calculó el servidor (lib/catalogo/filtros.ts) y escribe la elección en la dirección (`?categoria=…&color=…&material=…&precio_min=…&precio_max=…`), de modo que cada
+ * Filtros del listado del tema "joyeria" (Bloque 30): línea (Plata, Rodio…, solo si el negocio las tiene), categoría, color, material y rango de precio, como el panel de la referencia. SOLO presentación y navegación: muestra las opciones
+ * y los conteos que ya calculó el servidor (lib/catalogo/filtros.ts) y escribe la elección en la dirección (`?linea=…&categoria=…&color=…&material=…&precio_min=…&precio_max=…`), de modo que cada
  * vista se puede compartir y el servidor sigue siendo quien decide qué productos se ven (ningún precio, inventario ni dato se toca).
  *
  * Escritorio: columna fija a la izquierda. Celular: botón «Filtrar» y una hoja inferior (diálogo nativo). Cada cambio se aplica al instante, sin botón: las casillas responden en el mismo
@@ -18,25 +18,30 @@ import { SIN_FILTROS, formatoPrecio, hayFiltros as hayFiltrosDe, puntoDeColor, u
 /** Espera tras el último movimiento del deslizador antes de aplicar el rango (mientras se arrastra no se recarga la lista a cada fotograma). */
 const ESPERA_PRECIO_MS = 350;
 
-type GrupoLista = "categorias" | "colores" | "materiales";
+type GrupoLista = "lineas" | "categorias" | "colores" | "materiales";
 type Rango = readonly [number, number];
 
 /** Clic normal con el botón principal: con Ctrl, Cmd, Shift o Alt el navegador abre la dirección donde corresponda. */
 const clicSimple = (e: MouseEvent<HTMLElement>) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 
 function cuantosFiltros(f: FiltrosCatalogo): number {
-  return f.categorias.length + f.colores.length + f.materiales.length + (f.precioMin !== undefined || f.precioMax !== undefined ? 1 : 0);
+  return (f.lineas?.length ?? 0) + f.categorias.length + f.colores.length + f.materiales.length + (f.precioMin !== undefined || f.precioMax !== undefined ? 1 : 0);
 }
 
-function Opcion({ id, nombre, valor, etiqueta, n, marcada, punto, alCambiar }: { id: string; nombre: string; valor: string; etiqueta: string; n: number; marcada: boolean; punto?: string | null; alCambiar: () => void }) {
+function Opcion({ id, nombre, valor, etiqueta, n, marcada, punto, alCambiar }: { id: string; nombre: string; valor: string; etiqueta: string; n: number | null; marcada: boolean; punto?: string | null; alCambiar: () => void }) {
   return (
     <li>
       <label htmlFor={id} className="joy-filtro-fila">
         <input id={id} type="checkbox" name={nombre} value={valor} checked={marcada} onChange={alCambiar} className="joy-filtro-caja" />
         {punto && <span className="joy-filtro-punto" style={{ backgroundColor: punto }} aria-hidden />}
         <span className="joy-filtro-texto">{etiqueta}</span>
-        {/* El espacio solo cuenta para el nombre que leen los lectores de pantalla («Dorado (85)»): en una fila flex no se dibuja. */}{" "}
-        <span className="joy-filtro-n">({n})</span>
+        {/* El espacio solo cuenta para el nombre que leen los lectores de pantalla («Dorado (85)»): en una fila flex no se dibuja. Sin conteo (una línea que aún no tiene piezas) no se dibuja nada. */}
+        {n !== null && (
+          <>
+            {" "}
+            <span className="joy-filtro-n">({n})</span>
+          </>
+        )}
       </label>
     </li>
   );
@@ -152,7 +157,10 @@ export function FiltrosJoyeria({
   );
 
   const alternar = (grupo: GrupoLista, valor: string) =>
-    aplicar((f) => ({ ...f, [grupo]: f[grupo].includes(valor) ? f[grupo].filter((v) => v !== valor) : [...f[grupo], valor] }));
+    aplicar((f) => {
+      const actuales = f[grupo] ?? [];
+      return { ...f, [grupo]: actuales.includes(valor) ? actuales.filter((v) => v !== valor) : [...actuales, valor] };
+    });
   const quitar = () => {
     setArrastre(null);
     aplicar(() => SIN_FILTROS);
@@ -203,6 +211,15 @@ export function FiltrosJoyeria({
           <div className="mb-5 flex justify-end">
             <QuitarFiltros href={quitarHref} alQuitar={quitar} />
           </div>
+        )}
+        {facetas.lineas && facetas.lineas.length > 0 && (
+          <Grupo titulo="Línea">
+            <ul className="joy-filtro-lista" role="list">
+              {facetas.lineas.map((l) => (
+                <Opcion key={l.clave} id={`${base}-lin-${l.clave}`} nombre="linea" valor={l.clave} etiqueta={l.etiqueta} n={l.n > 0 ? l.n : null} marcada={(elegidos.lineas ?? []).includes(l.clave)} alCambiar={() => alternar("lineas", l.clave)} />
+              ))}
+            </ul>
+          </Grupo>
         )}
         {facetas.categorias.length > 0 && (
           <Grupo titulo="Categoría del producto">

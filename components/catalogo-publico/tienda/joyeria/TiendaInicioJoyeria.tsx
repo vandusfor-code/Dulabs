@@ -14,7 +14,7 @@ import Image from "next/image";
 import { ArrowRight, MessageCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { Revelar } from "@/components/catalogo-publico/tienda/Revelar";
-import { AcabadosJoyeria, ColeccionVideo, MarcaVideo } from "@/components/catalogo-publico/tienda/joyeria/BloquesJoyeria";
+import { AcabadosJoyeria, ColeccionVideo, FranjaLineas, MarcaVideo } from "@/components/catalogo-publico/tienda/joyeria/BloquesJoyeria";
 import { CarruselCategorias } from "@/components/catalogo-publico/tienda/joyeria/CarruselCategorias";
 import { FlotantesJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FlotantesJoyeria";
 import { HeroJoyeria } from "@/components/catalogo-publico/tienda/joyeria/HeroJoyeria";
@@ -25,7 +25,7 @@ import { VideoSeccion } from "@/components/catalogo-publico/tienda/joyeria/Video
 import { Destellos, ENLACE_TEXTO, EncabezadoSeccion, EnlaceJoyeria, indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
 import { formatCop } from "@/lib/business-agent-quote";
 import type { OpcionFaceta } from "@/lib/catalogo/filtros";
-import { acabadosVisibles, mayoristasVisible, rotuloDeDestacados, type MayoristasVisible } from "@/lib/catalogo/joyeria";
+import { acabadosVisibles, mayoristasVisible, rotuloDeDestacados, type LineaVisible, type MayoristasVisible } from "@/lib/catalogo/joyeria";
 import type { PublicHome } from "@/lib/catalogo/service";
 import { heroOf, ORDEN_INICIO_CLASICO, type CampanaVitrina, type CatalogStorefrontConfig, type ComboVitrina, type ConfigJoyeria, type OfertaVitrina, type SeccionInicio } from "@/lib/catalogo/vitrina";
 
@@ -283,6 +283,7 @@ export function TiendaInicioJoyeria({
   businessName,
   whatsapp,
   acabados,
+  lineas = [],
 }: {
   home: PublicHome;
   config: CatalogStorefrontConfig;
@@ -293,6 +294,8 @@ export function TiendaInicioJoyeria({
   whatsapp: string | null;
   /** Colores del catálogo con su conteo (lectura liviana del servidor). Sin ellos, o con menos de dos reales, no hay franja de acabados. */
   acabados?: readonly OpcionFaceta[] | null;
+  /** Las líneas de la tienda (Plata, Rodio…), todas y en su orden: salen de la configuración, no del catálogo, así que están aunque no tengan piezas. Sin ellas no hay franja. */
+  lineas?: readonly LineaVisible[];
 }) {
   const hero = heroOf(config);
   const banner = config.bannerImage;
@@ -412,12 +415,17 @@ export function TiendaInicioJoyeria({
     </>
   );
 
-  // Lo que sube primero sobre la portada fija: el video de la colección a pantalla completa y la franja de acabados. `data-joy-claro` marca dónde empieza lo claro: ahí el cromo deja de ser
+  // Lo que sube primero sobre la portada fija: el video de la colección a pantalla completa, la franja de líneas y la de acabados. `data-joy-claro` marca dónde empieza lo claro: ahí el cromo deja de ser
   // transparente (sobre el video sigue siéndolo, como sobre la portada).
   const intro = (
     <>
       {joyeria.coleccion && <ColeccionVideo coleccion={joyeria.coleccion} href={listPath} />}
       {joyeria.coleccion && <div data-joy-claro="" aria-hidden />}
+      {joyeria.lineas && lineas.length > 0 && (
+        <Revelar>
+          <FranjaLineas titulo={joyeria.lineas.titulo} lineas={lineas} />
+        </Revelar>
+      )}
       {joyeria.acabados && franja.length > 0 && (
         <Revelar>
           <AcabadosJoyeria titulo={joyeria.acabados.titulo} acabados={franja} />

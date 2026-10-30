@@ -24,6 +24,8 @@
  * productos, los precios, las fotos y el carrito siguen saliendo del catálogo real.
  */
 
+import type { LineasJoyeria } from "@/lib/catalogo/lineas";
+
 export interface StorefrontImage {
   /** Ruta pública dentro de /public o ruta de una imagen del CMS (/catalogo/{slug}/vitrina/{id}.webp); next/image la optimiza. */
   src: string;
@@ -248,6 +250,11 @@ export interface MayoristasJoyeria {
 export interface ConfigJoyeria {
   /** Mensajes que rotan en la barra superior. Sin mensajes (o sin WhatsApp válido para los que lo piden) no hay barra. */
   anuncios: readonly AnuncioJoyeria[];
+  /**
+   * Líneas de la tienda (Plata, Rodio, Acero, Cover Gold…): el primer nivel de la navegación, con las mismas categorías del negocio dentro de cada una. Una pieza pertenece a una línea según su campo
+   * «Material» (lib/catalogo/lineas.ts); las líneas existen en el menú, el inicio y los filtros aunque aún no tengan piezas. Sin esto, la tienda se ve exactamente como siempre.
+   */
+  lineas?: LineasJoyeria;
   /** Bloque de compradores mayoristas del inicio (solo se dibuja si el negocio tiene un WhatsApp válido). */
   mayoristas?: MayoristasJoyeria;
   /** Frase breve bajo el nombre de la marca en el pie. */
@@ -401,6 +408,16 @@ const REGISTRO: Record<string, CatalogStorefrontConfig> = {
         boton: "Ver la colección",
       },
       acabados: { titulo: "Conoce nuestros acabados" },
+      // Líneas de la joyería (pedido de la clienta, 2026-10-30): cada pieza cae en su línea por lo que dice su campo «Material» («Rodio · 3cm» y «Rodio platinado» son Rodio; «Plateado» es un color, no Plata).
+      lineas: {
+        titulo: "Nuestras líneas",
+        lineas: [
+          { clave: "plata", etiqueta: "Plata" },
+          { clave: "rodio", etiqueta: "Rodio" },
+          { clave: "acero", etiqueta: "Acero" },
+          { clave: "cover-gold", etiqueta: "Cover Gold", alias: ["cover gold", "covergold"] },
+        ],
+      },
       marca: {
         video: { horizontal: archivoDelacour("marca", 720, 900), etiqueta: "Video de la marca" },
         titulo: "Más que joyas, historias que te acompañan",
