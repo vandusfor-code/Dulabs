@@ -1,0 +1,38 @@
+# Render Blueprint para DuLabs — Next.js 16 corriendo como servidor Node (`next start`), DESPLIEGUE TEMPORAL mientras Vercel está bloqueado.
+# Es el MISMO proyecto (no una versión simplificada): conecta al Supabase ORIGINAL y no cambia dominio, DNS, tablas, usuarios ni Storage.
+# Guía completa, límites del plan gratis y comprobaciones: docs/RENDER_DEPLOY.md.
+#
+# Las variables marcadas `sync: false` NO se guardan en el repo: Render las pide en el panel al crear el servicio. Pega los MISMOS valores que hoy
+# tienes en Vercel / .env.local. Las NEXT_PUBLIC_* se incrustan al COMPILAR: si cambian, hay que volver a desplegar (Manual Deploy).
+# Las demás variables de la aplicación (WhatsApp/Meta, Wompi, IA, cifrado…) no hacen falta para entrar y administrar el catálogo; se agregan después
+# desde el servicio → Environment → «Add from .env» (nombres en .env.example y en docs/RENDER_DEPLOY.md).
+services:
+  - type: web
+    name: dulabs
+    runtime: node
+    plan: free
+    # Oregon = la región del Supabase original (us-west-2): la menor latencia a la base de datos. No se puede cambiar después de crear el servicio.
+    region: oregon
+    branch: deploy/render
+    # `--include=dev`: el build necesita tsx, typescript y tailwind aunque NODE_ENV sea production. Medido: ~3 min y ~3 GB de pico (el límite de build de Render es 8 GB).
+    buildCommand: npm ci --include=dev && NODE_OPTIONS=--max-old-space-size=4096 npm run build
+    # El tope de memoria de V8 deja margen dentro de los 512 MB del plan gratis (medido en reposo: ~170 MB).
+    startCommand: NODE_OPTIONS=--max-old-space-size=320 npm run start
+    healthCheckPath: /api/health
+    # Sin despliegue automático por commit: cada build gasta minutos de pipeline (500 incluidos al mes). Se despliega a mano desde el panel.
+    autoDeployTrigger: "off"
+    envVars:
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      # ── Supabase ORIGINAL (proyecto eobppllxqzlrymagtumi; mismos valores que hoy) ──
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # ── URL pública (enlaces de correos y compartidos). Puede quedar la actual o la URL que Render asigne. ──
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false

@@ -728,3 +728,5 @@ lib/cobros/admin-cobro-route.test.ts
 app/webhook-dulabs/suspension-pago-orden.test.ts
 app/api/cron/cobros-manuales/route.test.ts
 components/admin/cliente/SeccionCobro.dom.test.tsx
+lib/salud.test.ts
+app/api/health/route.test.ts
