@@ -728,3 +728,16 @@ lib/cobros/admin-cobro-route.test.ts
 app/webhook-dulabs/suspension-pago-orden.test.ts
 app/api/cron/cobros-manuales/route.test.ts
 components/admin/cliente/SeccionCobro.dom.test.tsx
+
+# Delacour · Hombre / Vértice (pedido de la clienta, 2026-11-12): separar la joyería de mujer y la de hombre, con el lado de hombre en grafito y plata. Lo puro (el «para quién», la dirección ?genero=, cuándo se
+# pinta el tema, los esquemas), el servicio (con la migración sin aplicar todo queda como siempre), el SQL real (migración 20261215 y los SQL de aprovisionamiento 08 en un Postgres embebido), el contrato del
+# color en app/globals.css (paleta de la clienta, contrastes, solo colores), el HTML del servidor (selector, portada, migas, ficha, franja «Para él» y la referencia DL- sobre cada foto), lo que hace el cliente
+# (señal del tema, selector de la cabecera y del menú, filtros que conservan el lado) y el panel (formulario, lista y la página real con las rutas reales).
+lib/catalogo/genero.test.ts
+lib/catalogo/genero-servicio.test.ts
+lib/catalogo/genero-sql.pglite.test.ts
+lib/catalogo/genero-provisioning.pglite.test.ts
+lib/catalogo/genero-css.test.ts
+components/catalogo-publico/tienda/joyeria/genero.ssr.test.tsx
+components/catalogo-publico/tienda/joyeria/genero.dom.test.tsx
+components/dashboard/catalogo/genero-panel.dom.test.tsx

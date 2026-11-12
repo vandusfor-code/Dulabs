@@ -17,6 +17,8 @@ import type { CatalogCategory } from "@/lib/catalogo/domain";
 import { Dialogo } from "@/components/catalogo-publico/tienda/Dialogo";
 import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/TiendaContext";
 import { useMovimientoReducido } from "@/components/catalogo-publico/tienda/joyeria/medios";
+import { SelectorGenero } from "@/components/catalogo-publico/tienda/joyeria/SelectorGenero";
+import { useLadoDeHombre } from "@/components/catalogo-publico/tienda/joyeria/TemaGenero";
 import { esListadoDeUrl } from "@/lib/catalogo/inicio";
 import type { AnuncioVisible, LineaVisible } from "@/lib/catalogo/joyeria";
 
@@ -160,6 +162,7 @@ export function CromoJoyeria({
   paginas = [],
   lineas = [],
   lineasHref,
+  genero,
 }: {
   marca: { name: string; descriptor?: string };
   basePath: string;
@@ -177,10 +180,16 @@ export function CromoJoyeria({
   lineas?: readonly LineaVisible[];
   /** A dónde lleva el acceso «Líneas» de la cabecera (la franja de líneas del inicio). */
   lineasHref?: string;
+  /**
+   * El selector «Mujer | Hombre» (solo si la tienda separa y ya hay piezas de hombre): los rótulos de cada lado y las referencias de hombre, con las que se sabe si la ficha que se mira es de ese lado.
+   * Sin esto no hay selector y la cabecera es la de siempre.
+   */
+  genero?: { etiquetas: { mujer: string; hombre: string }; hombres: readonly string[] };
 }) {
   const { whatsapp } = useTienda();
   const pathname = usePathname();
   const params = useSearchParams();
+  const ladoHombre = useLadoDeHombre(basePath, genero?.hombres ?? []);
   const q = params.get("q") ?? undefined;
   const hayFiltros = esListadoDeUrl(params);
   const enRaiz = pathname === basePath;
@@ -197,8 +206,8 @@ export function CromoJoyeria({
   const digits = (whatsapp ?? "").replace(/\D/g, "");
   const hrefMayorista = mayoristaHref ?? `${basePath}#mayoristas`;
   const enMayoristas = pathname === hrefMayorista;
-  // Cada acceso de más en la cabecera (páginas propias o líneas) pide el ancho amplio: por debajo de xl se usa el menú lateral, que tiene lugar para todo.
-  const cab = paginas.length > 0 || lineas.length > 0 ? CABECERA.ancha : CABECERA.normal;
+  // Cada acceso de más en la cabecera (páginas propias, líneas o el selector de lado) pide el ancho amplio: por debajo de xl se usa el menú lateral, que tiene lugar para todo.
+  const cab = paginas.length > 0 || lineas.length > 0 || genero ? CABECERA.ancha : CABECERA.normal;
 
   // ¿Lo claro del contenido (o, sin marca, la cortina que sube sobre la portada) ya llegó a la cabecera? Se mide en un fotograma, nunca en cada evento de scroll.
   useEffect(() => {
@@ -262,10 +271,11 @@ export function CromoJoyeria({
             </Link>
 
             <nav className={cn("col-start-2 row-start-1 hidden items-center gap-7", cab.nav)} aria-label="Menú principal">
+              {genero && <SelectorGenero basePath={basePath} hombre={ladoHombre} etiquetas={genero.etiquetas} variante="nav" className="joy-tinta" />}
               <Link href={basePath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esInicio)}>
                 Inicio
               </Link>
-              <Link href={listPath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esListado)}>
+              <Link href={listPath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esListado && !ladoHombre)}>
                 Catálogo
               </Link>
               {lineas.length > 0 && (
@@ -318,10 +328,11 @@ export function CromoJoyeria({
             </button>
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-6">
+            {genero && <SelectorGenero basePath={basePath} hombre={ladoHombre} etiquetas={genero.etiquetas} variante="menu" alElegir={cerrarMenu} className="mb-4" />}
             <Link href={basePath} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(esInicio)}>
               Inicio
             </Link>
-            <Link href={listPath} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(esListado)}>
+            <Link href={listPath} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(esListado && !ladoHombre)}>
               Todo el catálogo
             </Link>
             {mayorista && (

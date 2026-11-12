@@ -7,7 +7,7 @@
  * Storage con tamaño/content-type/primeros bytes. Nunca toca la red.
  */
 import { randomUUID } from "node:crypto";
-import { formatReference, type CatalogCategory, type CatalogProduct } from "@/lib/catalogo/domain";
+import { formatReference, GENERO_PREDETERMINADO, type CatalogCategory, type CatalogProduct, type Genero } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
 import type { AttachMediaData, CatalogRepository, CatalogSearchQuery, ProductListFilter, ProductOrigin, ProductPatchData, ProductWriteData, StoredMedia } from "@/lib/catalogo/repository";
 import type { ImportRecord } from "@/lib/catalogo/import/types";
@@ -72,6 +72,13 @@ export function createInMemoryCatalogRepository() {
   const imports = new Map<string, ImportRecord & { tenantId: string }>();
   /** false = simula la BD sin la migración de carga masiva. */
   let importsEnabled = true;
+  /** Para quién es cada pieza (la columna `genero`, aparte del resto del producto como en la BD real: lo que no está aquí es de mujer). */
+  const generos = new Map<string, Genero>();
+  /** false = simula la BD sin la migración 20261215000000 (no existe la columna `genero`). */
+  let generoEnabled = true;
+  const generoNoDisponible = () => new CatalogError("FEATURE_UNAVAILABLE", "La separación Mujer/Hombre todavía no está activada. Avísale al equipo de DuLabs.");
+  /** Cuántas veces se leyó la lista de referencias de hombre (tests: una lectura por petición, ninguna en tiendas sin separación). */
+  let hombreReads = 0;
   const unavailable = () => new CatalogError("FEATURE_UNAVAILABLE", "La carga masiva todavía no está activada. Intenta de nuevo más tarde o avísale al equipo de DuLabs.");
   /** Simula un fallo inesperado (no CatalogError) en la lectura de claves. */
   let failKeys = false;
@@ -146,12 +153,36 @@ export function createInMemoryCatalogRepository() {
       if (f.status !== "ALL") items = items.filter((p) => p.status === f.status);
       if (f.categoryId) items = items.filter((p) => p.categoryId === f.categoryId);
       if (f.withImage) items = items.filter((p) => p.primaryImage !== null);
+      if (f.gender) {
+        // Igual que la BD real: pedir el filtro sin la columna es un error claro, no un listado distinto.
+        if (!generoEnabled) throw generoNoDisponible();
+        items = items.filter((p) => (generos.get(p.id) ?? GENERO_PREDETERMINADO) === f.gender);
+      }
       if (f.search) {
         const q = f.search.toLowerCase();
         items = items.filter((p) => p.name.toLowerCase().includes(q) || p.reference.toLowerCase().includes(q));
       }
       items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
       return { items: items.slice(f.offset, f.offset + f.limit).map(strip), total: items.length };
+    },
+
+    async listHombreReferences(tenantId, opciones) {
+      hombreReads++;
+      if (!generoEnabled) return null;
+      return [...products.values()]
+        .filter((p) => p.tenantId === tenantId && generos.get(p.id) === "hombre" && (opciones?.incluirInactivas || p.status === "ACTIVE"))
+        .map((p) => p.reference)
+        .sort();
+    },
+
+    async setGender(tenantId, actorId, productId, gender) {
+      if (!generoEnabled) throw generoNoDisponible();
+      const p = products.get(productId);
+      if (!p || p.tenantId !== tenantId) return false;
+      generos.set(productId, gender);
+      p.updatedAt = now();
+      p.updatedBy = actorId;
+      return true;
     },
 
     async listFilterRows(tenantId: string, page: { offset: number; limit: number }) {
@@ -560,6 +591,18 @@ export function createInMemoryCatalogRepository() {
     setSearchEnabled(enabled: boolean) {
       searchEnabled = enabled;
     },
+    /** Simula la BD SIN la migración de Hombre/Mujer (sin la columna `genero`). */
+    setGeneroEnabled(enabled: boolean) {
+      generoEnabled = enabled;
+    },
+    /** Marca una pieza como de Mujer u Hombre sin pasar por el servicio (como un UPDATE en el SQL Editor). */
+    setGeneroDirecto(productId: string, gender: Genero) {
+      generos.set(productId, gender);
+    },
+    /** Para quién es una pieza hoy (lo que no se marcó es de mujer). */
+    generoDe: (productId: string): Genero => generos.get(productId) ?? GENERO_PREDETERMINADO,
+    /** Cuántas veces se leyó la lista de referencias de hombre. */
+    hombreReads: () => hombreReads,
     searchCalls,
     setPublished(tenantId: string, published: boolean) {
       const p = publications.get(tenantId);

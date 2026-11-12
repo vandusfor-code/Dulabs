@@ -3,10 +3,15 @@
  * navegador. La validación aquí es solo para feedback inmediato: el servidor
  * (lib/catalogo/domain.ts) es quien decide.
  */
-import { CATALOG_LIMITS, type CatalogProduct } from "@/lib/catalogo/domain";
+import { CATALOG_LIMITS, type CatalogProduct, type Genero } from "@/lib/catalogo/domain";
 import type { ProductDraft, ProductPatch } from "@/lib/catalogo-client";
 
 export interface ProductFormState {
+  /**
+   * Para quién es la pieza. Solo existe en negocios que separan Mujer/Hombre (el panel lo sabe porque las piezas traen `gender`): sin él el formulario es el de siempre y NUNCA manda «gender».
+   * Al crear arranca en «mujer» (lo predeterminado) cuando la separación está disponible.
+   */
+  gender?: Genero;
   name: string;
   categoryId: string | null;
   retailPrice: number | null;
@@ -26,6 +31,7 @@ export function emptyProductForm(): ProductFormState {
 
 export function productFormFrom(p: CatalogProduct): ProductFormState {
   return {
+    ...(p.gender ? { gender: p.gender } : {}),
     name: p.name,
     categoryId: p.categoryId,
     retailPrice: p.pricing.retail,
@@ -69,6 +75,8 @@ export function toProductDraft(f: ProductFormState): ProductDraft {
     retailPrice: f.retailPrice ?? 0,
     wholesalePrice: f.wholesalePrice,
     stock: f.stock ?? 0,
+    // Solo se manda lo que no es lo predeterminado: una pieza de mujer se crea igual que siempre.
+    ...(f.gender === "hombre" ? { gender: "hombre" as const } : {}),
   };
 }
 
@@ -86,5 +94,7 @@ export function diffProductForm(original: ProductFormState, current: ProductForm
   if (a.wholesalePrice !== b.wholesalePrice) patch.wholesalePrice = b.wholesalePrice;
   // El stock solo viaja si se definió y cambió (vacío en un producto legado = no tocarlo).
   if (current.stock !== null && current.stock !== original.stock) patch.stock = current.stock;
+  // «Para»: solo si el negocio lo separa (el formulario lo trae) y cambió.
+  if (current.gender !== undefined && current.gender !== original.gender) patch.gender = current.gender;
   return patch;
 }

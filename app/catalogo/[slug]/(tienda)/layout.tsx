@@ -8,6 +8,7 @@ import { TiendaProvider } from "@/components/catalogo-publico/tienda/TiendaConte
 import { TiendaHeader } from "@/components/catalogo-publico/tienda/TiendaHeader";
 import { CromoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/CromoJoyeria";
 import { PieJoyeria } from "@/components/catalogo-publico/tienda/joyeria/PieJoyeria";
+import { TemaGenero } from "@/components/catalogo-publico/tienda/joyeria/TemaGenero";
 import { HeaderTecnologia, HeaderTecnologiaEsqueleto } from "@/components/catalogo-publico/tienda/tecnologia/HeaderTecnologia";
 import { NavInferiorTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/NavInferiorTecnologia";
 import { anunciosVisibles, enlaceWhatsapp, hrefLineas, hrefMayoristas, lineasVisibles, mayoristasVisible } from "@/lib/catalogo/joyeria";
@@ -60,6 +61,10 @@ export default async function TiendaLayout({ children, params }: { children: Rea
     const mayoristaHref = hrefMayoristas(basePath, mayoristas) ?? undefined;
     // Las líneas (Plata, Rodio…) del menú: de la configuración y de las categorías que esta pantalla ya cargó, sin leer productos.
     const lineas = lineasVisibles(joyeria.lineas, tienda.categories, basePath);
+    // Hombre/Mujer (Vértice): el selector y el tema oscuro solo existen si la tienda lo configuró Y ya hay piezas de hombre activas (el servicio manda sus referencias solo entonces); si no, el marco es el de siempre.
+    const generoConfig = joyeria.genero;
+    const hombres = tienda.genero?.hombres ?? [];
+    const genero = generoConfig && hombres.length > 0 ? { etiquetas: { mujer: generoConfig.mujer.etiqueta, hombre: generoConfig.hombre.etiqueta }, hombres } : undefined;
     const datosPie = await (piePrevio ?? cargarPieTienda(tienda.slug));
     // Las páginas propias publicadas hoy: las que la administradora puso en el menú de arriba y las rutas «aparte» de la barra inferior (el mismo dato y la misma lectura del pie, sin pedir nada más).
     const enlacesPaginas = enlacesDePaginas(basePath, datosPie, mayoristaHref);
@@ -77,7 +82,9 @@ export default async function TiendaLayout({ children, params }: { children: Rea
         <TiendaProvider slug={tienda.slug} context="retail" basePath={basePath} whatsapp={tienda.whatsapp} marcaReferencia={tienda.referenceMark}>
           <MarcadorLlegada />
           <Suspense fallback={null}>
-            <CromoJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} categoriasHref={categoriasHref} anuncios={anuncios} mayorista={Boolean(mayoristas)} mayoristaHref={mayoristaHref} paginas={enlacesPaginas.menu} lineas={lineas} lineasHref={hrefLineas(basePath)} />
+            <CromoJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} categoriasHref={categoriasHref} anuncios={anuncios} mayorista={Boolean(mayoristas)} mayoristaHref={mayoristaHref} paginas={enlacesPaginas.menu} lineas={lineas} lineasHref={hrefLineas(basePath)} genero={genero} />
+            {/* El aviso para el CSS «estoy en el lado de hombre»: pinta toda la tienda con la paleta de Vértice (cabecera, listado, ficha y pie). No dibuja nada visible. */}
+            {genero && <TemaGenero basePath={basePath} hombres={genero.hombres} />}
           </Suspense>
           <main className="w-full">{children}</main>
           <PieJoyeria marca={marca} basePath={basePath} listPath={listPath} categorias={tienda.categories} whatsapp={tienda.whatsapp} descripcion={joyeria.descripcion} mayorista={Boolean(mayoristas)} mayoristaHref={mayoristaHref} vista={vistaPie} />

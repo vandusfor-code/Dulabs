@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import type { CatalogProduct } from "@/lib/catalogo/domain";
+import type { CatalogProduct, Genero } from "@/lib/catalogo/domain";
 import { etiquetasDeLineas, lineasDeMaterial, type LineaConfig } from "@/lib/catalogo/lineas";
 import { ProductImage, StatusBadge, cn, formatPrice } from "@/components/dashboard/catalogo/ui";
 
@@ -21,12 +21,22 @@ export interface ClasificacionDeLista {
   /** Los productos que se están guardando, con la línea que se les eligió (su selector queda en pausa). */
   asignando: ReadonlyMap<string, string>;
   onAsignar: (producto: CatalogProduct, clave: string) => void;
+  /**
+   * «Para» (Mujer/Hombre): solo en negocios cuya tienda separa los dos lados (con la migración aplicada). Cada fila dice para quién es su pieza y quien puede editar el catálogo lo cambia ahí mismo.
+   * Sin esto la fila no muestra nada de eso.
+   */
+  genero?: {
+    puedeAsignar: boolean;
+    /** Los productos que se están guardando, con el lado que se les eligió (su selector queda en pausa). */
+    asignando: ReadonlyMap<string, Genero>;
+    onAsignar: (producto: CatalogProduct, genero: Genero) => void;
+  };
 }
 
 /** Lista de ADMINISTRACIÓN (no vitrina): encontrar, revisar y abrir para editar. */
 export function ProductList({ products, dimmed, clasificacion }: { products: CatalogProduct[]; dimmed?: boolean; clasificacion?: ClasificacionDeLista }) {
   const { t } = useI18n();
-  const clasifica = clasificacion && clasificacion.lineas.length > 0 ? clasificacion : null;
+  const clasifica = clasificacion && (clasificacion.lineas.length > 0 || clasificacion.genero) ? clasificacion : null;
   return (
     <div className={cn("overflow-hidden rounded-xl border border-edge bg-card transition-opacity", dimmed && "opacity-60")}>
       <div className={cn("hidden border-b border-edge px-4 py-2.5 text-[11px] font-medium uppercase tracking-wider text-mist", COLS)}>
@@ -101,7 +111,8 @@ function FilaClasificable({ p, clasificacion }: { p: CatalogProduct; clasificaci
               <span className="font-mono md:hidden">{p.reference} · </span>
               {p.categoryName ?? t("Sin categoría", "No category")}
             </span>
-            <LineaDeLaFila p={p} clasificacion={clasificacion} />
+            {clasificacion.lineas.length > 0 && <LineaDeLaFila p={p} clasificacion={clasificacion} />}
+            {clasificacion.genero && <GeneroDeLaFila p={p} genero={clasificacion.genero} />}
           </span>
           {/* Móvil: precios y estado debajo del nombre */}
           <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs md:hidden">
@@ -166,6 +177,34 @@ function LineaDeLaFila({ p, clasificacion }: { p: CatalogProduct; clasificacion:
           {l.etiqueta}
         </option>
       ))}
+    </select>
+  );
+}
+
+/** Para quién es la pieza: un selector Mujer/Hombre para cambiarlo ahí mismo, o solo su nombre (sin permiso de edición). */
+function GeneroDeLaFila({ p, genero }: { p: CatalogProduct; genero: NonNullable<ClasificacionDeLista["genero"]> }) {
+  const { t } = useI18n();
+  const actual: Genero = p.gender ?? "mujer";
+  const etiqueta = (g: Genero) => (g === "hombre" ? t("Hombre", "Men") : t("Mujer", "Women"));
+  if (!genero.puedeAsignar) {
+    return (
+      <span data-genero-pieza={actual} className="rounded-full bg-ink-2 px-2 py-0.5 text-[11px] text-fg">
+        {t("Para", "For")} {etiqueta(actual)}
+      </span>
+    );
+  }
+  const guardando = genero.asignando.get(p.id);
+  return (
+    <select
+      aria-label={t(`Para quién es ${p.name}`, `Who ${p.name} is for`)}
+      aria-busy={guardando !== undefined || undefined}
+      value={guardando ?? actual}
+      disabled={guardando !== undefined}
+      onChange={(e) => genero.onAsignar(p, e.target.value as Genero)}
+      className="relative z-10 max-w-full rounded-md border border-edge bg-ink px-1.5 py-0.5 text-xs text-fg outline-none transition-colors focus-visible:border-lime/60 disabled:cursor-wait disabled:opacity-60"
+    >
+      <option value="mujer">{t("Para Mujer", "For Women")}</option>
+      <option value="hombre">{t("Para Hombre", "For Men")}</option>
     </select>
   );
 }

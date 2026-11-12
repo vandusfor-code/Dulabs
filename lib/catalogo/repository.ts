@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   CatalogCategory,
   CatalogProduct,
+  Genero,
   ImageMimeType,
   ProductPricing,
   ProductStatus,
@@ -64,6 +65,11 @@ export interface ProductListFilter {
   categoryId?: string;
   /** Solo productos con foto principal (vitrina pública: destacados, portadas de categoría). */
   withImage?: boolean;
+  /**
+   * Solo las piezas de ese lado (columna `genero`). SOLO se pide en tiendas que separan hombre y mujer y cuando la columna ya existe (la tienda lo sabe por `listHombreReferences`; el panel solo
+   * ofrece el filtro con la separación disponible). Sin la columna lanza FEATURE_UNAVAILABLE en vez de un error técnico.
+   */
+  gender?: Genero;
   status: StatusFilter;
   offset: number;
   limit: number;
@@ -135,6 +141,16 @@ export interface CatalogRepository {
    * mucho más liviana que `listProducts` (que trae descripción, foto y fechas de cada producto): la usa la tienda para sus filtros. Opcional: sin ella el servicio lee los productos completos.
    */
   listFilterRows?(tenantId: string, page: { offset: number; limit: number }): Promise<{ items: FilaFiltrable[]; total: number }>;
+  /**
+   * Referencias de las piezas de HOMBRE del negocio (solo las activas, o todas con `incluirInactivas`: el panel muestra también las desactivadas). `null` = la columna `genero` aún no existe
+   * (migración 20261215000000 sin aplicar): la separación hombre/mujer queda apagada y todo se ve como siempre. Opcional: sin ella no hay separación (repositorios de prueba antiguos).
+   */
+  listHombreReferences?(tenantId: string, opciones?: { incluirInactivas?: boolean }): Promise<string[] | null>;
+  /**
+   * Marca una pieza como de Mujer u Hombre (renueva el token de auditoría, como cualquier otra edición). false si la pieza no existe. Sin la columna lanza FEATURE_UNAVAILABLE con un mensaje claro.
+   * Opcional por la misma razón que `listHombreReferences`.
+   */
+  setGender?(tenantId: string, actorId: string, productId: string, gender: Genero): Promise<boolean>;
   getProduct(tenantId: string, productId: string): Promise<CatalogProduct | null>;
   getProductByReference(tenantId: string, reference: string): Promise<CatalogProduct | null>;
   /** Resolución por lote de referencias EXACTAS del tenant (la referencia es la identidad del producto). */
@@ -310,6 +326,18 @@ function failImport(context: string, error: PgError): never {
   }
   fail(context, error);
 }
+
+/**
+ * Errores de la separación hombre/mujer: si la migración 20261215000000 aún no se aplicó (columna `genero` inexistente) se responde con un mensaje claro en vez de un error técnico. Nada más del
+ * catálogo toca esa columna, así que el resto sigue funcionando igual.
+ */
+function failGenero(context: string, error: PgError): never {
+  if (isMissingSchema(error)) {
+    console.error(`[catalogo/repository] ${context}: falta la migración de Hombre/Mujer`, error.code);
+    throw new CatalogError("FEATURE_UNAVAILABLE", "La separación Mujer/Hombre todavía no está activada. Avísale al equipo de DuLabs.");
+  }
+  fail(context, error);
+}
 const PUBLICATION_COLUMNS = "id_tenant, slug, nombre_publico, publicado, token_mayor";
 
 interface PublicationRow {
@@ -445,6 +473,8 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
         if (filter.status === "INACTIVE") query = query.eq("activo", false);
         if (filter.categoryId) query = query.eq("categoria_id", filter.categoryId);
         if (filter.withImage) query = query.not("foto_url", "is", null);
+        // Solo con el filtro pedido: sin él ninguna lectura del catálogo menciona la columna `genero` (así no depende de su migración).
+        if (filter.gender) query = query.eq("genero", filter.gender);
         // `search` ya viene normalizado por el dominio (sin , ( ) * % _ \ : " ').
         // El valor va ENTRE COMILLAS (forma documentada de PostgREST para
         // valores con caracteres reservados como "."), con % como comodín.
@@ -459,11 +489,47 @@ export function createSupabaseCatalogRepository(supabase: SupabaseClient): Catal
         // Página más allá del final (p. ej. se borraron productos mientras el panel estaba en una
         // página alta): página vacía con el total REAL, nunca un error 500.
         const { count: total, error: e2 } = await consulta("id", true);
-        if (e2) fail("listProducts", e2);
+        if (e2) (filter.gender ? failGenero : fail)("listProducts", e2);
         return { items: [], total: total ?? 0 };
       }
-      if (error) fail("listProducts", error);
+      if (error) (filter.gender ? failGenero : fail)("listProducts", error);
       return { items: ((data ?? []) as unknown as ProductRow[]).map(mapProduct), total: count ?? 0 };
+    },
+
+    async listHombreReferences(tenantId, opciones) {
+      // PostgREST devuelve máximo 1000 filas por consulta: se pagina (orden estable por referencia). Solo la referencia: es una lectura de unos pocos bytes por pieza.
+      const referencias: string[] = [];
+      for (let desde = 0; ; desde += 1000) {
+        let consulta = supabase.from(T_PRODUCTOS).select("referencia").eq("id_tenant", tenantId).eq("genero", "hombre");
+        if (!opciones?.incluirInactivas) consulta = consulta.eq("activo", true);
+        const { data, error } = await consulta.order("referencia", { ascending: true }).range(desde, desde + 999);
+        if (error) {
+          // Sin la migración: la separación queda apagada (null), nunca un error en la tienda.
+          if (isMissingSchema(error)) return null;
+          fail("listHombreReferences", error);
+        }
+        const filas = (data ?? []) as Array<{ referencia: string }>;
+        referencias.push(...filas.map((f) => f.referencia));
+        if (filas.length < 1000) return referencias;
+      }
+    },
+
+    async setGender(tenantId, actorId, productId, gender) {
+      const { data, error } = await supabase
+        .from(T_PRODUCTOS)
+        .update({
+          genero: gender,
+          updated_at: new Date().toISOString(),
+          updated_by: actorId,
+          // Token nuevo: la auditoría atribuye ESTA escritura a actorId (igual que updateProduct).
+          escritura_id: randomUUID(),
+        })
+        .eq("id_tenant", tenantId)
+        .eq("id", productId)
+        .select("id")
+        .maybeSingle();
+      if (error) failGenero("setGender", error);
+      return Boolean(data);
     },
 
     async listFilterRows(tenantId, page) {

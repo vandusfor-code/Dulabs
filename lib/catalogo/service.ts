@@ -37,7 +37,8 @@ import {
 } from "@/lib/catalogo/domain";
 import { CatalogError } from "@/lib/catalogo/errors";
 import { SIN_FILTROS, calcularFacetas, cumpleFiltros, hayFiltros, soloUnaCategoria, type FacetasCatalogo, type FilaFaceta, type FiltrosCatalogo, type OpcionFaceta } from "@/lib/catalogo/filtros";
-import { lineasDeLaTienda } from "@/lib/catalogo/joyeria";
+import { conjuntoDeHombres, generoDe, type Genero } from "@/lib/catalogo/genero";
+import { generoDeLaTienda, lineasDeLaTienda } from "@/lib/catalogo/joyeria";
 import { LINEA_SIN, clavesConocidas, lineasDeMaterial, type LineaConfig } from "@/lib/catalogo/lineas";
 import { PreciosNoDisponibles, precioQueRige, type EvaluadorPrecios } from "@/lib/catalogo/precios";
 import type { CatalogRepository, FilaFiltrable, ProductOrigin, ProductPatchData, PublicImageObject, StoredMedia } from "@/lib/catalogo/repository";
@@ -180,11 +181,35 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
   }
 
   /**
+   * Las referencias de hombre del negocio (activas o no: el panel muestra todas las piezas) o null si NO hay separación hombre/mujer: la tienda del negocio no la tiene en su configuración, el
+   * repositorio no la ofrece o la migración 20261215000000 aún no está aplicada. Con null el panel se ve exactamente como siempre y ningún campo «Para» viaja. Nunca lanza.
+   */
+  async function hombresDelTenant(tenantId: string): Promise<ReadonlySet<string> | null> {
+    try {
+      const publicacion = await repo.getPublication(tenantId);
+      if (!publicacion || !generoDeLaTienda(publicacion.slug)) return null;
+      const referencias = await repo.listHombreReferences?.(tenantId, { incluirInactivas: true });
+      return referencias ? conjuntoDeHombres(referencias) : null;
+    } catch (error) {
+      console.error("[catalogo/genero] no se pudo leer el «Para» de las piezas; el panel sigue sin ese campo:", error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
+
+  /** Les pone a las piezas para quién son (con la separación disponible). Sin ella devuelve las mismas piezas, sin el campo. */
+  const conGenero = <T extends CatalogProduct>(items: T[], hombres: ReadonlySet<string> | null): T[] => (hombres ? items.map((p) => ({ ...p, gender: generoDe(p.reference, hombres) })) : items);
+
+  /** Marcar una pieza como de hombre o de mujer exige que la separación esté disponible: si no, un error claro ANTES de tocar nada. */
+  function exigirSeparacion(hombres: ReadonlySet<string> | null): void {
+    if (!hombres || !repo.setGender) throw new CatalogError("FEATURE_UNAVAILABLE", "La separación Mujer/Hombre todavía no está activada. Avísale al equipo de DuLabs.");
+  }
+
+  /**
    * Listado del panel de UNA línea (o de las piezas «sin línea»). La línea sale del texto libre de «Material», así que no se puede pedir a la base: se leen por lotes las piezas que cumplen la búsqueda,
    * la categoría y el estado, se dejan las de la línea y se pagina aquí. Con tope: un catálogo enorme pide acotar en vez de leer sin fin.
    */
-  async function listProductsByLine(actor: CatalogActor, query: ProductListQuery, lineas: readonly LineaConfig[], elegida: string): Promise<ProductPage> {
-    const filtro = { search: normalizeSearch(query.q), categoryId: query.categoryId, status: query.status };
+  async function listProductsByLine(actor: CatalogActor, query: ProductListQuery, lineas: readonly LineaConfig[], elegida: string, gender: Genero | undefined, hombres: ReadonlySet<string> | null): Promise<ProductPage> {
+    const filtro = { search: normalizeSearch(query.q), categoryId: query.categoryId, status: query.status, ...(gender ? { gender } : {}) };
     const cumple = (p: CatalogProduct) => {
       const claves = lineasDeMaterial(p.material, lineas);
       return elegida === LINEA_SIN ? claves.length === 0 : claves.includes(elegida);
@@ -201,20 +226,24 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
     const pagina = coinciden.slice(desde, desde + query.pageSize);
     const primaries = await repo.listPrimaryMedia(actor.tenantId, pagina.map((p) => p.id));
     const byProduct = new Map(primaries.map((m) => [m.productId, m]));
-    return { items: pagina.map((p) => withPrimary(p, byProduct.get(p.id))), total: coinciden.length, page: query.page, pageSize: query.pageSize };
+    return { items: conGenero(pagina.map((p) => withPrimary(p, byProduct.get(p.id))), hombres), total: coinciden.length, page: query.page, pageSize: query.pageSize, ...(hombres ? { genero: { hombres: hombres.size } } : {}) };
   }
 
   return {
     async listProducts(actor: CatalogActor, query: ProductListQuery): Promise<ProductPage> {
+      // «Para» (Mujer/Hombre): solo en una tienda que separa y con la migración aplicada; en cualquier otro caso `genero` se ignora y el listado es el de siempre, sin ningún campo nuevo.
+      const hombres = await hombresDelTenant(actor.tenantId);
+      const gender = query.genero && hombres ? query.genero : undefined;
       if (query.linea) {
         // Solo cuenta en una tienda con líneas y con una línea que ella tenga: en cualquier otro caso se ignora y el listado es el de siempre.
         const lineas = await lineasDelTenant(actor.tenantId);
-        if (lineas.length > 0 && (query.linea === LINEA_SIN || lineas.some((l) => l.clave === query.linea))) return listProductsByLine(actor, query, lineas, query.linea);
+        if (lineas.length > 0 && (query.linea === LINEA_SIN || lineas.some((l) => l.clave === query.linea))) return listProductsByLine(actor, query, lineas, query.linea, gender, hombres);
       }
       const { items, total } = await repo.listProducts(actor.tenantId, {
         search: normalizeSearch(query.q),
         categoryId: query.categoryId,
         status: query.status,
+        ...(gender ? { gender } : {}),
         offset: (query.page - 1) * query.pageSize,
         limit: query.pageSize,
       });
@@ -225,10 +254,11 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
       );
       const byProduct = new Map(primaries.map((m) => [m.productId, m]));
       return {
-        items: items.map((p) => withPrimary(p, byProduct.get(p.id))),
+        items: conGenero(items.map((p) => withPrimary(p, byProduct.get(p.id))), hombres),
         total,
         page: query.page,
         pageSize: query.pageSize,
+        ...(hombres ? { genero: { hombres: hombres.size } } : {}),
       };
     },
 
@@ -236,7 +266,8 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
       const product = await requireProduct(actor, productId);
       const media = await repo.listMedia(actor.tenantId, productId);
       const images = media.map(toImage);
-      return { ...withPrimary(product, media.find((m) => m.isPrimary)), images };
+      const detalle: CatalogProductDetail = { ...withPrimary(product, media.find((m) => m.isPrimary)), images };
+      return conGenero([detalle], await hombresDelTenant(actor.tenantId))[0];
     },
 
     /**
@@ -246,9 +277,12 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
      */
     async createProduct(actor: CatalogActor, input: ProductCreateInput, origin?: ProductOrigin): Promise<CatalogProduct> {
       const category = await resolveCategory(actor, input.categoryId ?? null);
+      // Una pieza de hombre exige la separación disponible: se comprueba ANTES de crear, así nunca queda una pieza creada con un error.
+      const hombres = input.gender === "hombre" ? await hombresDelTenant(actor.tenantId) : null;
+      if (input.gender === "hombre") exigirSeparacion(hombres);
       // La referencia la asigna la BD (trigger, segura ante concurrencia):
       // el input ni siquiera tiene un campo para ella.
-      return repo.insertProduct(actor.tenantId, actor.userId, {
+      const creado = await repo.insertProduct(actor.tenantId, actor.userId, {
         name: input.name,
         description: input.description ?? null,
         categoryId: category.categoryId,
@@ -259,10 +293,15 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
         wholesalePrice: input.wholesalePrice ?? null,
         stock: input.stock,
       }, origin);
+      if (input.gender !== "hombre") return creado;
+      await repo.setGender?.(actor.tenantId, actor.userId, creado.id, "hombre");
+      return { ...creado, gender: "hombre" };
     },
 
     async updateProduct(actor: CatalogActor, productId: string, input: ProductUpdateInput): Promise<CatalogProduct> {
       await requireProduct(actor, productId);
+      // Marcar «Para» exige la separación disponible: un error claro ANTES de tocar nada (ni siquiera los otros campos del mismo guardado).
+      if (input.gender !== undefined) exigirSeparacion(await hombresDelTenant(actor.tenantId));
       const patch: ProductPatchData = {};
       if (input.name !== undefined) patch.name = input.name;
       if (input.description !== undefined) patch.description = input.description;
@@ -277,9 +316,14 @@ export function createCatalogService({ repo, newId = randomUUID }: CatalogServic
         patch.categoryId = category.categoryId;
         patch.categoryName = category.categoryName;
       }
-      const updated = await repo.updateProduct(actor.tenantId, actor.userId, productId, patch);
+      // Solo «Para» (clasificar desde la lista): no se reescribe nada más del producto, solo se marca el lado.
+      const soloGenero = input.gender !== undefined && Object.keys(patch).length === 0;
+      const updated = soloGenero ? await requireProduct(actor, productId) : await repo.updateProduct(actor.tenantId, actor.userId, productId, patch);
       if (!updated) throw new CatalogError("NOT_FOUND", "El producto no existe.");
-      return hydrate(actor, updated);
+      if (input.gender !== undefined && !(await repo.setGender?.(actor.tenantId, actor.userId, productId, input.gender))) throw new CatalogError("NOT_FOUND", "El producto no existe.");
+      const hidratado = await hydrate(actor, updated);
+      // La respuesta lleva el «Para» ya actualizado (solo en tiendas que separan); en las demás es la de siempre.
+      return input.gender !== undefined ? conGenero([hidratado], await hombresDelTenant(actor.tenantId))[0] : hidratado;
     },
 
     async listCategories(actor: CatalogActor): Promise<CatalogCategory[]> {
@@ -529,10 +573,23 @@ export interface PublicCatalogQuery {
    * (un negocio sin líneas) una `?linea=` se ignora y el listado es el de siempre.
    */
   lineas?: readonly LineaConfig[];
+  /**
+   * La tienda del negocio separa hombre y mujer (su configuración trae `genero`, lib/catalogo/genero.ts). Con la separación disponible (la migración aplicada y al menos una pieza de hombre activa) el
+   * listado de siempre es el de MUJER (sin las piezas de hombre), `?genero=hombre` es el de hombre y las opciones de los filtros se cuentan dentro del lado elegido. La búsqueda por texto sigue
+   * siendo de toda la tienda. Sin la separación (otros negocios, migración pendiente o ninguna pieza de hombre) todo es como siempre y `?genero=` se ignora.
+   */
+  separarGenero?: boolean;
 }
 
 /** El listado público y, si se pidieron, las opciones de los filtros. */
 export type PublicCatalogPageFiltrable = PublicCatalogPage & { facets?: FacetasCatalogo | null };
+
+/** Los mismos filtros sin el lado (`?genero=`): lo que rige cuando la tienda no separa hombre y mujer (o aún no hay nada que separar). */
+function quitarGenero(f: FiltrosCatalogo): FiltrosCatalogo {
+  const copia: FiltrosCatalogo = { ...f };
+  delete copia.genero;
+  return copia;
+}
 
 /** Los mismos filtros pero solo con las líneas que el negocio tiene (sin la propiedad si no queda ninguna): la forma de siempre cuando no hay línea. */
 function conLineasConocidas(f: FiltrosCatalogo, lineas: readonly LineaConfig[] | undefined): FiltrosCatalogo {
@@ -585,6 +642,8 @@ export const FEATURED_LIMIT = 8;
 export const SELECTION_MAX = 60;
 /** Productos recientes con foto que se revisan para elegir la portada de cada categoría. */
 const COVER_POOL = 200;
+/** Piezas de hombre que muestra la entrada «Para él» del inicio. */
+const HOMBRE_INICIO_LIMIT = 4;
 /** Máximo de destacados elegidos en el CMS (el esquema del CMS permite 24) y de productos de una campaña (12). */
 const FEATURED_CMS_LIMIT = 24;
 const CAMPANA_LIMIT = 12;
@@ -610,6 +669,11 @@ export interface PublicStorefront {
   categories: CatalogCategory[];
   /** Bloque 29: la referencia se muestra sobre las fotos (módulo "marca_referencia"). */
   referenceMark: boolean;
+  /**
+   * Solo en tiendas que separan hombre y mujer, con la migración aplicada y al menos UNA pieza de hombre activa: las referencias de esas piezas. Con ellas la cabecera sabe si mostrar el selector
+   * «Mujer | Hombre» y, en la ficha de una pieza, si pintarla con la paleta de hombre desde la primera pantalla. Ausente = no hay separación (la tienda es la de siempre).
+   */
+  genero?: { hombres: string[] };
 }
 
 export interface PublicHome {
@@ -619,6 +683,11 @@ export interface PublicHome {
   categories: Array<CatalogCategory & { coverUrl: string | null }>;
   /** Productos ACTIVOS de la campaña vigente, en el orden elegido. Solo existe si se pidió una campaña (CMS). */
   campana?: PublicCatalogProduct[];
+  /**
+   * Solo en tiendas que separan hombre y mujer con piezas de hombre activas: cuántas hay y las más recientes con foto, para la entrada «Para él» del inicio. Con esto, `featured` y las portadas de las
+   * categorías son SOLO de mujer (el inicio de siempre no se llena de piezas de hombre); lo que la administradora eligió a mano en el CMS no se toca.
+   */
+  hombre?: { total: number; items: PublicCatalogProduct[] };
 }
 
 /**
@@ -632,6 +701,8 @@ export interface OpcionesInicio {
   categorias?: readonly string[];
   /** Referencias de los productos de la campaña vigente. */
   campana?: readonly string[];
+  /** La tienda separa hombre y mujer (ver `PublicCatalogQuery.separarGenero`): lo automático del inicio es de mujer y se agrega la entrada de hombre. */
+  separarGenero?: boolean;
 }
 
 /** Selección del carrito resuelta por el backend: la verdad sobre cada referencia. */
@@ -770,6 +841,21 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     return (await repo.isReferenceMarkEnabled?.(tenantId).catch(() => false)) ?? false;
   }
 
+  /**
+   * Las referencias de las piezas de HOMBRE ACTIVAS de una tienda que separa hombre y mujer, o null cuando no hay nada que separar: la tienda no lo pidió, el repositorio no lo ofrece, la migración
+   * 20261215000000 aún no está aplicada o todavía no hay ninguna pieza de hombre. Con null la tienda es EXACTAMENTE la de siempre. Es presentación: nunca lanza (ante un error la tienda sigue como siempre).
+   */
+  async function hombresDe(tenantId: string, separa: boolean | undefined): Promise<ReadonlySet<string> | null> {
+    if (!separa || !repo.listHombreReferences) return null;
+    try {
+      const referencias = await repo.listHombreReferences(tenantId);
+      return referencias && referencias.length > 0 ? conjuntoDeHombres(referencias) : null;
+    } catch (error) {
+      console.error("[catalogo/genero] no se pudieron leer las piezas de hombre; la tienda se muestra como siempre:", error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
+
   /** Abre (Storage) una foto ya ubicada con locateImage. */
   async function openLocatedImage(location: PublicImageLocation): Promise<PublicImageObject | null> {
     return (await repo.openImage(location.path)) ?? (location.fallback ? repo.openImage(location.fallback) : null);
@@ -841,14 +927,15 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
   }
 
   /** Destacados según la política vigente (ver FeaturedPolicy): primero los elegidos en el CMS; si ninguno sirve, los más recientes. */
-  async function featuredProducts(tenantId: string, chosen?: readonly string[]): Promise<{ items: CatalogProduct[]; policy: FeaturedPolicy }> {
+  async function featuredProducts(tenantId: string, chosen?: readonly string[], lado: { gender?: Genero } = {}): Promise<{ items: CatalogProduct[]; policy: FeaturedPolicy }> {
     if (chosen && chosen.length > 0) {
       const items = await activeInOrder(tenantId, chosen, FEATURED_CMS_LIMIT);
       if (items.length > 0) return { items, policy: "cms" };
     }
-    const conFoto = await repo.listProducts(tenantId, { status: "ACTIVE", withImage: true, offset: 0, limit: FEATURED_LIMIT });
+    // `lado`: en una tienda que separa hombre y mujer, lo automático del inicio es solo de mujer (lo elegido a mano en el CMS no se toca).
+    const conFoto = await repo.listProducts(tenantId, { status: "ACTIVE", withImage: true, ...lado, offset: 0, limit: FEATURED_LIMIT });
     if (conFoto.items.length > 0) return { items: conFoto.items, policy: "recent-with-photo" };
-    const recientes = await repo.listProducts(tenantId, { status: "ACTIVE", offset: 0, limit: FEATURED_LIMIT });
+    const recientes = await repo.listProducts(tenantId, { status: "ACTIVE", ...lado, offset: 0, limit: FEATURED_LIMIT });
     return { items: recientes.items, policy: "recent" };
   }
 
@@ -941,9 +1028,18 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     }
   }
 
-  /** Lo mínimo para filtrar y contar un producto. El precio es el EFECTIVO (el que se muestra: oferta vigente o lista, la misma decisión que la tarjeta), nunca el del otro contexto. */
-  function filaDe(f: FilaFiltrable, context: PriceContext, evaluador: EvaluadorPrecios | null): FilaFaceta {
-    return { categoryId: f.categoryId, color: f.color, material: f.material, price: precioQueRige(f, context, evaluador?.de(f, context)).precio };
+  /**
+   * Lo mínimo para filtrar y contar un producto. El precio es el EFECTIVO (el que se muestra: oferta vigente o lista, la misma decisión que la tarjeta), nunca el del otro contexto. Con la separación
+   * hombre/mujer (`hombres`) la fila también dice para quién es la pieza.
+   */
+  function filaDe(f: FilaFiltrable, context: PriceContext, evaluador: EvaluadorPrecios | null, hombres: ReadonlySet<string> | null = null): FilaFaceta {
+    return {
+      ...(hombres ? { genero: generoDe(f.reference, hombres) } : {}),
+      categoryId: f.categoryId,
+      color: f.color,
+      material: f.material,
+      price: precioQueRige(f, context, evaluador?.de(f, context)).precio,
+    };
   }
 
   /**
@@ -958,9 +1054,10 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
     activos: FilaFiltrable[] | null,
     evaluador: EvaluadorPrecios | null,
     lineas?: readonly LineaConfig[],
+    hombres: ReadonlySet<string> | null = null,
   ): Promise<Listing> {
     if (activos === null) return publicListing(tenantId, context, undefined, filtros.categorias.find((c) => UUID_PATTERN.test(c)), requested);
-    const coinciden = activos.filter((f) => cumpleFiltros(filaDe(f, context, evaluador), filtros, lineas));
+    const coinciden = activos.filter((f) => cumpleFiltros(filaDe(f, context, evaluador, hombres), filtros, lineas));
     const offset = (requested - 1) * PUBLIC_PAGE_SIZE;
     const referencias = coinciden.slice(offset, offset + PUBLIC_PAGE_SIZE).map((f) => f.reference);
     // Si algún producto se desactivó entre las dos lecturas, simplemente no aparece (un desactivado nunca se muestra).
@@ -970,11 +1067,17 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
   }
 
   return {
-    async getStorefront(slug: string): Promise<PublicStorefront | null> {
+    /** `separarGenero`: la tienda del negocio separa hombre y mujer (lib/catalogo/genero.ts): con piezas de hombre activas el marco recibe sus referencias (ver `PublicStorefront.genero`). */
+    async getStorefront(slug: string, opciones: { separarGenero?: boolean } = {}): Promise<PublicStorefront | null> {
       const pub = await openPublication(slug);
       if (!pub) return null;
-      const [categories, business, referenceMark] = await Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId), referenceMarkOf(pub.tenantId)]);
-      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories, referenceMark };
+      const [categories, business, referenceMark, hombres] = await Promise.all([
+        repo.listCategories(pub.tenantId),
+        repo.getBusinessProfile(pub.tenantId),
+        referenceMarkOf(pub.tenantId),
+        hombresDe(pub.tenantId, opciones.separarGenero),
+      ]);
+      return { slug: pub.slug, publicName: pub.publicName, whatsapp: business.whatsapp, categories, referenceMark, ...(hombres ? { genero: { hombres: [...hombres].sort() } } : {}) };
     },
 
     /** Marco de la tienda MAYORISTA: el mismo, pero solo con el token exacto de la publicación (si no, null => 404). */
@@ -994,20 +1097,44 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       // Las líneas que el negocio no tiene se ignoran (una dirección vieja o mal escrita nunca deja la lista vacía).
       const lineasDelNegocio = input.lineas && input.lineas.length > 0 ? input.lineas : undefined;
       const filtrosEntrada = input.filters ? conLineasConocidas(input.filters, lineasDelNegocio) : undefined;
-      // Los filtros de joyería solo aplican sin búsqueda por texto; con una sola categoría y nada más, el listado es exactamente el de siempre.
-      const filtros = filtrosEntrada && hayFiltros(filtrosEntrada) && !texto ? filtrosEntrada : null;
-      const unaCategoria = filtros ? soloUnaCategoria(filtros) : null;
-      const categoriaCruda = unaCategoria ?? input.categoryId;
-      const categoryId = categoriaCruda && UUID_PATTERN.test(categoriaCruda) ? categoriaCruda : undefined;
-      // Filtrar (varias categorías, color, material o precio) y contar las opciones necesitan los productos activos: se leen UNA sola vez para las dos cosas.
-      const filtrar = unaCategoria === null ? filtros : null;
-      const [[categories, business, evaluador], activos, deSiempre] = await Promise.all([
+      // Hombre/Mujer: solo en el listado SIN búsqueda por texto (la búsqueda es de toda la tienda) y solo si la tienda lo pidió.
+      const separa = input.separarGenero === true && !texto;
+
+      /**
+       * Qué filtros rigen y por dónde se lista. `hombres` = las piezas de hombre activas (null = no hay nada que separar: todo es como siempre y `?genero=` se ignora). Con la separación el listado de
+       * siempre es el de mujer, así que ya no sirve la consulta paginada de la base (que mezcla los dos lados) y se filtra en memoria como cualquier otro filtro de la joyería.
+       */
+      const decidir = (hombres: ReadonlySet<string> | null) => {
+        const sinGenero = filtrosEntrada && !hombres ? quitarGenero(filtrosEntrada) : filtrosEntrada;
+        // Con la separación la categoría de `?categoria=` (la consulta de siempre en la base) pasa a ser un filtro más: esa consulta mezclaría los dos lados.
+        const base = sinGenero ?? SIN_FILTROS;
+        const categoriaSuelta = base.categorias.length === 0 && input.categoryId && UUID_PATTERN.test(input.categoryId) ? [input.categoryId] : base.categorias;
+        const efectivos: FiltrosCatalogo | undefined = hombres ? { ...base, categorias: categoriaSuelta, genero: base.genero ?? "mujer" } : sinGenero;
+        // Los filtros de joyería solo aplican sin búsqueda por texto; con una sola categoría y nada más, el listado es exactamente el de siempre.
+        const filtros = efectivos && hayFiltros(efectivos) && !texto ? efectivos : null;
+        const unaCategoria = filtros ? soloUnaCategoria(filtros) : null;
+        const categoriaCruda = unaCategoria ?? input.categoryId;
+        const categoryId = categoriaCruda && UUID_PATTERN.test(categoriaCruda) ? categoriaCruda : undefined;
+        // Filtrar (varias categorías, color, material, precio o lado) y contar las opciones necesitan los productos activos: se leen UNA sola vez para las dos cosas.
+        return { filtros, categoryId, filtrar: unaCategoria === null ? filtros : null };
+      };
+      let d = decidir(null);
+      // Sin separación todo arranca a la vez, como siempre. Con ella el listado de la base se decide cuando se sabe si hay piezas de hombre (los demás negocios no esperan nada).
+      const deSiempreInicial = !separa && d.filtrar === null ? publicListing(pub.tenantId, input.context, texto, d.categoryId, requested) : Promise.resolve(null);
+      const [[categories, business, evaluador], hombres, activos, deSiempreArriba] = await Promise.all([
         Promise.all([repo.listCategories(pub.tenantId), repo.getBusinessProfile(pub.tenantId), evaluadorDe(pub.tenantId, false)]),
-        filtrar !== null || input.facets === true ? activosParaFiltrar(pub.tenantId) : Promise.resolve(undefined),
-        filtrar !== null ? Promise.resolve(null) : publicListing(pub.tenantId, input.context, texto, categoryId, requested),
+        hombresDe(pub.tenantId, separa),
+        d.filtrar !== null || input.facets === true || separa ? activosParaFiltrar(pub.tenantId) : Promise.resolve(undefined),
+        deSiempreInicial,
       ]);
-      const listing = deSiempre ?? (await filteredListing(pub.tenantId, input.context, filtrar ?? SIN_FILTROS, requested, activos ?? null, evaluador, lineasDelNegocio));
-      const facets = input.facets === true ? (activos ? calcularFacetas(activos.map((p) => filaDe(p, input.context, evaluador)), categories, lineasDelNegocio, filtrar?.lineas) : null) : undefined;
+      if (separa) d = decidir(hombres);
+      const deSiempre = deSiempreArriba ?? (d.filtrar === null ? await publicListing(pub.tenantId, input.context, texto, d.categoryId, requested) : null);
+      const listing = deSiempre ?? (await filteredListing(pub.tenantId, input.context, d.filtrar ?? SIN_FILTROS, requested, activos ?? null, evaluador, lineasDelNegocio, hombres));
+      const filtrar = d.filtrar;
+      // Con la separación, las opciones de los filtros (categorías, colores, materiales, precio, líneas) se cuentan solo dentro del lado elegido: el de hombre no ofrece los colores de mujer.
+      const ladoElegido: Genero | null = hombres ? (d.filtros?.genero ?? "mujer") : null;
+      const filasDelLado = activos ? activos.map((p) => filaDe(p, input.context, evaluador, hombres)).filter((f) => ladoElegido === null || (f.genero ?? "mujer") === ladoElegido) : null;
+      const facets = input.facets === true ? (filasDelLado ? calcularFacetas(filasDelLado, categories, lineasDelNegocio, filtrar?.lineas) : null) : undefined;
 
       return {
         business: { name: pub.publicName, whatsapp: business.whatsapp },
@@ -1051,20 +1178,24 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       const pub = await openPublication(slug);
       if (!pub) return null;
       const wantsCampana = (opciones.campana?.length ?? 0) > 0;
-      const [featured, pool, categories, campaignItems, evaluador] = await Promise.all([
-        featuredProducts(pub.tenantId, opciones.destacadas),
-        repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, offset: 0, limit: COVER_POOL }),
+      // Con la separación hombre/mujer (solo si la tienda la pidió y hay piezas de hombre activas), lo AUTOMÁTICO del inicio (novedades y portadas de categoría) es solo de mujer y se suman las
+      // piezas de hombre más recientes para la entrada «Para él». Sin separación, estas consultas son las de siempre, en el mismo orden y a la vez que las demás.
+      const hombresP = hombresDe(pub.tenantId, opciones.separarGenero);
+      const [featured, pool, categories, campaignItems, evaluador, hombre] = await Promise.all([
+        hombresP.then((h) => featuredProducts(pub.tenantId, opciones.destacadas, h ? { gender: "mujer" } : {})),
+        hombresP.then((h) => repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, ...(h ? { gender: "mujer" as const } : {}), offset: 0, limit: COVER_POOL })),
         repo.listCategories(pub.tenantId),
         wantsCampana ? activeInOrder(pub.tenantId, opciones.campana ?? [], CAMPANA_LIMIT) : Promise.resolve<CatalogProduct[] | null>(null),
         evaluadorDe(pub.tenantId, false),
+        hombresP.then(async (h) => (h ? { total: h.size, items: (await repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, gender: "hombre", offset: 0, limit: HOMBRE_INICIO_LIMIT })).items } : null)),
       ]);
       const coverProduct = new Map<string, CatalogProduct>();
       for (const p of pool.items) if (p.categoryId && !coverProduct.has(p.categoryId)) coverProduct.set(p.categoryId, p);
 
-      // Una sola proyección (una consulta de media) para destacados, campaña y portadas de categoría, sin repetir productos.
+      // Una sola proyección (una consulta de media) para destacados, campaña, portadas de categoría y piezas de hombre, sin repetir productos.
       const covers = [...coverProduct.values()];
       const unique = new Map<string, CatalogProduct>();
-      for (const p of [...featured.items, ...(campaignItems ?? []), ...covers]) if (!unique.has(p.id)) unique.set(p.id, p);
+      for (const p of [...featured.items, ...(campaignItems ?? []), ...covers, ...(hombre?.items ?? [])]) if (!unique.has(p.id)) unique.set(p.id, p);
       const projected = await project(pub, [...unique.values()], "retail", evaluador);
       const byReference = new Map(projected.map((p) => [p.reference, p]));
       const pick = (items: CatalogProduct[]) => items.flatMap((p) => byReference.get(p.reference) ?? []);
@@ -1082,6 +1213,7 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
           return { ...c, coverUrl: (cover && byReference.get(cover.reference)?.thumbUrl) ?? null };
         }),
         ...(campaignItems ? { campana: pick(campaignItems) } : {}),
+        ...(hombre ? { hombre: { total: hombre.total, items: pick(hombre.items) } } : {}),
       };
     },
 

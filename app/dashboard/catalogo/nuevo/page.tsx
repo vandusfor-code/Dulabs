@@ -11,6 +11,7 @@ import { emptyProductForm, toProductDraft, validateProductForm, type ProductForm
 import type { UploadStage } from "@/lib/catalogo-client";
 import { ProductFields, ReferenceField } from "@/components/dashboard/catalogo/ProductFields";
 import { ImageDropzone, usePickedImage } from "@/components/dashboard/catalogo/ImageDropzone";
+import { useSeparaGenero } from "@/components/dashboard/catalogo/use-genero";
 import { useLineasDelNegocio } from "@/components/dashboard/catalogo/use-lineas";
 import { ProductImage, actionBtn, cn, formatPrice, primaryBtn, useCatalogAccess } from "@/components/dashboard/catalogo/ui";
 
@@ -33,8 +34,14 @@ export default function NuevoProductoPage() {
   const { client, canWrite, ready } = useCatalogAccess();
   // Las líneas de la tienda (Plata, Rodio…): solo en negocios que las tienen.
   const lineas = useLineasDelNegocio(client);
+  // «Para» (Mujer/Hombre): solo en negocios cuya tienda separa los dos lados.
+  const separaGenero = useSeparaGenero(client);
 
   const [form, setForm] = useState<ProductFormState>(emptyProductForm);
+  // Con la separación disponible el formulario trae «Para» y arranca en Mujer (lo predeterminado).
+  useEffect(() => {
+    if (separaGenero) setForm((f) => (f.gender === undefined ? { ...f, gender: "mujer" } : f));
+  }, [separaGenero]);
   const [errors, setErrors] = useState<ProductFormErrors>({});
   const [intentado, setIntentado] = useState(false);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
@@ -110,7 +117,8 @@ export default function NuevoProductoPage() {
     // Confirmación + formulario limpio para seguir cargando. Se conserva la
     // categoría: acelera la carga de muchas piezas de la misma línea.
     setRegistrado((prev) => ({ product: producto, errorFoto, n: (prev?.n ?? 0) + 1 }));
-    setForm({ ...emptyProductForm(), categoryId: form.categoryId });
+    // Para cargar varias seguidas se conservan la categoría y, si el negocio separa Mujer/Hombre, el lado (una tanda de piezas de hombre no se reeligen una por una).
+    setForm({ ...emptyProductForm(), categoryId: form.categoryId, ...(form.gender ? { gender: form.gender } : {}) });
     setErrors({});
     setIntentado(false);
     pick(null);

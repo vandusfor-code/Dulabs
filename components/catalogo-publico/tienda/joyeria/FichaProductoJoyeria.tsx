@@ -6,6 +6,8 @@
 import Link from "next/link";
 import { formatCop } from "@/lib/business-agent-quote";
 import type { Availability, CatalogCategory } from "@/lib/catalogo/domain";
+import { SIN_FILTROS, urlFiltros } from "@/lib/catalogo/filtros";
+import type { GeneroJoyeria } from "@/lib/catalogo/genero";
 import type { PublicProductDetail } from "@/lib/catalogo/publicacion";
 import { AccionesProducto } from "@/components/catalogo-publico/tienda/AccionesProducto";
 import { BotonVolver } from "@/components/catalogo-publico/tienda/BotonVolver";
@@ -27,8 +29,24 @@ function EstadoDisponibilidad({ availability }: { availability: Availability }) 
   );
 }
 
-export function FichaProductoJoyeria({ producto, categorias, basePath, listPath }: { producto: PublicProductDetail; categorias: CatalogCategory[]; basePath: string; listPath: string }) {
+export function FichaProductoJoyeria({
+  producto,
+  categorias,
+  basePath,
+  listPath,
+  genero,
+}: {
+  producto: PublicProductDetail;
+  categorias: CatalogCategory[];
+  basePath: string;
+  listPath: string;
+  /** La tienda separa hombre y mujer: con `hombre`, la pieza es de ese lado y la ficha lleva el nombre de la colección y sus migas apuntan al lado de hombre (`listPath` ya es el listado de hombre). */
+  genero?: { config: GeneroJoyeria; hombre: boolean };
+}) {
   const categoria = producto.categoryId ? categorias.find((c) => c.id === producto.categoryId) : undefined;
+  const cfgHombre = genero && genero.hombre ? genero.config.hombre : null;
+  // La categoría de la miga y del rótulo: en el lado de hombre, las piezas de hombre de esa categoría; en el de siempre, el enlace de siempre.
+  const hrefCategoria = (id: string) => (cfgHombre ? urlFiltros(basePath, { ...SIN_FILTROS, genero: "hombre", categorias: [id] }) : `${basePath}?categoria=${encodeURIComponent(id)}`);
   const atributos = [
     { nombre: "Material", valor: producto.material },
     { nombre: "Color", valor: producto.color },
@@ -50,7 +68,7 @@ export function FichaProductoJoyeria({ producto, categorias, basePath, listPath 
                   /
                 </span>
                 <Link href={listPath} className="transition-colors hover:text-[var(--tienda-oro)]">
-                  Catálogo
+                  {cfgHombre ? cfgHombre.etiqueta : "Catálogo"}
                 </Link>
               </li>
               {categoria && (
@@ -58,7 +76,7 @@ export function FichaProductoJoyeria({ producto, categorias, basePath, listPath 
                   <span className="text-[var(--joy-oro)]" aria-hidden>
                     /
                   </span>
-                  <Link href={`${basePath}?categoria=${encodeURIComponent(categoria.id)}`} className="transition-colors hover:text-[var(--tienda-oro)]">
+                  <Link href={hrefCategoria(categoria.id)} className="transition-colors hover:text-[var(--tienda-oro)]">
                     {categoria.name}
                   </Link>
                 </li>
@@ -87,9 +105,14 @@ export function FichaProductoJoyeria({ producto, categorias, basePath, listPath 
 
         <div className="flex flex-col gap-5 lg:pt-2">
           <div>
+            {cfgHombre && (
+              <p className="joy-vertice-antetitulo mb-2">
+                {cfgHombre.casa} · {cfgHombre.marca}
+              </p>
+            )}
             {categoria ? (
               <Link
-                href={`${basePath}?categoria=${encodeURIComponent(categoria.id)}`}
+                href={hrefCategoria(categoria.id)}
                 className="text-[11px] font-medium uppercase tracking-[0.3em] text-[var(--tienda-oro)] underline-offset-4 hover:underline"
               >
                 {categoria.name}

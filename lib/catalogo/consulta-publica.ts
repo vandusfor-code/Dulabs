@@ -5,7 +5,7 @@
  */
 import type { PriceContext } from "@/lib/catalogo/domain";
 import { filtrosDeTexto } from "@/lib/catalogo/filtros";
-import { lineasDeLaTienda } from "@/lib/catalogo/joyeria";
+import { generoDeLaTienda, lineasDeLaTienda } from "@/lib/catalogo/joyeria";
 import type { PublicCatalogQuery } from "@/lib/catalogo/service";
 
 export function consultaDeCatalogoPublico(a: {
@@ -32,5 +32,7 @@ export function consultaDeCatalogoPublico(a: {
     ...(a.filtros ? { filters: filtrosDeTexto(a.filtros) } : {}),
     ...(a.opciones ? { facets: true } : {}),
     ...(lineas.length > 0 ? { lineas } : {}),
+    // Hombre/Mujer: solo en la tienda al DETAL de un negocio que lo configuró. El catálogo mayorista no tiene selector, así que muestra todo, como siempre.
+    ...(a.context === "retail" && generoDeLaTienda(a.slug) ? { separarGenero: true } : {}),
   };
 }
