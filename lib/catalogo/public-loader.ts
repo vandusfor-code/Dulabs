@@ -6,7 +6,7 @@ import { consultaDeCatalogoPublico } from "@/lib/catalogo/consulta-publica";
 import { generoDeLaTienda } from "@/lib/catalogo/joyeria";
 import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
-import { cargarMultimediaPublica } from "@/lib/cms-comercial/multimedia-publica";
+import { cargarContenidoHombrePublicado, cargarMultimediaPublica } from "@/lib/cms-comercial/multimedia-publica";
 import type { OpcionesPaginaMayoristas } from "@/lib/cms-comercial/pagina-mayoristas";
 import { cargarPaginaMayoristas as cargarPaginaMayoristasPublica } from "@/lib/cms-comercial/pagina-mayoristas-publica";
 import { cargarPaginaPublica } from "@/lib/cms-comercial/pagina-publica";
@@ -68,6 +68,12 @@ export const cargarPaginaTienda = cache((slug: string, clave: string) => cargarP
  * tarda de más: sin CMS, sin nada publicado, ante un error o pasados 2 s devuelve null y la tienda se ve con sus videos de siempre.
  */
 export const cargarMultimediaTienda = cache((slug: string) => cargarMultimediaPublica(crearDepsPublicasCms(), slug));
+
+/**
+ * Lo publicado para el lado de HOMBRE (videos de portada, colección y marca, imágenes de sus categorías y lo elegido para su inicio). NUNCA lanza ni tarda de más: sin nada publicado o ante cualquier
+ * problema devuelve null y el inicio de hombre usa lo automático (lo más nuevo y las categorías con piezas de hombre).
+ */
+export const cargarContenidoHombre = cache((slug: string) => cargarContenidoHombrePublicado(crearDepsPublicasCms(), slug));
 
 /** Inicio con lo que el CMS eligió (destacados, categorías, productos de la campaña). Sin opciones, igual que `cargarInicio`. */
 export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, { ...opciones, ...(generoDeLaTienda(slug) ? { separarGenero: true } : {}) });

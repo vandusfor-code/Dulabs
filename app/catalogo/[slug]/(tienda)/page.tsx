@@ -11,11 +11,11 @@ import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tec
 import { SIN_FILTROS, hayFiltros, leerFiltros, textoDeFiltros, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
 import { generoDeParam, hrefListadoDeGenero } from "@/lib/catalogo/genero";
 import { esListado } from "@/lib/catalogo/inicio";
-import { cargarAcabados, cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarMultimediaTienda, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
+import { cargarAcabados, cargarCatalogoPublico, cargarContenidoHombre, cargarInicio, cargarInicioElegido, cargarMultimediaTienda, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
 import { generoDeLaTienda, lineasDeLaTienda, lineasVisibles } from "@/lib/catalogo/joyeria";
 import { joyeriaOf, storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
-import { aplicarCategorias, aplicarMultimedia } from "@/lib/cms-comercial/multimedia-tienda";
+import { aplicarCategorias, aplicarMultimedia, videosDeHombre } from "@/lib/cms-comercial/multimedia-tienda";
 
 // Catálogo público con precios al DETAL: /catalogo/{slug}. Sin parámetros
 // muestra el INICIO de la tienda; con búsqueda, categoría, página o ?todo=1,
@@ -58,9 +58,29 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
     // activas (`tienda.genero`); si no, esa dirección se ignora y se ve el inicio de siempre.
     const generoInicio = joyeriaOf(registro) && tienda.genero ? generoDeLaTienda(tienda.slug) : undefined;
     if (generoInicio && generoDeParam(sp.genero) === "hombre") {
-      const inicioHombre = await cargarInicioElegido(slug, { lado: "hombre" });
+      // Lo que la administradora publicó para el lado de hombre (videos, imágenes de categoría y los destacados y categorías que eligió); sin nada publicado, lo automático.
+      const publicado = await cargarContenidoHombre(slug);
+      const inicioHombre = await cargarInicioElegido(slug, {
+        lado: "hombre",
+        ...(publicado && publicado.destacadas.length > 0 ? { destacadas: publicado.destacadas } : {}),
+        ...(publicado && publicado.categorias.length > 0 ? { categorias: publicado.categorias } : {}),
+      });
       if (!inicioHombre) notFound();
-      return <TiendaInicioHombre home={inicioHombre} genero={generoInicio} basePath={basePath} listPath={hrefListadoDeGenero(basePath, "hombre")} whatsapp={tienda.whatsapp} />;
+      const homeHombre = publicado?.multimedia ? { ...inicioHombre, categories: aplicarCategorias(inicioHombre.categories, publicado.multimedia) } : inicioHombre;
+      const videos = videosDeHombre(publicado?.multimedia);
+      const cfgHombre = generoInicio.hombre;
+      return (
+        <TiendaInicioHombre
+          home={homeHombre}
+          genero={generoInicio}
+          basePath={basePath}
+          listPath={hrefListadoDeGenero(basePath, "hombre")}
+          whatsapp={tienda.whatsapp}
+          video={videos.portada}
+          coleccion={videos.coleccion && cfgHombre.bloques?.coleccion ? { ...cfgHombre.bloques.coleccion, video: videos.coleccion } : undefined}
+          marca={videos.marca && cfgHombre.bloques?.marca ? { ...cfgHombre.bloques.marca, video: videos.marca } : undefined}
+        />
+      );
     }
     // Vitrina con tema "tecnologia": su propio inicio (el header navy y la navegación inferior los pone el marco de la tienda).
     const tecnologia = tecnologiaOf(registro);

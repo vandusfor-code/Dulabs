@@ -12,12 +12,28 @@ negra») y que la tienda se vea femenina y masculina a la vez. Quedó **construi
 | **Cabecera** (escritorio, desde 1280 px) | Selector **Mujer \| Hombre** antes de «Inicio»; el lado actual va en relleno. |
 | **Menú lateral** (celular y escritorio) | El mismo selector arriba de todo, a todo el ancho; al elegir un lado el menú se cierra. |
 | **Inicio** | Franja oscura **«Para él · Vértice»** entre «Nuestras líneas» y las categorías: el rótulo de la colección, el botón «Ver la colección» y las 4 piezas de hombre más recientes con foto. |
-| **Listado de hombre** (`?genero=hombre`) | TODA la tienda (cabecera, listado, menú, filtros, buscador y pie) pasa a grafito y plata. Portada de la colección: *Delacour · Colección masculina · VÉRTICE · Identidad forjada en acero*. Migas `Inicio / Hombre`. El panel de filtros se queda en el lado de hombre. |
+| **Inicio de hombre** (`?genero=hombre`) | Su propia portada de pantalla completa (grafito y acero, con el rótulo *Delacour · Colección masculina · VÉRTICE · Identidad forjada en acero* y el botón «Ver la colección»), su carrusel de categorías, sus productos destacados y, si la clienta sube videos, su video de portada, de colección y de marca. Detalle en §1b. |
+| **Listado de hombre** (`?genero=hombre&todo=1`) | TODA la tienda (cabecera, listado, menú, filtros, buscador y pie) pasa a grafito y plata. Portada de la colección: *Delacour · Colección masculina · VÉRTICE · Identidad forjada en acero*. Migas `Inicio / Hombre`. El panel de filtros se queda en el lado de hombre. |
 | **Ficha de una pieza de hombre** | También en grafito y plata, desde la primera pantalla (sin parpadeo de claro a oscuro). Migas `Inicio / Hombre / Categoría` y el rótulo «Delacour · Vértice». |
 | **Lado de mujer** | **Idéntico al de siempre** (las pruebas comparan el HTML con y sin la separación). |
 
 Al tocar «Hombre» o «Mujer» el color cambia al instante, sin esperar a que cargue la página nueva (lo decide la dirección, no la página). En el celular el selector también está bajo las migas del
 listado; desde 1280 px sobra y se esconde (la cabecera ya trae el suyo).
+
+## 1b. El inicio propio del lado de hombre («dos tiendas en una»)
+
+«Hombre» abre un **inicio propio**, no solo un listado: `?genero=hombre` es su inicio y `?genero=hombre&todo=1` su listado (`genero` solo ya no abre el listado; lo abre `todo=1` o algún filtro, igual que el de mujer lleva `?todo=1`).
+En el lado de hombre, «Inicio» y «Catálogo» (cabecera y menú) llevan a SU inicio y a SU listado, y «Catálogo» queda marcado en el listado de hombre.
+
+| Bloque (en este orden) | De dónde sale |
+|---|---|
+| **Portada** de pantalla completa | Gráfica por defecto (grafito, destello de acero, rótulo de la colección). Si la clienta sube el **video de portada de hombre**, va detrás del texto con su velo. |
+| **Categorías** (carrusel) | Las que tienen piezas de hombre, con la foto de una pieza de hombre; o las que la clienta elija (y su orden) y las imágenes que suba para cada una. Cada categoría lleva al listado de hombre de esa categoría. |
+| **Productos destacados** | Lo más nuevo de hombre (con foto) o los que la clienta elija. La referencia `DL-…` va sobre cada foto. |
+| **Video de colección** (opcional) | Solo si la clienta lo sube: video a pantalla completa con su título y botón. |
+| **Marca** (opcional) | Solo si la clienta lo sube: texto y tarjeta de video. |
+
+Nada del inicio de mujer aparece aquí (ni líneas, ni «Para él», ni mayoristas); el pie, las páginas y las preguntas frecuentes son de toda la tienda. Un bloque sin datos no se dibuja.
 
 ## 2. Cómo se decide si una pieza es de hombre
 
@@ -81,6 +97,7 @@ medias si una guarda falla.
 - **Formulario del producto:** «Para» (Mujer \| Hombre) con el aviso de en qué lado de la tienda aparecerá. **Nuevo producto** arranca en Mujer y conserva el lado al cargar varias piezas seguidas.
 - Todo esto aparece **solo** en negocios cuya tienda separa (hoy Delacour) y con la migración aplicada; los demás negocios ven el panel exactamente como siempre. El servidor también lo exige (no solo
   la pantalla): marcar el lado en un negocio sin separación se rechaza con un aviso claro antes de tocar nada.
+- **Interruptor «Mujer | Hombre»** (Tienda → **Página principal** y **Fotos y videos**; solo en tiendas con lado de hombre): con «Hombre» la clienta edita LO MISMO que en mujer —videos de portada, colección y marca (con las mismas reglas y la misma guía: MP4 H.264, hasta 3 MB, 4–15 s, sin sonido), la imagen de cada categoría, las categorías y los productos destacados— y lo guarda y publica con el mismo botón «Publicar» (un borrador, un publicar). Lo de hombre se guarda dentro del mismo contenido, bajo la clave `hombre`: **no hay migración nueva**. No hay un video «de siempre» de hombre al que volver: un espacio sin video no se muestra («Quitar el video»). Los mayoristas, el pie, las páginas y las preguntas frecuentes son de toda la tienda.
 - **Carga masiva (Excel):** todavía **no tiene columna «Para»**: las piezas que se importen nacen de mujer y hay que pasarlas a Hombre desde la lista (o con un SQL como el 08). Está en §7.
 
 ## 6. Lo que NO cambia
@@ -93,6 +110,7 @@ Precios, carrito, pedidos, stock, mayoristas y el agente de WhatsApp. La **refer
 
 - **Nombre de la colección: «Vértice»** (decidido por el dueño; si cambia, un solo lugar: `lib/catalogo/vitrina.ts` → `delacour.joyeria.genero.hombre`).
 - **Stock 15 por pieza** en las 76 (provisional; la clienta lo ajusta).
+- **Videos de hombre:** el sistema no trae ninguno (no se pueden inventar): la clienta los sube desde Tienda → Fotos y videos → Hombre, y hasta entonces la portada de hombre es gráfica y los bloques de colección y marca no se dibujan.
 - Pendientes, a decidir con la clienta: la **segunda marca «Orus»** («Delacour & Orus», relanzamiento: el código hoy tiene un solo nombre de colección para el lado de hombre); las **sublíneas de hombre**
   que saldrían de Plata y Acero; una columna **«Para» en la Carga masiva**; que el **agente de WhatsApp** distinga hombre y mujer al recomendar; y que el menú lateral, en el lado de hombre, ofrezca solo las
   categorías que tengan piezas de hombre (hoy ofrece todas).
@@ -108,6 +126,9 @@ Precios, carrito, pedidos, stock, mayoristas y el agente de WhatsApp. La **refer
 | `lib/catalogo/genero-css.test.ts` | Paleta de la clienta, contrastes, variables completas, «solo colores», señal y clases | 24 |
 | `components/catalogo-publico/tienda/joyeria/genero.ssr.test.tsx` | HTML del servidor: selector, portada, migas, ficha, franja «Para él» y la referencia `DL-` sobre cada foto | 26 |
 | `components/catalogo-publico/tienda/joyeria/genero.dom.test.tsx` | Lo que hace el cliente: señal del tema, selector de la cabecera y del menú, filtros que conservan el lado | 19 |
+| `components/catalogo-publico/tienda/joyeria/inicio-hombre.ssr.test.tsx` | El inicio de hombre en el HTML del servidor: portada, categorías, destacados con `DL-`, videos opcionales y nada del inicio de mujer | 14 |
+| `lib/cms-comercial/hombre-contenido.test.ts` | El contenido de hombre en el CMS: esquemas, validación, archivos que puede servir la ruta pública y lo que se dibuja de lo publicado | 17 |
+| `components/dashboard/tienda/hombre.dom.test.tsx` | El panel de punta a punta: interruptor, subir un video de hombre, categorías, publicar y que la tienda lo lea por su lado | 11 |
 | `components/dashboard/catalogo/genero-panel.dom.test.tsx` | El panel: formulario, lista y la página real con las rutas reales y una base en memoria | 30 |
 
 ```bash

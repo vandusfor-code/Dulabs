@@ -74,8 +74,10 @@ export function assetsReferenciados(snap: InstantaneaCms): Set<string> {
     ver(snap.home.contenido.banner?.imagen);
   }
   if (snap.multimedia) {
-    for (const c of snap.multimedia.contenido.categorias ?? []) ver(c.imagen);
-    for (const u of usosDeVideo(snap.multimedia.contenido)) ids.add(u.poster);
+    // Incluye lo del lado de hombre: la ruta pública solo sirve lo que el contenido PUBLICADO usa.
+    const hombre = snap.multimedia.contenido.hombre;
+    for (const c of [...(snap.multimedia.contenido.categorias ?? []), ...(hombre?.categorias ?? [])]) ver(c.imagen);
+    for (const u of [...usosDeVideo(snap.multimedia.contenido), ...(hombre ? usosDeVideo(hombre) : [])]) ids.add(u.poster);
   }
   for (const o of snap.ofertas) ver(o.contenido.imagen);
   for (const c of snap.combos) ver(c.contenido.imagen);
@@ -88,7 +90,9 @@ export function assetsReferenciados(snap: InstantaneaCms): Set<string> {
 
 /** Todos los videos del CMS que el contenido PUBLICADO usa (la ruta pública de videos solo sirve estos). */
 export function videosReferenciados(snap: InstantaneaCms): Set<string> {
-  return new Set(snap.multimedia ? usosDeVideo(snap.multimedia.contenido).map((u) => u.video) : []);
+  if (!snap.multimedia) return new Set();
+  const contenido = snap.multimedia.contenido;
+  return new Set([...usosDeVideo(contenido), ...(contenido.hombre ? usosDeVideo(contenido.hombre) : [])].map((u) => u.video));
 }
 
 /** Los dígitos de un número de WhatsApp válido (8 o más, como el resto de la tienda), o null. */

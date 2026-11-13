@@ -39,6 +39,13 @@ export interface GeneroJoyeria {
     lema: string;
     /** Texto de la entrada del inicio («Para él»). */
     entrada: { etiqueta: string; titulo: string; texto: string; boton: string };
+    /** Textos de los bloques de video del inicio de hombre. El video lo sube la administradora (Tienda → Fotos y videos → Hombre); sin video no hay bloque. */
+    bloques?: {
+      /** Video a pantalla completa de la colección. */
+      coleccion?: { etiqueta: string; titulo: string; boton: string };
+      /** Texto y tarjeta de video de la marca. */
+      marca?: { titulo: string; texto: string; boton: string };
+    };
   };
 }
 

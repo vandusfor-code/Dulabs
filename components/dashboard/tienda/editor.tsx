@@ -17,7 +17,8 @@ import { useCatalogToast } from "@/components/dashboard/catalogo/ui";
 import { mismoContenido, poner as ponerEn, type Draft } from "@/components/dashboard/tienda/borrador";
 import { useTienda } from "@/components/dashboard/tienda/contexto";
 import { NOMBRES_TIPO, chipsDe, fechaHora, resumirCambios } from "@/components/dashboard/tienda/formato";
-import { FormMultimedia } from "@/components/dashboard/tienda/formulario-multimedia";
+import { FormHomeHombre, InterruptorDeLado, problemasDeHombre, propsDeHombre, tieneContenidoDeHombre, type LadoDeLaTienda } from "@/components/dashboard/tienda/formulario-hombre";
+import { FormMultimedia, FormMultimediaHombre } from "@/components/dashboard/tienda/formulario-multimedia";
 import { FormPagina } from "@/components/dashboard/tienda/formulario-pagina";
 import { FormPie } from "@/components/dashboard/tienda/formulario-pie";
 import { FormCampana, FormCombo, FormContenido, FormHome, FormOferta, type FormProps } from "@/components/dashboard/tienda/formularios";
@@ -61,6 +62,8 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
   const [fallo, setFallo] = useState<Fallo | null>(null);
   const [validacion, setValidacion] = useState<Validacion | null>(null);
   const [pestana, setPestana] = useState<Pestana>("contenido");
+  // El lado de la tienda que se edita: solo «Página principal» y «Fotos y videos» de una tienda con lado de hombre.
+  const [lado, setLado] = useState<LadoDeLaTienda>("mujer");
   const [dialogo, setDialogo] = useState<TipoDialogo>(null);
   const [nota, setNota] = useState("");
   const [haGuardado, setHaGuardado] = useState(false);
@@ -265,6 +268,7 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
 
   const tipo = detalle.tipo;
   const Formulario = FORMULARIOS[tipo];
+  const conLado = (tipo === "home" || tipo === "multimedia") && Boolean(contexto?.tienda?.hombre);
   const accionDialogo = dialogo === "pausar" || dialogo === "despublicar" || dialogo === "archivar" ? dialogo : null;
   const lectura = !canWrite || detalle.archivada;
   const enVivo = detalle.estado !== "borrador";
@@ -371,7 +375,18 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
 
             {pestana === "contenido" && (
               <div role="tabpanel" id="panel-contenido" aria-labelledby="tab-contenido">
-                <Formulario borrador={borrador} poner={poner} disabled={lectura} problemas={problemas} />
+                {conLado && (
+                  <InterruptorDeLado lado={lado} onCambio={setLado} conContenidoDeHombre={tieneContenidoDeHombre(borrador)} problemasEnHombre={problemasDeHombre({ borrador, poner, disabled: lectura, problemas })} />
+                )}
+                {conLado && lado === "hombre" ? (
+                  tipo === "home" ? (
+                    <FormHomeHombre {...propsDeHombre({ borrador, poner, disabled: lectura, problemas })} />
+                  ) : (
+                    <FormMultimediaHombre {...propsDeHombre({ borrador, poner, disabled: lectura, problemas })} />
+                  )
+                ) : (
+                  <Formulario borrador={borrador} poner={poner} disabled={lectura} problemas={problemas} />
+                )}
               </div>
             )}
             {pestana === "versiones" && (
@@ -479,7 +494,16 @@ export function EditorEntidad({ id, onVolver }: { id: string; onVolver?: () => v
             )}
 
             <div id="previa" className="scroll-mt-28">
-              <PanelPrevia tipo={tipo} borrador={borrador} />
+              {conLado && lado === "hombre" ? (
+                <Aviso tono="info" titulo={t("Vista previa del lado de hombre", "Men's side preview")}>
+                  {t(
+                    "Todavía no hay vista previa del lado de hombre aquí (la de abajo sería la del lado de mujer, por eso no se muestra). Publica y míralo en tu tienda con el selector «Hombre».",
+                    "There is no men's side preview here yet (the one below would be the women's side, so it is not shown). Publish and look at it in your store with the “Men” selector.",
+                  )}
+                </Aviso>
+              ) : (
+                <PanelPrevia tipo={tipo} borrador={borrador} />
+              )}
             </div>
           </aside>
         </div>

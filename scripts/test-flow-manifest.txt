@@ -741,4 +741,6 @@ lib/catalogo/genero-css.test.ts
 components/catalogo-publico/tienda/joyeria/genero.ssr.test.tsx
 components/catalogo-publico/tienda/joyeria/genero.dom.test.tsx
 components/catalogo-publico/tienda/joyeria/inicio-hombre.ssr.test.tsx
+lib/cms-comercial/hombre-contenido.test.ts
+components/dashboard/tienda/hombre.dom.test.tsx
 components/dashboard/catalogo/genero-panel.dom.test.tsx
