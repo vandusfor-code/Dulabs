@@ -517,11 +517,12 @@ function SlotVideo({
 // Un espacio (portada, colección, marca o mayoristas)
 // ---------------------------------------------------------------------------
 
-function TarjetaEspacio({ espacio, formulario }: { espacio: EspacioVideo; formulario: FormProps }) {
+function TarjetaEspacio({ espacio, formulario, lado }: { espacio: EspacioVideo; formulario: FormProps; lado?: "hombre" }) {
   const { t } = useI18n();
   const { contexto } = useTienda();
   const { borrador, poner, disabled, problemas } = formulario;
-  const siempre = contexto?.tienda?.videosDeSiempre?.[espacio];
+  // El lado de hombre no trae videos «de siempre» a los que volver: sin video el bloque no se muestra.
+  const siempre = lado === "hombre" ? undefined : contexto?.tienda?.videosDeSiempre?.[espacio];
   const titulo = TITULOS_ESPACIO[espacio];
   const horizontal = archivoDe(espacio, "horizontal");
   const vertical = archivoDe(espacio, "vertical");
@@ -536,7 +537,7 @@ function TarjetaEspacio({ espacio, formulario }: { espacio: EspacioVideo; formul
       accion={
         personalizado && !disabled ? (
           <button type="button" onClick={() => poner(`videos.${espacio}`, undefined)} className={cn(actionBtn, "text-[12px]")}>
-            <RotateCcw className="size-3.5" aria-hidden /> {t("Volver al video de siempre", "Back to the usual video")}
+            <RotateCcw className="size-3.5" aria-hidden /> {lado === "hombre" ? t("Quitar el video", "Remove the video") : t("Volver al video de siempre", "Back to the usual video")}
           </button>
         ) : undefined
       }
@@ -725,6 +726,50 @@ function ImagenesDeCategorias({ borrador, poner, disabled, problemas }: FormProp
 }
 
 // ---------------------------------------------------------------------------
+
+/** Los espacios de video del lado de hombre: los mismos del inicio de mujer menos los mayoristas, que son de toda la tienda. */
+const ESPACIOS_HOMBRE = ESPACIOS_VIDEO.filter((e) => e !== "mayoristas");
+
+/**
+ * «Fotos y videos» del LADO DE HOMBRE: los mismos espacios, las mismas reglas y la misma guía que el lado de mujer (portada, colección y marca, la imagen de cada categoría), con una diferencia: no hay
+ * un video «de siempre» al que volver, así que un espacio sin video simplemente no se muestra en el inicio de hombre. Recibe los formularios ya adaptados al contenido de `hombre` (formulario-hombre.tsx).
+ */
+export function FormMultimediaHombre(p: FormProps) {
+  const { t } = useI18n();
+  const { contexto } = useTienda();
+  return (
+    <div className="space-y-5">
+      <Aviso tono="info" titulo={t("Los videos y las imágenes del lado de hombre", "The men's side videos and images")}>
+        {t(
+          "Son los del inicio de hombre (Vértice). Si no subes uno, ese bloque no se muestra: el lado de hombre no trae videos de siempre. Nada se ve en tu tienda hasta que lo publiques. Antes de subir un video lo revisamos y, si no sirve, te decimos exactamente por qué y cómo arreglarlo.",
+          "They are the men's home page ones (Vértice). If you don't upload one, that block isn't shown: the men's side has no default videos. Nothing shows in your store until you publish it. Before a video is uploaded we check it and, if it doesn't work, we tell you exactly why and how to fix it.",
+        )}
+      </Aviso>
+
+      <GuiaVideos />
+
+      {!contexto && (
+        <p role="status" className="text-sm text-mist">
+          <Film className="mr-1.5 inline size-4" aria-hidden /> {t("Cargando tu tienda…", "Loading your store…")}
+        </p>
+      )}
+      {ESPACIOS_HOMBRE.map((e) => (
+        <TarjetaEspacio key={e} espacio={e} formulario={p} lado="hombre" />
+      ))}
+
+      <ImagenesDeCategorias {...p} />
+
+      <Tarjeta titulo={t("Productos y categorías destacados", "Featured products and categories")}>
+        <p className="text-[13px] leading-relaxed text-mist" data-testid="aviso-destacados-hombre">
+          {t(
+            "Los productos destacados y las categorías que aparecen en el inicio de hombre (y su orden) se eligen en la pestaña «Página principal», lado Hombre.",
+            "The featured products and the categories shown on the men's home page (and their order) are set in the “Home page” tab, Men side.",
+          )}
+        </p>
+      </Tarjeta>
+    </div>
+  );
+}
 
 export function FormMultimedia(p: FormProps) {
   const { t } = useI18n();

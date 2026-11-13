@@ -18,6 +18,12 @@ Guía para quien administra la tienda (en Delacour, la administradora) y para el
 
 Lo que no cambias sigue viéndose como siempre. **Nada se ve en tu tienda hasta que pulsas «Publicar»**, y siempre puedes volver al video de siempre con «Volver al video de siempre».
 
+### El lado de Hombre (tiendas que lo tienen, como Delacour · Vértice)
+
+Arriba de los formularios de **Página principal** y de **Fotos y videos** aparece el interruptor **Mujer | Hombre**. Con «Hombre» editas el inicio del lado de hombre con los MISMOS espacios y las MISMAS reglas de esta guía: el video de la **portada**, el de la **colección** y el de la **marca**, la **imagen de cada categoría**, y en «Página principal» las **categorías** y los **productos destacados**. Se guarda y se publica con el mismo botón «Publicar» (un solo borrador para los dos lados).
+
+Diferencias: el lado de hombre **no trae videos de siempre**: un espacio sin video simplemente no se muestra (la portada de hombre es gráfica, en grafito y acero) y se quita con «Quitar el video». Los videos de **mayoristas**, el pie de página, las páginas y las preguntas frecuentes son de toda la tienda y no se separan por lado.
+
 ## Cómo se cambia un video (4 pasos)
 
 1. Entra a **Tienda → Fotos y videos** y, en el espacio que quieras cambiar, pulsa **Elegir un video**.

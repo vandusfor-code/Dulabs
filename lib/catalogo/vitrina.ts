@@ -424,6 +424,11 @@ const REGISTRO: Record<string, CatalogStorefrontConfig> = {
           antetitulo: "Colección masculina",
           lema: "Identidad forjada en acero",
           entrada: { etiqueta: "Para él", titulo: "Vértice", texto: "Una colección de dijes de acero para hombre donde el diseño, la fuerza y la identidad se encuentran.", boton: "Ver la colección" },
+          // Los bloques de video del inicio de hombre: sus textos. El video lo sube la administradora (Tienda → Fotos y videos → Hombre); mientras no haya video, el bloque no se dibuja.
+          bloques: {
+            coleccion: { etiqueta: "Colección masculina", titulo: "Forjados en acero", boton: "Ver la colección" },
+            marca: { titulo: "Vértice", texto: "Dijes de acero para hombre: el diseño, la fuerza y la identidad en cada pieza.", boton: "Ver la colección" },
+          },
         },
       },
       // Líneas de la joyería (pedido de la clienta, 2026-10-30): cada pieza cae en su línea por lo que dice su campo «Material» («Rodio · 3cm» y «Rodio platinado» son Rodio; «Plateado» es un color, no Plata).

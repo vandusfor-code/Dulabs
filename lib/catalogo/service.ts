@@ -1215,7 +1215,8 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       const chosen = [...new Set(opciones.categorias ?? [])].flatMap((id) => byId.get(id) ?? []);
       // En el lado de hombre solo se ofrecen las categorías que tienen piezas de hombre (la colección es nueva: no se muestran categorías vacías).
       const ladoActivo = ladoHombre && (await hombresP) !== null;
-      const shown = ladoActivo ? categories.filter((c) => coverProduct.has(c.id)) : chosen.length > 0 ? chosen : categories;
+      // Lo que la administradora eligió (en su orden) manda; sin elección, en el lado de hombre solo las que tienen piezas de hombre y, en el de siempre, todas.
+      const shown = chosen.length > 0 ? chosen : ladoActivo ? categories.filter((c) => coverProduct.has(c.id)) : categories;
 
       return {
         featured: pick(featured.items),

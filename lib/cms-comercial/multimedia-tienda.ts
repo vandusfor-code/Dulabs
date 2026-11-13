@@ -13,6 +13,7 @@
  *     administradora puede cambiar uno por uno (ver mayoristas-textos.ts); el que no cambió conserva el de siempre.
  */
 import type { PublicHome } from "@/lib/catalogo/service";
+import type { Multimedia } from "@/lib/cms-comercial/esquemas";
 import type { ArchivoVideo, ConfigJoyeria, VideoAmbiente } from "@/lib/catalogo/vitrina";
 import { aplicarTextosMayoristas, textosPublicados, type TextosMayoristasPublicados } from "@/lib/cms-comercial/mayoristas-textos";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
@@ -46,8 +47,34 @@ export interface MultimediaTienda {
  */
 export function multimediaDesdeCms(snap: InstantaneaCms, slug: string): MultimediaTienda | null {
   const publicada = snap.multimedia;
-  if (!publicada) return null;
-  const contenido = publicada.contenido;
+  return publicada ? multimediaDeLado(snap, slug, publicada.contenido) : null;
+}
+
+/** El contenido de un lado de la tienda (el de siempre, o el de hombre sin textos de mayoristas). */
+type ContenidoDeLado = Pick<Multimedia, "videos" | "categorias"> & { mayoristas?: Multimedia["mayoristas"] };
+
+/**
+ * Lo publicado para el LADO DE HOMBRE de la tienda (su inicio propio): sus videos (portada, colección y marca), la imagen de sus categorías y lo que la administradora eligió para ese inicio (las
+ * categorías que se ven y los productos destacados, en su orden). Null si no hay nada publicado para ese lado: el inicio de hombre usa entonces lo automático y no dibuja bloques de video.
+ */
+export interface ContenidoHombre {
+  multimedia: MultimediaTienda | null;
+  /** Referencias de los productos destacados elegidos (vacío = lo automático: lo más nuevo). */
+  destacadas: string[];
+  /** Ids de las categorías elegidas, en su orden (vacío = las que tienen piezas de hombre). */
+  categorias: string[];
+}
+
+export function contenidoHombreDesdeCms(snap: InstantaneaCms, slug: string): ContenidoHombre | null {
+  const deMultimedia = snap.multimedia?.contenido.hombre;
+  const multimedia = deMultimedia ? multimediaDeLado(snap, slug, deMultimedia) : null;
+  const inicio = snap.home?.contenido.hombre;
+  const destacadas = inicio?.productos_destacados ?? [];
+  const categorias = inicio?.categorias_destacadas ?? [];
+  return multimedia || destacadas.length > 0 || categorias.length > 0 ? { multimedia, destacadas: [...destacadas], categorias: [...categorias] } : null;
+}
+
+function multimediaDeLado(snap: InstantaneaCms, slug: string, contenido: ContenidoDeLado): MultimediaTienda | null {
 
   const archivoValido = (video: string, poster: string, espacioArchivo: keyof typeof ESPECIFICACIONES): ArchivoVideo | null => {
     const v = snap.assets.get(video);
@@ -121,6 +148,19 @@ export function aplicarMultimedia(joyeria: ConfigJoyeria, m: MultimediaTienda | 
 export function aplicarVideoMayoristas<T extends { video?: VideoAmbiente }>(mayoristas: T, m: MultimediaTienda | null): T {
   const nuevo = m?.videos.mayoristas;
   return nuevo && mayoristas.video ? { ...mayoristas, video: conVideo(mayoristas.video, nuevo) } : mayoristas;
+}
+
+/**
+ * Los videos del inicio de HOMBRE listos para dibujar (cada uno con el nombre de su botón de pausa): solo los espacios que la administradora publicó. Sin un video publicado el bloque no existe
+ * (el lado de hombre no trae videos «de siempre» a los que volver).
+ */
+export function videosDeHombre(m: MultimediaTienda | null | undefined): { portada?: VideoAmbiente; coleccion?: VideoAmbiente; marca?: VideoAmbiente } {
+  const v = m?.videos ?? {};
+  const de = (p: VideoPersonalizado | undefined, etiqueta: string) => (p ? conVideo({ horizontal: p.horizontal, etiqueta }, p) : undefined);
+  const portada = de(v.portada, "Video de la portada de hombre");
+  const coleccion = de(v.coleccion, "Video de la colección de hombre");
+  const marca = de(v.marca, "Video de la marca de hombre");
+  return { ...(portada ? { portada } : {}), ...(coleccion ? { coleccion } : {}), ...(marca ? { marca } : {}) };
 }
 
 /** Los videos con los que la tienda se ve hoy en cada espacio (los de DuLabs), solo de los espacios que la tienda tiene: lo que el panel muestra como «el de siempre» y a lo que se puede volver. */

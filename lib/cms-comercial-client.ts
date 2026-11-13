@@ -46,6 +46,8 @@ export interface ContextoTienda {
     paginaMayoristas: { intro: string | null; omitir: string[]; tambien: string[] } | null;
     descripcion: string | null;
     videosDeSiempre?: VideosDeSiempre;
+    /** La tienda tiene un LADO DE HOMBRE (su inicio propio): el panel ofrece el interruptor «Mujer | Hombre» en «Página principal» y «Fotos y videos». */
+    hombre?: boolean;
     /** Los textos con los que se ve hoy el bloque «Compras por mayor» (los de la tienda); null si la tienda no tiene ese bloque. */
     textosMayoristas?: TextosMayoristas | null;
   } | null;

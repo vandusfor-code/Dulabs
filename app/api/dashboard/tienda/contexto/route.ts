@@ -39,6 +39,8 @@ export async function GET(request: NextRequest) {
             descripcion: joyeria?.descripcion ?? null,
             // Los videos con los que se ve la tienda hoy en cada espacio (solo los espacios que tiene): el panel los muestra como «el de siempre» y permite volver a ellos.
             videosDeSiempre: videosDeSiempre(joyeria),
+            // El lado de hombre de la tienda (su inicio propio): solo las tiendas que lo tienen en su configuración (hoy Delacour).
+            ...(joyeria?.genero ? { hombre: true } : {}),
             // Los textos con los que se ve hoy el bloque «Compras por mayor» (solo si la tienda lo tiene): el panel los muestra como «el de siempre» y permite volver a ellos.
             ...(joyeria?.mayoristas ? { textosMayoristas: textosDeSiempre(joyeria.mayoristas) } : {}),
           }
