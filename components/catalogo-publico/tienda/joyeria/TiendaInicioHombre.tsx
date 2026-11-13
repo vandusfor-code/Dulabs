@@ -1,23 +1,29 @@
 /**
- * INICIO del lado de HOMBRE de la tienda (Delacour · Vértice): la tienda de hombre dentro de la tienda, con su propia portada, sus categorías, sus destacados y, cuando la administradora los sube, sus
- * videos (portada, colección y marca). Reutiliza las mismas piezas del inicio de mujer (carrusel de categorías, tarjetas, video de la colección, bloque de marca, botones flotantes) con los datos y la
- * paleta de hombre (el CSS de «Lado de hombre» las pinta de grafito y plata cuando la dirección dice `?genero=hombre`). Server Component: todo llega en el HTML.
+ * INICIO del lado de HOMBRE de la tienda (Delacour · Vértice): la tienda de hombre dentro de la tienda, con la MISMA composición que el inicio de mujer pero con su diseño y su contenido: portada con
+ * video, el video de la colección, las categorías, la marca con su tarjeta de video, los productos destacados y, al final, la invitación a compradores mayoristas. Es el orden del inicio de mujer
+ * (portada → colección → categorías → marca → destacados → mayoristas); las líneas, «Para él» y los acabados son cosas del lado de mujer y aquí no van.
  *
- * Nada inventado: un bloque sin datos NO se dibuja (sin categorías con piezas de hombre, sin destacados, sin video de colección o de marca). Los precios y la disponibilidad los calcula el backend.
+ * Un solo lienzo grafito, sin franjas ni cortes planos al desplazarse: todos los bloques comparten el fondo de la página; la portada se funde hacia abajo con ella y los videos de la colección y de
+ * los mayoristas entran y salen con un degradado (ver «INICIO DEL LADO DE HOMBRE» en globals.css). Reutiliza las piezas del inicio de mujer (tarjetas, video de la colección, bloque de marca, mayoristas,
+ * botones flotantes) con los datos y la paleta de hombre (el CSS del «lado de hombre» las pinta de grafito y plata cuando la dirección dice `?genero=hombre`). Server Component: todo llega en el HTML.
+ *
+ * Nada inventado: un bloque sin datos NO se dibuja (sin categorías con piezas de hombre, sin destacados, sin video de colección o de marca, sin WhatsApp para los mayoristas). Los precios y la
+ * disponibilidad los calcula el backend.
  */
 import { ArrowRight } from "lucide-react";
 import { Revelar } from "@/components/catalogo-publico/tienda/Revelar";
 import { ColeccionVideo, MarcaVideo } from "@/components/catalogo-publico/tienda/joyeria/BloquesJoyeria";
-import { CarruselCategorias } from "@/components/catalogo-publico/tienda/joyeria/CarruselCategorias";
+import { CategoriasHombre } from "@/components/catalogo-publico/tienda/joyeria/CategoriasHombre";
 import { FlotantesJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FlotantesJoyeria";
 import { HeroVertice } from "@/components/catalogo-publico/tienda/joyeria/HeroVertice";
 import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
+import { Mayoristas } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioJoyeria";
 import { ENLACE_TEXTO, EncabezadoSeccion, EnlaceJoyeria, indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
 import type { GeneroJoyeria } from "@/lib/catalogo/genero";
+import type { MayoristasVisible } from "@/lib/catalogo/joyeria";
 import type { PublicHome } from "@/lib/catalogo/service";
 import type { ColeccionJoyeria, MarcaJoyeria, VideoAmbiente } from "@/lib/catalogo/vitrina";
 
-const BANDA = "joy-ancla py-16 md:py-24";
 const CONTENEDOR = "mx-auto max-w-7xl px-4 sm:px-6 lg:px-8";
 
 export function TiendaInicioHombre({
@@ -29,6 +35,7 @@ export function TiendaInicioHombre({
   video,
   coleccion,
   marca,
+  mayoristas,
 }: {
   /** El inicio de hombre (`getHome(slug, { lado: "hombre" })`): destacados y categorías son solo de piezas de hombre. */
   home: PublicHome;
@@ -43,6 +50,8 @@ export function TiendaInicioHombre({
   coleccion?: ColeccionJoyeria;
   /** Texto y tarjeta de video de la marca de hombre (opcional). */
   marca?: MarcaJoyeria;
+  /** La invitación a compradores mayoristas: es de TODA la tienda (la misma del inicio de mujer, con su video); sin ella o sin WhatsApp no se dibuja. */
+  mayoristas?: MayoristasVisible | null;
 }) {
   const cfg = genero.hombre;
   const destacadosDelCms = home.featuredPolicy === "cms";
@@ -50,28 +59,23 @@ export function TiendaInicioHombre({
     <div className="joy-inicio-hombre">
       <HeroVertice config={cfg} href={listPath} video={video} />
 
+      {coleccion && <ColeccionVideo coleccion={coleccion} href={listPath} suave />}
+
       {home.categories.length > 0 && (
         <Revelar>
-          <section id="categorias" aria-labelledby="joy-categorias" className="joy-ancla bg-ink pt-16 md:pt-24">
-            <div className={`${CONTENEDOR} mb-8 flex items-end justify-between gap-4 md:mb-10`}>
-              <h2 id="joy-categorias" className="font-serif-tienda text-[28px] font-medium uppercase leading-tight tracking-[0.04em] text-fg md:text-[34px]">
-                Categorías
-              </h2>
-              <EnlaceJoyeria href={listPath} className="joy-enlace-subrayado inline-flex shrink-0 items-center gap-1.5 pb-1 text-sm text-fg">
-                Ver todo
-                <ArrowRight className="size-4" strokeWidth={1.7} aria-hidden />
-              </EnlaceJoyeria>
-            </div>
-            <div className="pb-16 md:pb-24">
-              <CarruselCategorias categorias={home.categories} basePath={basePath} genero="hombre" />
-            </div>
-          </section>
+          <CategoriasHombre categorias={home.categories} basePath={basePath} listPath={listPath} />
+        </Revelar>
+      )}
+
+      {marca && (
+        <Revelar>
+          <MarcaVideo marca={marca} href={listPath} fondo="" />
         </Revelar>
       )}
 
       {home.featured.length > 0 && (
         <Revelar>
-          <section id="destacados" aria-labelledby="joy-destacados" className={`${BANDA} ${home.categories.length > 0 ? "bg-ink-2" : "bg-ink"}`}>
+          <section id="destacados" aria-labelledby="joy-destacados" className="joy-ancla joy-hm-seccion">
             <div className={CONTENEDOR}>
               <EncabezadoSeccion etiqueta={cfg.marca} titulo={destacadosDelCms ? "Piezas destacadas" : "Lo más nuevo"} id="joy-destacados" />
               <ul className="grid grid-cols-2 gap-x-4 gap-y-8 md:grid-cols-4">
@@ -93,11 +97,9 @@ export function TiendaInicioHombre({
         </Revelar>
       )}
 
-      {coleccion && <ColeccionVideo coleccion={coleccion} href={listPath} />}
-
-      {marca && (
+      {mayoristas && (
         <Revelar>
-          <MarcaVideo marca={marca} href={listPath} fondo="bg-ink" />
+          <Mayoristas m={mayoristas} suave />
         </Revelar>
       )}
 
