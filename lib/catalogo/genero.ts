@@ -63,9 +63,14 @@ export function generoDe(referencia: string, hombres: ReadonlySet<string>): Gene
   return hombres.has(claveDeReferencia(referencia)) ? "hombre" : GENERO_PREDETERMINADO;
 }
 
-/** Dirección del lado de la tienda: el de mujer es la tienda de siempre (`/catalogo/delacour`); el de hombre, el listado de hombre. */
+/** Dirección del INICIO de cada lado de la tienda: el de mujer es la tienda de siempre (`/catalogo/delacour`); el de hombre, su propio inicio (`?genero=hombre`: su portada, sus categorías y sus destacados). */
 export function hrefDeGenero(basePath: string, genero: Genero): string {
   return genero === "hombre" ? `${basePath}?genero=hombre` : basePath;
+}
+
+/** Dirección del LISTADO completo de cada lado: el de mujer es `?todo=1` (el de siempre); el de hombre, `?genero=hombre&todo=1`. */
+export function hrefListadoDeGenero(basePath: string, genero: Genero): string {
+  return genero === "hombre" ? `${basePath}?genero=hombre&todo=1` : `${basePath}?todo=1`;
 }
 
 /** La referencia de la ficha que muestra una ruta («/catalogo/delacour/productos/dl-000769»), o null si la ruta no es de una ficha de este negocio. */

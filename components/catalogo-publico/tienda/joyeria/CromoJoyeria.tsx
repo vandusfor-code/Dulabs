@@ -19,6 +19,7 @@ import { useCarrito, useTienda } from "@/components/catalogo-publico/tienda/Tien
 import { useMovimientoReducido } from "@/components/catalogo-publico/tienda/joyeria/medios";
 import { SelectorGenero } from "@/components/catalogo-publico/tienda/joyeria/SelectorGenero";
 import { useLadoDeHombre } from "@/components/catalogo-publico/tienda/joyeria/TemaGenero";
+import { hrefDeGenero, hrefListadoDeGenero } from "@/lib/catalogo/genero";
 import { esListadoDeUrl } from "@/lib/catalogo/inicio";
 import type { AnuncioVisible, LineaVisible } from "@/lib/catalogo/joyeria";
 
@@ -246,6 +247,9 @@ export function CromoJoyeria({
   const estado = esInicio && !pasado ? "hero" : "vidrio";
   const cerrarMenu = () => setMenuAbierto(false);
   const actual = (activo: boolean) => (activo ? "page" : undefined);
+  // «Inicio» y «Catálogo» son los del lado en que se está: el lado de hombre es una tienda dentro de la tienda, con su propio inicio (`?genero=hombre`) y su propio listado (`?genero=hombre&todo=1`).
+  const hrefInicio = ladoHombre ? hrefDeGenero(basePath, "hombre") : basePath;
+  const hrefCatalogo = ladoHombre ? hrefListadoDeGenero(basePath, "hombre") : listPath;
 
   return (
     <>
@@ -273,10 +277,10 @@ export function CromoJoyeria({
             {/* Con el selector Mujer | Hombre los accesos van más juntos (24 px y no 36): así caben en una sola fila y «Mayorista» no baja a una segunda. */}
             <nav className={cn("col-start-2 row-start-1 hidden items-center gap-7", cab.nav, cab === CABECERA.ancha && (genero ? "xl:gap-x-6" : "xl:gap-x-9"))} aria-label="Menú principal">
               {genero && <SelectorGenero basePath={basePath} hombre={ladoHombre} etiquetas={genero.etiquetas} variante="nav" className="joy-tinta" />}
-              <Link href={basePath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esInicio)}>
+              <Link href={hrefInicio} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esInicio)}>
                 Inicio
               </Link>
-              <Link href={listPath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esListado && !ladoHombre)}>
+              <Link href={hrefCatalogo} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esListado)}>
                 Catálogo
               </Link>
               {lineas.length > 0 && (
@@ -330,10 +334,10 @@ export function CromoJoyeria({
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-6">
             {genero && <SelectorGenero basePath={basePath} hombre={ladoHombre} etiquetas={genero.etiquetas} variante="menu" alElegir={cerrarMenu} className="mb-4" />}
-            <Link href={basePath} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(esInicio)}>
+            <Link href={hrefInicio} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(esInicio)}>
               Inicio
             </Link>
-            <Link href={listPath} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(esListado && !ladoHombre)}>
+            <Link href={hrefCatalogo} onClick={cerrarMenu} className="joy-fila-menu" aria-current={actual(esListado)}>
               Todo el catálogo
             </Link>
             {mayorista && (

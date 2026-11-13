@@ -5,10 +5,11 @@ import { TarjetaProducto } from "@/components/catalogo-publico/tienda/TarjetaPro
 import { TiendaInicio } from "@/components/catalogo-publico/tienda/TiendaInicio";
 import { ListadoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/ListadoJoyeria";
 import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
+import { TiendaInicioHombre } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioHombre";
 import { TiendaInicioJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioJoyeria";
 import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/TiendaInicioTecnologia";
 import { SIN_FILTROS, hayFiltros, leerFiltros, textoDeFiltros, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
-import { generoDeParam, hrefDeGenero } from "@/lib/catalogo/genero";
+import { generoDeParam, hrefListadoDeGenero } from "@/lib/catalogo/genero";
 import { esListado } from "@/lib/catalogo/inicio";
 import { cargarAcabados, cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarMultimediaTienda, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
@@ -53,6 +54,14 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
 
   if (!listado) {
     const registro = storefrontConfigFor(tienda.slug);
+    // El lado de hombre es una tienda dentro de la tienda: `?genero=hombre` abre SU inicio (portada, categorías y destacados de hombre). Solo existe si la tienda lo configuró y ya tiene piezas de hombre
+    // activas (`tienda.genero`); si no, esa dirección se ignora y se ve el inicio de siempre.
+    const generoInicio = joyeriaOf(registro) && tienda.genero ? generoDeLaTienda(tienda.slug) : undefined;
+    if (generoInicio && generoDeParam(sp.genero) === "hombre") {
+      const inicioHombre = await cargarInicioElegido(slug, { lado: "hombre" });
+      if (!inicioHombre) notFound();
+      return <TiendaInicioHombre home={inicioHombre} genero={generoInicio} basePath={basePath} listPath={hrefListadoDeGenero(basePath, "hombre")} whatsapp={tienda.whatsapp} />;
+    }
     // Vitrina con tema "tecnologia": su propio inicio (el header navy y la navegación inferior los pone el marco de la tienda).
     const tecnologia = tecnologiaOf(registro);
     if (tecnologia) {
@@ -135,7 +144,7 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
         q={q}
         categoria={categoria}
         // En el lado de hombre «ver todo» y las migas llevan al listado de hombre, no al de mujer.
-        listPath={ladoHombre ? hrefDeGenero(basePath, "hombre") : listPath}
+        listPath={ladoHombre ? hrefListadoDeGenero(basePath, "hombre") : listPath}
         titulo={titulo}
         filtros={filtrosVista}
         facetas={data.facets}

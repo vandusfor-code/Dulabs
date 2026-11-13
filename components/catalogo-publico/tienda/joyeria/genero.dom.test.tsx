@@ -187,19 +187,35 @@ describe("cabecera y menú lateral — el selector Mujer | Hombre", () => {
     }
   });
 
-  it("en el listado de hombre y en la ficha de una pieza de hombre el lado actual es Hombre — y «Catálogo» deja de estar marcado (ya no es el catálogo de mujer)", () => {
-    for (const [ruta, consulta] of [
-      [BASE, "genero=hombre"],
-      [BASE, "genero=hombre&color=platead"],
-      [`${BASE}/productos/dl-000769`, ""],
+  it("en el inicio de hombre, su listado y la ficha de una pieza de hombre el lado actual es Hombre; «Inicio» está marcado en el inicio de hombre y «Catálogo» en su listado (como en el lado de mujer)", () => {
+    // [ruta, consulta, ¿«Inicio» marcado?, ¿«Catálogo» marcado?]
+    for (const [ruta, consulta, inicio, catalogo] of [
+      [BASE, "genero=hombre", true, false],
+      [BASE, "genero=hombre&todo=1", false, true],
+      [BASE, "genero=hombre&color=platead", false, true],
+      [`${BASE}/productos/dl-000769`, "", false, false],
     ] as const) {
       const { container, unmount } = render(conRuta(ruta, consulta, cromo(), slugNuevo()));
       for (const g of container.querySelectorAll(".joy-genero")) assert.deepEqual(lados(g).map((l) => l.actual), [false, true], `${ruta}?${consulta}`);
-      assert.equal(enlace(nav(container), "Catálogo").getAttribute("aria-current"), null, "«Catálogo» de la cabecera");
-      assert.equal(enlace(menu(container), "Todo el catálogo").getAttribute("aria-current"), null, "«Todo el catálogo» del menú");
-      assert.equal(enlace(nav(container), "Inicio").getAttribute("aria-current"), null, "tampoco «Inicio»");
+      const marcado = (a: HTMLElement) => a.getAttribute("aria-current") === "page";
+      assert.equal(marcado(enlace(nav(container), "Inicio")), inicio, `«Inicio» de la cabecera en ${ruta}?${consulta}`);
+      assert.equal(marcado(enlace(nav(container), "Catálogo")), catalogo, `«Catálogo» de la cabecera en ${ruta}?${consulta}`);
+      assert.equal(marcado(enlace(menu(container), "Todo el catálogo")), catalogo, `«Todo el catálogo» del menú en ${ruta}?${consulta}`);
       unmount();
     }
+  });
+
+  it("en el lado de hombre «Inicio» y «Catálogo» (cabecera y menú) llevan al inicio y al listado de HOMBRE; en el de mujer, a los de siempre", () => {
+    const hombre = render(conRuta(BASE, "genero=hombre", cromo(), slugNuevo()));
+    assert.equal(enlace(nav(hombre.container), "Inicio").getAttribute("href"), `${BASE}?genero=hombre`);
+    assert.equal(enlace(nav(hombre.container), "Catálogo").getAttribute("href"), `${BASE}?genero=hombre&todo=1`);
+    assert.equal(enlace(menu(hombre.container), "Inicio").getAttribute("href"), `${BASE}?genero=hombre`);
+    assert.equal(enlace(menu(hombre.container), "Todo el catálogo").getAttribute("href"), `${BASE}?genero=hombre&todo=1`);
+    hombre.unmount();
+    const mujer = render(conRuta(BASE, "", cromo(), slugNuevo()));
+    assert.equal(enlace(nav(mujer.container), "Inicio").getAttribute("href"), BASE);
+    assert.equal(enlace(nav(mujer.container), "Catálogo").getAttribute("href"), LISTA);
+    assert.equal(enlace(menu(mujer.container), "Todo el catálogo").getAttribute("href"), LISTA);
   });
 
   it("en el listado de mujer «Catálogo» sí está marcado (como siempre)", () => {
@@ -295,10 +311,10 @@ describe("filtros joyería — el lado de hombre se queda al filtrar", () => {
     assert.deepEqual(empujes, [{ url: `${BASE}?genero=hombre&color=platead`, opciones: { scroll: false } }]);
   });
 
-  it("desmarcar la última opción vuelve al listado de HOMBRE (no al de siempre), y no a «?todo=1»", () => {
+  it("desmarcar la última opción vuelve al listado completo de HOMBRE (?genero=hombre&todo=1: no al de mujer, y no al inicio de hombre)", () => {
     const { container } = render(panel(f({ genero: "hombre", colores: ["platead"] })));
     fireEvent.click(caja(aside(container), "Plateado (3)"));
-    assert.deepEqual(urls(), [`${BASE}?genero=hombre`]);
+    assert.deepEqual(urls(), [`${BASE}?genero=hombre&todo=1`]);
   });
 
   it("estar en el lado de hombre NO cuenta como filtro: sin nada más elegido no hay «Quitar filtros» ni contador de filtros", () => {
@@ -311,7 +327,7 @@ describe("filtros joyería — el lado de hombre se queda al filtrar", () => {
     const { container } = render(panel(f({ genero: "hombre", colores: ["platead", "negr"] })));
     assert.match(container.querySelector(".joy-filtro-contador")?.textContent ?? "", /^2/);
     fireEvent.click(within(aside(container)).getByText("Quitar filtros"));
-    assert.deepEqual(urls(), [`${BASE}?genero=hombre`]);
+    assert.deepEqual(urls(), [`${BASE}?genero=hombre&todo=1`]);
   });
 
   it("en el lado de mujer todo es como siempre: «Quitar filtros» vuelve al listado completo (?todo=1)", () => {

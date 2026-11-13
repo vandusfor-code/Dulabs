@@ -4560,3 +4560,44 @@ html:has([data-tema-genero="hombre"]) {
   background-color: #111416;
   color-scheme: dark;
 }
+
+/* ==========================================================================================================================================================
+   INICIO DEL LADO DE HOMBRE — portada gráfica de Vértice (components/catalogo-publico/tienda/joyeria/HeroVertice.tsx). A pantalla completa, grafito con el destello de acero de la portada del catálogo de la
+   clienta y un rayado fino diagonal (acero cepillado). El texto usa las clases del rótulo de la colección (.joy-vertice-*). Si la administradora sube un video para este espacio va detrás, con el velo.
+   ========================================================================================================================================================== */
+.tienda-joyeria .joy-hv {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  min-height: 100svh;
+  background-color: var(--color-ink, #111416);
+  background-image:
+    radial-gradient(ellipse at 78% 18%, #303b40 0%, transparent 62%),
+    repeating-linear-gradient(135deg, rgb(255 255 255 / 0.022) 0, rgb(255 255 255 / 0.022) 1px, transparent 1px, transparent 9px);
+  color: var(--color-fg, #f4f5f5);
+}
+.tienda-joyeria .joy-hv-velo {
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgb(17 20 22 / 0.82), rgb(17 20 22 / 0.5) 55%, rgb(17 20 22 / 0.28));
+}
+.tienda-joyeria .joy-hv-interior {
+  position: relative;
+  width: 100%;
+  max-width: 80rem;
+  margin-inline: auto;
+  padding: calc(var(--joy-alto-barra) + var(--joy-alto-cab) + 3rem) 1.5rem 6rem;
+}
+@media (min-width: 1024px) {
+  .tienda-joyeria .joy-hv-interior {
+    padding-inline: 2.5rem;
+  }
+}
+.tienda-joyeria .joy-hv-titulo {
+  font-size: clamp(3.5rem, 13vw, 9.5rem);
+  line-height: 0.95;
+}

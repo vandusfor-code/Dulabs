@@ -7,7 +7,7 @@ import Link from "next/link";
 import { formatCop } from "@/lib/business-agent-quote";
 import type { Availability, CatalogCategory } from "@/lib/catalogo/domain";
 import { SIN_FILTROS, urlFiltros } from "@/lib/catalogo/filtros";
-import type { GeneroJoyeria } from "@/lib/catalogo/genero";
+import { hrefDeGenero, type GeneroJoyeria } from "@/lib/catalogo/genero";
 import type { PublicProductDetail } from "@/lib/catalogo/publicacion";
 import { AccionesProducto } from "@/components/catalogo-publico/tienda/AccionesProducto";
 import { BotonVolver } from "@/components/catalogo-publico/tienda/BotonVolver";
@@ -59,7 +59,7 @@ export function FichaProductoJoyeria({
           <nav aria-label="Migas de pan" className="text-xs">
             <ol className="flex flex-wrap items-center gap-2 text-mist">
               <li>
-                <Link href={basePath} className="transition-colors hover:text-[var(--tienda-oro)]">
+                <Link href={cfgHombre ? hrefDeGenero(basePath, "hombre") : basePath} className="transition-colors hover:text-[var(--tienda-oro)]">
                   Inicio
                 </Link>
               </li>

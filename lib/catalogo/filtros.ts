@@ -247,7 +247,8 @@ export function filtrosDeTexto(texto: string): FiltrosCatalogo {
 export function urlFiltros(basePath: string, f: FiltrosCatalogo, pagina?: number): string {
   const qs = new URLSearchParams(paramsDeFiltros(f));
   if (pagina && pagina > 1) qs.set("pagina", String(pagina));
-  if (!qs.toString()) qs.set("todo", "1");
+  // Sin filtros (o solo con el lado: `genero` no abre el listado, es el inicio de ese lado) es el listado completo: `todo=1`.
+  if ([...qs.keys()].every((clave) => clave === "genero")) qs.set("todo", "1");
   return `${basePath}?${qs.toString()}`;
 }
 

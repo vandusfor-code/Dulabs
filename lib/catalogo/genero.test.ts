@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { GENEROS, productCreateSchema, productListQuerySchema, productUpdateSchema } from "@/lib/catalogo/domain";
 import { SIN_FILTROS, cumpleFiltros, hayFiltros, leerFiltros, paramsDeFiltros, soloUnaCategoria, textoDeFiltros, filtrosDeTexto, urlFiltros } from "@/lib/catalogo/filtros";
-import { ATRIBUTO_TEMA_GENERO, claveDeReferencia, conjuntoDeHombres, esGenero, generoDe, generoDeParam, hrefDeGenero, referenciaDeRuta, temaDeHombre } from "@/lib/catalogo/genero";
+import { ATRIBUTO_TEMA_GENERO, claveDeReferencia, conjuntoDeHombres, esGenero, generoDe, generoDeParam, hrefDeGenero, hrefListadoDeGenero, referenciaDeRuta, temaDeHombre } from "@/lib/catalogo/genero";
 import { esListado, esListadoDeUrl } from "@/lib/catalogo/inicio";
 import { generoDeLaTienda } from "@/lib/catalogo/joyeria";
 import { storefrontConfigFor } from "@/lib/catalogo/vitrina";
@@ -42,15 +42,25 @@ describe("la dirección ?genero=", () => {
     for (const nada of ["mujer", "otro", "", "hombres", null, undefined]) assert.equal(generoDeParam(nada), undefined, String(nada));
   });
 
-  it("los dos lados tienen su dirección: mujer es la tienda de siempre y hombre el listado de hombre", () => {
+  it("los dos lados tienen su INICIO: mujer es la tienda de siempre y hombre su propio inicio (?genero=hombre)", () => {
     assert.equal(hrefDeGenero(BASE, "mujer"), BASE);
     assert.equal(hrefDeGenero(BASE, "hombre"), `${BASE}?genero=hombre`);
   });
 
-  it("?genero= lleva al LISTADO, no al inicio (como cualquier filtro de la joyería)", () => {
-    assert.equal(esListado({ genero: "hombre" }), true);
+  it("y su LISTADO: el de mujer es ?todo=1 (el de siempre) y el de hombre ?genero=hombre&todo=1", () => {
+    assert.equal(hrefListadoDeGenero(BASE, "mujer"), `${BASE}?todo=1`);
+    assert.equal(hrefListadoDeGenero(BASE, "hombre"), `${BASE}?genero=hombre&todo=1`);
+  });
+
+  it("?genero=hombre SOLO es el INICIO de hombre (no abre el listado); el listado lleva todo=1 o algún filtro, como el de mujer", () => {
+    assert.equal(esListado({ genero: "hombre" }), false, "el inicio de hombre");
     assert.equal(esListado({ genero: "" }), false);
-    assert.equal(esListadoDeUrl(new URLSearchParams("?genero=hombre")), true);
+    assert.equal(esListado({ genero: "hombre", todo: "1" }), true, "el listado de hombre");
+    assert.equal(esListado({ genero: "hombre", color: "platead" }), true);
+    assert.equal(esListado({ genero: "hombre", q: "ancla" }), true);
+    assert.equal(esListadoDeUrl(new URLSearchParams("?genero=hombre")), false);
+    assert.equal(esListadoDeUrl(new URLSearchParams("?genero=hombre&todo=1")), true);
+    assert.equal(esListadoDeUrl(new URLSearchParams("?genero=hombre&categoria=c1")), true);
     assert.equal(esListadoDeUrl(new URLSearchParams("")), false);
   });
 });
@@ -65,7 +75,9 @@ describe("el filtro «genero» en lib/catalogo/filtros.ts", () => {
   });
 
   it("la dirección del listado de hombre, con y sin otros filtros, y el viaje de ida y vuelta por texto", () => {
-    assert.equal(urlFiltros(BASE, { ...SIN_FILTROS, genero: "hombre" }), `${BASE}?genero=hombre`);
+    // sin nada más, el listado de hombre lleva todo=1 (`?genero=hombre` solo es su inicio), igual que el de mujer
+    assert.equal(urlFiltros(BASE, { ...SIN_FILTROS, genero: "hombre" }), `${BASE}?genero=hombre&todo=1`);
+    assert.equal(urlFiltros(BASE, SIN_FILTROS), `${BASE}?todo=1`);
     assert.equal(urlFiltros(BASE, { ...SIN_FILTROS, genero: "hombre", lineas: ["acero"] }, 2), `${BASE}?genero=hombre&linea=acero&pagina=2`);
     const f = { ...SIN_FILTROS, genero: "hombre" as const, lineas: ["acero"], precioMax: 20_000 };
     assert.deepEqual(filtrosDeTexto(textoDeFiltros(f)), leerFiltros({ genero: "hombre", linea: "acero", precio_max: "20000" }));
