@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, Loader2, TriangleAlert, X } from "lucide-react";
@@ -37,11 +37,9 @@ export default function NuevoProductoPage() {
   // «Para» (Mujer/Hombre): solo en negocios cuya tienda separa los dos lados.
   const separaGenero = useSeparaGenero(client);
 
-  const [form, setForm] = useState<ProductFormState>(emptyProductForm);
-  // Con la separación disponible el formulario trae «Para» y arranca en Mujer (lo predeterminado).
-  useEffect(() => {
-    if (separaGenero) setForm((f) => (f.gender === undefined ? { ...f, gender: "mujer" } : f));
-  }, [separaGenero]);
+  const [formBase, setForm] = useState<ProductFormState>(emptyProductForm);
+  // Con la separación disponible el formulario trae «Para» y arranca en Mujer (lo predeterminado). Se DERIVA al dibujar (no se copia al estado con un efecto): mientras nadie elija el otro lado, el lado es Mujer.
+  const form = useMemo<ProductFormState>(() => (separaGenero && formBase.gender === undefined ? { ...formBase, gender: "mujer" } : formBase), [separaGenero, formBase]);
   const [errors, setErrors] = useState<ProductFormErrors>({});
   const [intentado, setIntentado] = useState(false);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
