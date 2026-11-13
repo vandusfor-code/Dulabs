@@ -17,7 +17,7 @@ import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/Tar
 import { TiendaInicioJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioJoyeria";
 import { TiendaProvider } from "@/components/catalogo-publico/tienda/TiendaContext";
 import { SIN_FILTROS, type FacetasCatalogo, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
-import { hrefDeGenero } from "@/lib/catalogo/genero";
+import { hrefDeGenero, hrefListadoDeGenero } from "@/lib/catalogo/genero";
 import { lineasVisibles } from "@/lib/catalogo/joyeria";
 import { calcularLineas } from "@/lib/catalogo/lineas";
 import type { PublicCatalogPage, PublicProductDetail } from "@/lib/catalogo/publicacion";
@@ -30,7 +30,8 @@ const REGISTRO = storefrontConfigFor("delacour");
 const JOYERIA = joyeriaOf(REGISTRO)!;
 const GENERO = JOYERIA.genero!;
 const LINEAS_CFG = JOYERIA.lineas!.lineas;
-const LISTA_HOMBRE = hrefDeGenero(BASE, "hombre");
+const INICIO_HOMBRE = hrefDeGenero(BASE, "hombre");
+const LISTA_HOMBRE = hrefListadoDeGenero(BASE, "hombre");
 
 const ARETES = "c0000000-0000-4000-8000-0000000000a1";
 const DIJES = "c0000000-0000-4000-8000-0000000000a2";
@@ -186,7 +187,7 @@ describe("el listado del lado de hombre: la portada de la colección", () => {
       lados(h).map((l) => [l.lado, l.href, l.actual]),
       [
         ["mujer", BASE, false],
-        ["hombre", LISTA_HOMBRE, true],
+        ["hombre", INICIO_HOMBRE, true],
       ],
     );
     assert.ok(h.includes("joy-genero joy-genero-listado"));
@@ -198,6 +199,8 @@ describe("el listado del lado de hombre: la portada de la colección", () => {
     assert.ok(/aria-current="page"[^>]*>Hombre</.test(m), m);
     assert.ok(!m.includes("Catálogo") && !m.includes("Filtros"));
     assert.ok(m.indexOf("Inicio") < m.indexOf("Hombre"));
+    // «Inicio» del lado de hombre es el inicio de hombre y «Hombre» (la página actual) es su listado
+    assert.ok(m.includes(`href="${INICIO_HOMBRE}"`), m);
   });
 
   it("el lado NO es un filtro: sin nada más elegido no hay «Quitar filtros» ni «Filtros» en las migas", () => {
@@ -227,11 +230,11 @@ describe("el listado del lado de hombre: la portada de la colección", () => {
     const con = listado({ filtros: f({ genero: "hombre", colores: ["plat"] }), titulo: "Vértice" });
     assert.ok(!con.includes("joy-vertice-lema"));
     const m = migas(con);
-    assert.ok(m.includes(`href="${LISTA_HOMBRE}"`) && m.includes(">Hombre<"), m);
+    assert.ok(m.includes(`href="${LISTA_HOMBRE.replaceAll("&", "&amp;")}"`) && m.includes(">Hombre<"), m);
     assert.ok(/aria-current="page"[^>]*>Filtros</.test(m), m);
     const quitar = /<a [^>]*>(?:(?!<\/a>).)*Quitar filtros<\/a>/.exec(con.replaceAll("\n", " "));
     assert.ok(quitar, "falta «Quitar filtros»");
-    assert.equal(atributos(quitar![0]).href, `${BASE}?genero=hombre`);
+    assert.equal(atributos(quitar![0]).href, `${BASE}?genero=hombre&todo=1`);
   });
 
   it("la página de una línea dentro de Hombre ofrece solo las categorías que TIENEN piezas (la colección es nueva: no se ofrecen vacías)", () => {
@@ -295,7 +298,7 @@ describe("la ficha de una pieza de hombre", () => {
 
   it("las migas son Inicio / Hombre / Dijes / la pieza, y apuntan al lado de hombre (listado y categoría), no a la tienda de mujer", () => {
     assert.deepEqual(enlacesDeMigas(ficha(detalle(), true)), [
-      ["Inicio", BASE],
+      ["Inicio", INICIO_HOMBRE],
       ["Hombre", LISTA_HOMBRE],
       ["Dijes", `${BASE}?genero=hombre&categoria=${DIJES}`],
     ]);
@@ -368,10 +371,10 @@ describe("la entrada «Para él» del inicio", () => {
     assert.equal(cuenta(h, /<h1[ >]/g), 1);
   });
 
-  it("el botón lleva al listado de hombre (`?genero=hombre`)", () => {
+  it("el botón lleva al INICIO de hombre (`?genero=hombre`), desde donde se entra a su listado", () => {
     const boton = /<a [^>]*class="[^"]*joy-vertice-boton[^"]*"[^>]*>/.exec(franja(h));
     assert.ok(boton, "falta el botón");
-    assert.equal(atributos(boton![0]).href, LISTA_HOMBRE);
+    assert.equal(atributos(boton![0]).href, INICIO_HOMBRE);
   });
 
   it("muestra hasta 4 piezas, cada una con su foto y su REFERENCIA (`DL-…`) como en cualquier tarjeta de la tienda", () => {

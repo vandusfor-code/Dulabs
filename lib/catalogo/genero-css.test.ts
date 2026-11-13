@@ -255,15 +255,15 @@ describe("la señal que enciende el tema y las clases nuevas", () => {
     assert.deepEqual(otras, [], `señales distintas en el CSS: ${otras.join(", ")}`);
   });
 
-  it("toda clase joy-vertice* y joy-genero* que usan los componentes existe en el CSS (una errata dejaría un trozo sin estilo)", () => {
-    const archivos = ["SelectorGenero.tsx", "BloquesJoyeria.tsx", "ListadoJoyeria.tsx", "FichaProductoJoyeria.tsx", "CromoJoyeria.tsx", "TiendaInicioJoyeria.tsx", "FiltrosJoyeria.tsx"].map((f) =>
+  it("toda clase joy-vertice*, joy-genero* y joy-hv* que usan los componentes existe en el CSS (una errata dejaría un trozo sin estilo)", () => {
+    const archivos = ["SelectorGenero.tsx", "BloquesJoyeria.tsx", "ListadoJoyeria.tsx", "FichaProductoJoyeria.tsx", "CromoJoyeria.tsx", "TiendaInicioJoyeria.tsx", "FiltrosJoyeria.tsx", "HeroVertice.tsx", "TiendaInicioHombre.tsx"].map((f) =>
       leer("components", "catalogo-publico", "tienda", "joyeria", f)
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^\s*\/\/.*$/gm, ""),
     );
     const usadas = new Set(archivos.flatMap((src) => [...src.matchAll(/\bjoy-(?:genero|vertice)[a-z-]*/g)].map((m) => m[0])).filter((c) => !c.endsWith("-")));
     assert.ok(usadas.size >= 12, `se esperaban muchas clases, hay ${usadas.size}: ${[...usadas].join(", ")}`);
-    const definidas = new Set([...SIN_COMENTARIOS.matchAll(/\.(joy-(?:genero|vertice)[a-z-]*)/g)].map((m) => m[1]));
+    const definidas = new Set([...SIN_COMENTARIOS.matchAll(/\.(joy-(?:genero|vertice|hv)[a-z-]*)/g)].map((m) => m[1]));
     const sinEstilo = [...usadas].filter((c) => !definidas.has(c));
     assert.deepEqual(sinEstilo, [], `clases sin estilo: ${sinEstilo.join(", ")}`);
     // las variantes del selector se arman con una plantilla (`joy-genero-${variante}`): también deben existir

@@ -15,7 +15,7 @@ import { FiltrosJoyeria } from "@/components/catalogo-publico/tienda/joyeria/Fil
 import { indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
 import { SelectorGenero } from "@/components/catalogo-publico/tienda/joyeria/SelectorGenero";
 import { SIN_FILTROS, hayFiltros as hayFiltrosDe, urlFiltros, type FacetasCatalogo, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
-import type { GeneroJoyeria } from "@/lib/catalogo/genero";
+import { hrefDeGenero, type GeneroJoyeria } from "@/lib/catalogo/genero";
 import type { LineaConfig } from "@/lib/catalogo/lineas";
 import type { PublicCatalogPage, PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 
@@ -152,7 +152,7 @@ export function ListadoJoyeria({
           <nav aria-label="Migas de pan" className="text-xs">
             <ol className="flex flex-wrap items-center gap-2 text-mist">
               <li>
-                <Link href={basePath} className="transition-colors hover:text-[var(--tienda-oro)]">
+                <Link href={cfgHombre ? hrefDeGenero(basePath, "hombre") : basePath} className="transition-colors hover:text-[var(--tienda-oro)]">
                   Inicio
                 </Link>
               </li>

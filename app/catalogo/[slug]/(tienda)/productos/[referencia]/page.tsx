@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { FichaProducto } from "@/components/catalogo-publico/tienda/FichaProducto";
 import { FichaProductoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FichaProductoJoyeria";
-import { conjuntoDeHombres, generoDe, hrefDeGenero } from "@/lib/catalogo/genero";
+import { conjuntoDeHombres, generoDe, hrefListadoDeGenero } from "@/lib/catalogo/genero";
 import { generoDeLaTienda } from "@/lib/catalogo/joyeria";
 import { cargarProducto, cargarTienda } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
@@ -41,7 +41,7 @@ export default async function ProductoPage({ params }: Props) {
         producto={producto}
         categorias={tienda.categories}
         basePath={basePath}
-        listPath={hombre ? hrefDeGenero(basePath, "hombre") : `${basePath}?todo=1`}
+        listPath={hombre ? hrefListadoDeGenero(basePath, "hombre") : `${basePath}?todo=1`}
         genero={generoConfig ? { config: generoConfig, hombre } : undefined}
       />
     );

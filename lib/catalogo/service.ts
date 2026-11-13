@@ -688,6 +688,8 @@ export interface PublicHome {
    * categorías son SOLO de mujer (el inicio de siempre no se llena de piezas de hombre); lo que la administradora eligió a mano en el CMS no se toca.
    */
   hombre?: { total: number; items: PublicCatalogProduct[] };
+  /** Solo en el inicio del lado de hombre (`getHome(slug, { lado: "hombre" })`): sus destacados y categorías son solo de piezas de hombre. */
+  lado?: "hombre";
 }
 
 /**
@@ -703,6 +705,11 @@ export interface OpcionesInicio {
   campana?: readonly string[];
   /** La tienda separa hombre y mujer (ver `PublicCatalogQuery.separarGenero`): lo automático del inicio es de mujer y se agrega la entrada de hombre. */
   separarGenero?: boolean;
+  /**
+   * Con «hombre» el inicio es el del LADO DE HOMBRE de la tienda (su propia portada, categorías y destacados): los destacados y las categorías (con la portada de una pieza) salen SOLO de piezas de
+   * hombre y no lleva la entrada «Para él». Solo vale con `separarGenero` y piezas de hombre activas; si no, es el inicio de siempre.
+   */
+  lado?: "hombre";
 }
 
 /** Selección del carrito resuelta por el backend: la verdad sobre cada referencia. */
@@ -1181,13 +1188,16 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       // Con la separación hombre/mujer (solo si la tienda la pidió y hay piezas de hombre activas), lo AUTOMÁTICO del inicio (novedades y portadas de categoría) es solo de mujer y se suman las
       // piezas de hombre más recientes para la entrada «Para él». Sin separación, estas consultas son las de siempre, en el mismo orden y a la vez que las demás.
       const hombresP = hombresDe(pub.tenantId, opciones.separarGenero);
+      // El inicio del lado de hombre: lo automático (destacados y portadas de categoría) sale de piezas de hombre y no hay entrada «Para él»; el de siempre, de las de mujer.
+      const ladoHombre = opciones.lado === "hombre";
+      const ladoDelInicio: Genero = ladoHombre ? "hombre" : "mujer";
       const [featured, pool, categories, campaignItems, evaluador, hombre] = await Promise.all([
-        hombresP.then((h) => featuredProducts(pub.tenantId, opciones.destacadas, h ? { gender: "mujer" } : {})),
-        hombresP.then((h) => repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, ...(h ? { gender: "mujer" as const } : {}), offset: 0, limit: COVER_POOL })),
+        hombresP.then((h) => featuredProducts(pub.tenantId, opciones.destacadas, h ? { gender: ladoDelInicio } : {})),
+        hombresP.then((h) => repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, ...(h ? { gender: ladoDelInicio } : {}), offset: 0, limit: COVER_POOL })),
         repo.listCategories(pub.tenantId),
         wantsCampana ? activeInOrder(pub.tenantId, opciones.campana ?? [], CAMPANA_LIMIT) : Promise.resolve<CatalogProduct[] | null>(null),
         evaluadorDe(pub.tenantId, false),
-        hombresP.then(async (h) => (h ? { total: h.size, items: (await repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, gender: "hombre", offset: 0, limit: HOMBRE_INICIO_LIMIT })).items } : null)),
+        hombresP.then(async (h) => (h && !ladoHombre ? { total: h.size, items: (await repo.listProducts(pub.tenantId, { status: "ACTIVE", withImage: true, gender: "hombre", offset: 0, limit: HOMBRE_INICIO_LIMIT })).items } : null)),
       ]);
       const coverProduct = new Map<string, CatalogProduct>();
       for (const p of pool.items) if (p.categoryId && !coverProduct.has(p.categoryId)) coverProduct.set(p.categoryId, p);
@@ -1203,7 +1213,9 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
       // Categorías: las elegidas (las que existan, en su orden); si ninguna existe, todas.
       const byId = new Map(categories.map((c) => [c.id, c]));
       const chosen = [...new Set(opciones.categorias ?? [])].flatMap((id) => byId.get(id) ?? []);
-      const shown = chosen.length > 0 ? chosen : categories;
+      // En el lado de hombre solo se ofrecen las categorías que tienen piezas de hombre (la colección es nueva: no se muestran categorías vacías).
+      const ladoActivo = ladoHombre && (await hombresP) !== null;
+      const shown = ladoActivo ? categories.filter((c) => coverProduct.has(c.id)) : chosen.length > 0 ? chosen : categories;
 
       return {
         featured: pick(featured.items),
@@ -1214,6 +1226,7 @@ export function createPublicCatalogService({ repo, orders }: { repo: CatalogRepo
         }),
         ...(campaignItems ? { campana: pick(campaignItems) } : {}),
         ...(hombre ? { hombre: { total: hombre.total, items: pick(hombre.items) } } : {}),
+        ...(ladoActivo ? { lado: "hombre" as const } : {}),
       };
     },
 

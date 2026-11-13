@@ -217,6 +217,70 @@ describe("tienda pública · el marco y el inicio", () => {
   });
 });
 
+describe("tienda pública · el inicio del lado de hombre (una tienda dentro de la tienda)", () => {
+  /** Las piezas de la siembra con una foto principal (lo que usan los destacados y las portadas de categoría). */
+  async function conFotos() {
+    const piezas = await sembrar();
+    for (const p of (await admin.listProducts(A, { q: undefined, status: "ALL", page: 1, pageSize: 48 })).items) {
+      await mem.repo.attachMedia(A.tenantId, A.userId, { productId: p.id, storagePath: `${A.tenantId}/${p.id}/x.webp`, thumbPath: null, mimeType: "image/webp", bytes: 10, width: 10, height: 10, makePrimary: true });
+    }
+    return piezas;
+  }
+  const inicioHombre = async (over: { destacadas?: readonly string[] } = {}) => (await publico.getHome(slugA, { separarGenero: true, lado: "hombre", ...over }))!;
+
+  it("el inicio de hombre trae SOLO piezas de hombre (destacados) y las categorías que tienen piezas de hombre, con su portada", async () => {
+    await conFotos();
+    const inicio = await inicioHombre();
+    assert.equal(inicio.lado, "hombre");
+    assert.deepEqual(inicio.featured.map((p) => p.name).sort(), ["Anillo hombre acero", "Cruz plana · 2511158", "San Benito · 2511151"]);
+    assert.equal(inicio.featuredPolicy, "recent-with-photo");
+    assert.deepEqual(inicio.categories.map((c) => c.name).sort(), ["Anillos", "Dijes"], "las dos categorías tienen alguna pieza de hombre");
+    assert.ok(inicio.categories.every((c) => c.coverUrl), "con la portada de una pieza de hombre");
+  });
+
+  it("no lleva la entrada «Para él» (es el inicio de hombre, no una invitación a él)", async () => {
+    await conFotos();
+    assert.equal((await inicioHombre()).hombre, undefined);
+  });
+
+  it("una categoría SIN piezas de hombre no se ofrece (la colección es nueva: nada de categorías vacías)", async () => {
+    await conFotos();
+    const pulseras = await admin.createCategory(A, { name: "Pulseras" });
+    await nuevo(A, "Pulsera de mujer", { material: "Rodio", categoryId: pulseras.id });
+    const todas = (await publico.getHome(slugA, { separarGenero: true }))!.categories.map((c) => c.name);
+    assert.ok(todas.includes("Pulseras"), "el inicio de mujer sí la ofrece");
+    assert.deepEqual((await inicioHombre()).categories.map((c) => c.name).sort(), ["Anillos", "Dijes"]);
+  });
+
+  it("lo elegido a mano en el CMS (destacados) se respeta también en el inicio de hombre", async () => {
+    const { cruz } = await conFotos();
+    const inicio = await inicioHombre({ destacadas: [cruz.reference] });
+    assert.deepEqual(inicio.featured.map((p) => p.name), ["Cruz plana · 2511158"]);
+    assert.equal(inicio.featuredPolicy, "cms");
+  });
+
+  it("el inicio de mujer (sin «lado») no cambia: sigue siendo de mujer, con la entrada «Para él» y sin la marca de lado", async () => {
+    await conFotos();
+    const inicio = (await publico.getHome(slugA, { separarGenero: true }))!;
+    assert.equal(inicio.lado, undefined);
+    assert.equal(inicio.hombre!.total, 3);
+    assert.deepEqual(inicio.featured.map((p) => p.name).sort(), ["Anillo plata", "Anillo rodio", "Dije corazón"]);
+  });
+
+  it("sin separación (otro negocio, migración sin aplicar o sin piezas de hombre) pedir el lado de hombre no cambia nada: es el inicio de siempre", async () => {
+    await conFotos();
+    // el otro negocio: sin separación
+    await admin.createProduct(B, { name: "Anillo B", retailPrice: 10_000, wholesalePrice: null, stock: 1 });
+    const b = (await publico.getHome(slugB, { lado: "hombre" }))!;
+    assert.equal(b.lado, undefined);
+    // la migración sin aplicar
+    mem.setGeneroEnabled(false);
+    const sinColumna = await inicioHombre();
+    assert.equal(sinColumna.lado, undefined);
+    assert.equal(sinColumna.featured.length, 6, "todo mezclado, como siempre");
+  });
+});
+
 describe("panel · cada pieza dice para quién es", () => {
   it("en el negocio con separación la lista y la ficha traen «gender» y la cuenta de piezas de hombre", async () => {
     const { sanBenito } = await sembrar();
