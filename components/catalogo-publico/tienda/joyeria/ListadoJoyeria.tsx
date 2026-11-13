@@ -13,7 +13,9 @@ import { href } from "@/components/catalogo-publico/PublicCatalog";
 import { EnlaceIntencion } from "@/components/catalogo-publico/tienda/EnlaceIntencion";
 import { FiltrosJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FiltrosJoyeria";
 import { indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
+import { SelectorGenero } from "@/components/catalogo-publico/tienda/joyeria/SelectorGenero";
 import { SIN_FILTROS, hayFiltros as hayFiltrosDe, urlFiltros, type FacetasCatalogo, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
+import type { GeneroJoyeria } from "@/lib/catalogo/genero";
 import type { LineaConfig } from "@/lib/catalogo/lineas";
 import type { PublicCatalogPage, PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 
@@ -36,6 +38,7 @@ export function ListadoJoyeria({
   filtros = SIN_FILTROS,
   facetas = null,
   lineas = [],
+  genero,
 }: {
   data: PublicCatalogPage;
   basePath: string;
@@ -50,9 +53,17 @@ export function ListadoJoyeria({
   facetas?: FacetasCatalogo | null;
   /** Las líneas del negocio (Plata, Rodio…). Con UNA elegida en la dirección, la página es la de esa línea: su nombre, y las categorías (TODAS, tenga o no piezas) para moverse dentro de ella. */
   lineas?: readonly LineaConfig[];
+  /**
+   * La tienda separa hombre y mujer (hay piezas de hombre): el selector «Mujer | Hombre» bajo las migas y, en el lado de hombre, la portada de la colección (su nombre, antetítulo y lema). `listPath` y los
+   * enlaces del listado ya son los del lado actual. Sin esto la página es la de siempre.
+   */
+  genero?: { config: GeneroJoyeria; hombre: boolean };
 }) {
+  const cfgHombre = genero && genero.hombre ? genero.config.hombre : null;
+  const ladoHombre = cfgHombre !== null;
   const conPanel = !q && facetas !== null;
-  const filtrado = conPanel && hayFiltrosDe(filtros);
+  // El lado (`?genero=hombre`) es DÓNDE se está, no un filtro elegido: no cuenta para «Filtros», «Quitar filtros» ni las migas.
+  const filtrado = conPanel && hayFiltrosDe({ ...filtros, genero: undefined });
   const hayFiltros = Boolean(q || categoria) || filtrado;
   const totalPaginas = data.pageCount;
   const idCategoria = conPanel ? (filtros.categorias.length === 1 ? filtros.categorias[0] : undefined) : categoria;
@@ -151,11 +162,11 @@ export function ListadoJoyeria({
                 </span>
                 {hayFiltros ? (
                   <Link href={listPath} className="transition-colors hover:text-[var(--tienda-oro)]">
-                    Catálogo
+                    {cfgHombre ? cfgHombre.etiqueta : "Catálogo"}
                   </Link>
                 ) : (
                   <span className="font-medium text-fg" aria-current="page">
-                    Catálogo
+                    {cfgHombre ? cfgHombre.etiqueta : "Catálogo"}
                   </span>
                 )}
               </li>
@@ -199,10 +210,23 @@ export function ListadoJoyeria({
               )}
             </ol>
           </nav>
-          <div className="max-w-3xl">
-            <h1 className="font-serif-tienda text-[34px] font-medium leading-tight tracking-[0.04em] text-fg sm:text-[44px]">{titulo}</h1>
-            <p className="mt-2 text-sm leading-6 text-mist sm:text-base">{cuenta}</p>
-          </div>
+          {genero && <SelectorGenero basePath={basePath} hombre={ladoHombre} etiquetas={{ mujer: genero.config.mujer.etiqueta, hombre: genero.config.hombre.etiqueta }} variante="listado" />}
+          {cfgHombre ? (
+            // La portada de la colección masculina (el catálogo de Vértice): el antetítulo en letras abiertas, el título grande en mayúsculas y el lema.
+            <div className="joy-vertice-cabecera max-w-3xl">
+              <p className="joy-vertice-casa">{cfgHombre.casa}</p>
+              <span className="joy-vertice-trazo" aria-hidden />
+              <p className="joy-vertice-antetitulo">{cfgHombre.antetitulo}</p>
+              <h1 className="joy-vertice-titulo">{titulo}</h1>
+              {!hayFiltros && <p className="joy-vertice-lema">{cfgHombre.lema}</p>}
+              <p className="mt-3 text-sm leading-6 text-mist sm:text-base">{cuenta}</p>
+            </div>
+          ) : (
+            <div className="max-w-3xl">
+              <h1 className="font-serif-tienda text-[34px] font-medium leading-tight tracking-[0.04em] text-fg sm:text-[44px]">{titulo}</h1>
+              <p className="mt-2 text-sm leading-6 text-mist sm:text-base">{cuenta}</p>
+            </div>
+          )}
           {/* Las categorías de la línea: en el celular una sola fila que se desliza (como las del listado de siempre); desde la tableta, todas a la vista en varias filas. */}
           {lineaActual && data.categories.length > 0 && (
             <nav aria-label={`Categorías de ${lineaActual.etiqueta}`} className="tienda-scroll -mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
@@ -212,6 +236,8 @@ export function ListadoJoyeria({
               {data.categories.map((c) => {
                 const n = conteoLinea?.categorias.find((x) => x.id === c.id)?.n ?? 0;
                 const activa = idCategoria === c.id;
+                // En el lado de hombre no se ofrecen categorías vacías (la colección es nueva y casi todas lo estarían): solo las que tienen piezas.
+                if (ladoHombre && n === 0 && !activa) return null;
                 return (
                   <EnlaceIntencion key={c.id} href={urlFiltros(basePath, { ...filtros, categorias: [c.id] })} className={cn("joy-chip", activa && "joy-chip-activo")} aria-current={activa ? "page" : undefined}>
                     {c.name}

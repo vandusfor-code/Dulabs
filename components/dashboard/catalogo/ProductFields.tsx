@@ -3,7 +3,7 @@
 import { useId, useState } from "react";
 import { Check, Hash, Loader2, Plus } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import { CATALOG_LIMITS, type CatalogCategory } from "@/lib/catalogo/domain";
+import { CATALOG_LIMITS, type CatalogCategory, type Genero } from "@/lib/catalogo/domain";
 import type { ProductFormErrors, ProductFormState } from "@/lib/catalogo/form";
 import { etiquetasDeLineas, lineasDeMaterial, materialConLinea, type LineaConfig } from "@/lib/catalogo/lineas";
 import type { CatalogClient } from "@/lib/catalogo-client";
@@ -130,6 +130,49 @@ function CategorySelect({
   );
 }
 
+/** «Para»: para quién es la pieza. Solo existe en negocios cuya tienda separa Mujer y Hombre (la pieza trae `gender`); el estado de abajo dice en qué lado de la tienda aparecerá. */
+function ParaQuien({ id, value, onChange, disabled }: { id: string; value: Genero; onChange: (g: Genero) => void; disabled?: boolean }) {
+  const { t } = useI18n();
+  const opciones: ReadonlyArray<{ valor: Genero; etiqueta: string }> = [
+    { valor: "mujer", etiqueta: t("Mujer", "Women") },
+    { valor: "hombre", etiqueta: t("Hombre", "Men") },
+  ];
+  return (
+    <div role="radiogroup" aria-labelledby={`${id}-etiqueta`}>
+      <p id={`${id}-etiqueta`} className="mb-1.5 block text-xs font-medium text-mist">
+        {t("Para", "For")}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {opciones.map((o) => {
+          const activa = value === o.valor;
+          return (
+            <button
+              key={o.valor}
+              type="button"
+              role="radio"
+              aria-checked={activa}
+              disabled={disabled}
+              onClick={() => onChange(o.valor)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:opacity-60",
+                activa ? "border-lime/60 bg-lime/10 font-medium text-fg" : "border-edge text-mist hover:border-lime/40 hover:text-fg",
+              )}
+            >
+              {activa && <Check className="size-3.5 text-lime-text" aria-hidden />}
+              {o.etiqueta}
+            </button>
+          );
+        })}
+      </div>
+      <p aria-live="polite" data-estado-genero className="mt-1.5 text-[11px] text-mist/80">
+        {value === "hombre"
+          ? t("En la tienda aparece en el lado de Hombre (Vértice).", "In the store it appears on the Men side (Vértice).")
+          : t("En la tienda aparece en el lado de Mujer, como siempre.", "In the store it appears on the Women side, as always.")}
+      </p>
+    </div>
+  );
+}
+
 /** Línea de la tienda (Plata, Rodio…): la línea de una pieza ES su campo Material, así que elegirla escribe ahí (sin datos nuevos) y el estado de abajo dice dónde aparecerá la pieza. */
 function LineaDeLaTienda({ id, material, lineas, onChange, disabled }: { id: string; material: string; lineas: readonly LineaConfig[]; onChange: (material: string) => void; disabled?: boolean }) {
   const { t } = useI18n();
@@ -232,6 +275,8 @@ export function ProductFields({
           canCreate={!disabled}
         />
       </CField>
+
+      {value.gender !== undefined && <ParaQuien id={`${ids}-para`} value={value.gender} onChange={(g) => set("gender", g)} disabled={disabled} />}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <CField label={t("Precio detal", "Retail price")} htmlFor={`${ids}-retail`} required>

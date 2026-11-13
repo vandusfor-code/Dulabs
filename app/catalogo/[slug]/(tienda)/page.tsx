@@ -7,11 +7,12 @@ import { ListadoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/Lis
 import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
 import { TiendaInicioJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TiendaInicioJoyeria";
 import { TiendaInicioTecnologia } from "@/components/catalogo-publico/tienda/tecnologia/TiendaInicioTecnologia";
-import { SIN_FILTROS, hayFiltros, leerFiltros, textoDeFiltros } from "@/lib/catalogo/filtros";
+import { SIN_FILTROS, hayFiltros, leerFiltros, textoDeFiltros, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
+import { generoDeParam, hrefDeGenero } from "@/lib/catalogo/genero";
 import { esListado } from "@/lib/catalogo/inicio";
 import { cargarAcabados, cargarCatalogoPublico, cargarInicio, cargarInicioElegido, cargarMultimediaTienda, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
-import { lineasDeLaTienda, lineasVisibles } from "@/lib/catalogo/joyeria";
+import { generoDeLaTienda, lineasDeLaTienda, lineasVisibles } from "@/lib/catalogo/joyeria";
 import { joyeriaOf, storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
 import { aplicarCategorias, aplicarMultimedia } from "@/lib/cms-comercial/multimedia-tienda";
 
@@ -30,8 +31,10 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   // La página de una línea (`?linea=plata`) se titula con la línea; una línea que el negocio no tiene no cambia nada.
   const claveLinea = param(sp.linea)?.toLowerCase();
   const nombreLinea = claveLinea ? lineasDeLaTienda(slug).find((l) => l.clave === claveLinea)?.etiqueta : undefined;
+  // El lado de hombre se titula con su colección («Vértice · Delacour & Orus»); solo si la tienda ya tiene ese lado (con piezas de hombre).
+  const coleccion = tienda.genero && generoDeParam(sp.genero) === "hombre" ? generoDeLaTienda(slug)?.hombre.marca : undefined;
   return {
-    title: nombreLinea ? `${nombreLinea} · ${tienda.publicName}` : `${tienda.publicName} · Catálogo`,
+    title: coleccion ? `${nombreLinea ? `${coleccion} · ${nombreLinea}` : coleccion} · ${tienda.publicName}` : nombreLinea ? `${nombreLinea} · ${tienda.publicName}` : `${tienda.publicName} · Catálogo`,
     description: `Catálogo de ${tienda.publicName}: fotos, referencias y precios.`,
     openGraph: { title: `${tienda.publicName} · Catálogo`, description: "Fotos, referencias y precios." },
   };
@@ -41,7 +44,7 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
   const [{ slug }, sp] = await Promise.all([params, searchParams]);
   const q = param(sp.q);
   const categoria = param(sp.categoria);
-  const listado = esListado({ q, categoria, pagina: param(sp.pagina), todo: param(sp.todo), linea: param(sp.linea), color: param(sp.color), material: param(sp.material), precio_min: param(sp.precio_min), precio_max: param(sp.precio_max) });
+  const listado = esListado({ q, categoria, pagina: param(sp.pagina), todo: param(sp.todo), genero: param(sp.genero), linea: param(sp.linea), color: param(sp.color), material: param(sp.material), precio_min: param(sp.precio_min), precio_max: param(sp.precio_max) });
 
   const tienda = await cargarTienda(slug);
   if (!tienda) notFound();
@@ -108,7 +111,21 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
   // La página de una línea (una sola elegida) se titula con ella: «Plata» o «Plata · Anillos».
   const lineasDelNegocio = lineasDeLaTienda(tienda.slug);
   const lineaElegida = conFiltros && filtros.lineas?.length === 1 ? lineasDelNegocio.find((l) => l.clave === filtros.lineas?.[0]) : undefined;
-  const titulo = q ? `Resultados para «${q}»` : lineaElegida ? (categoriaActual ? `${lineaElegida.etiqueta} · ${categoriaActual}` : lineaElegida.etiqueta) : (categoriaActual ?? "Todo el catálogo");
+  // Hombre/Mujer: el lado de hombre existe solo si la tienda lo configuró Y el servicio vio piezas de hombre (`tienda.genero`); si no, `?genero=hombre` se ignora y la página es la de siempre.
+  const generoConfig = esJoyeria && tienda.genero ? generoDeLaTienda(tienda.slug) : undefined;
+  const ladoHombre = Boolean(generoConfig) && conFiltros && filtros.genero === "hombre";
+  const marcaHombre = generoConfig?.hombre.marca;
+  // Sin el lado de hombre una `?genero=hombre` (dirección vieja o compartida antes de tiempo) no significa nada: la página la ignora entera, no solo el servidor.
+  const filtrosVista: FiltrosCatalogo = filtros.genero !== undefined && !ladoHombre ? { ...filtros, genero: undefined } : filtros;
+  const titulo = q
+    ? `Resultados para «${q}»`
+    : ladoHombre && marcaHombre
+      ? [marcaHombre, lineaElegida?.etiqueta, categoriaActual].filter(Boolean).join(" · ")
+      : lineaElegida
+        ? categoriaActual
+          ? `${lineaElegida.etiqueta} · ${categoriaActual}`
+          : lineaElegida.etiqueta
+        : (categoriaActual ?? "Todo el catálogo");
 
   if (esJoyeria) {
     return (
@@ -117,11 +134,13 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
         basePath={basePath}
         q={q}
         categoria={categoria}
-        listPath={listPath}
+        // En el lado de hombre «ver todo» y las migas llevan al listado de hombre, no al de mujer.
+        listPath={ladoHombre ? hrefDeGenero(basePath, "hombre") : listPath}
         titulo={titulo}
-        filtros={filtros}
+        filtros={filtrosVista}
         facetas={data.facets}
         lineas={lineasDelNegocio}
+        genero={generoConfig ? { config: generoConfig, hombre: ladoHombre } : undefined}
         tile={(p, i) => <TarjetaJoyeria product={p} basePath={basePath} posicion={i} />}
       />
     );

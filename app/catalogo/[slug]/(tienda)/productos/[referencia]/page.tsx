@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { FichaProducto } from "@/components/catalogo-publico/tienda/FichaProducto";
 import { FichaProductoJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FichaProductoJoyeria";
+import { conjuntoDeHombres, generoDe, hrefDeGenero } from "@/lib/catalogo/genero";
+import { generoDeLaTienda } from "@/lib/catalogo/joyeria";
 import { cargarProducto, cargarTienda } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
 import { joyeriaOf, storefrontConfigFor } from "@/lib/catalogo/vitrina";
@@ -31,7 +33,18 @@ export default async function ProductoPage({ params }: Props) {
   const basePath = retailPath(tienda.slug);
   // Tema "joyeria" (Bloque 30): otra composición de la MISMA ficha (mismos datos y mismas acciones).
   if (joyeriaOf(storefrontConfigFor(tienda.slug))) {
-    return <FichaProductoJoyeria producto={producto} categorias={tienda.categories} basePath={basePath} listPath={`${basePath}?todo=1`} />;
+    // Hombre/Mujer: la ficha de una pieza de hombre se ve con la paleta de Vértice (la pone el marco, ver TemaGenero) y sus migas y su «volver» llevan al lado de hombre.
+    const generoConfig = tienda.genero ? generoDeLaTienda(tienda.slug) : undefined;
+    const hombre = Boolean(generoConfig) && generoDe(producto.reference, conjuntoDeHombres(tienda.genero?.hombres)) === "hombre";
+    return (
+      <FichaProductoJoyeria
+        producto={producto}
+        categorias={tienda.categories}
+        basePath={basePath}
+        listPath={hombre ? hrefDeGenero(basePath, "hombre") : `${basePath}?todo=1`}
+        genero={generoConfig ? { config: generoConfig, hombre } : undefined}
+      />
+    );
   }
   return <FichaProducto producto={producto} categorias={tienda.categories} basePath={basePath} listPath={`${basePath}?todo=1`} />;
 }

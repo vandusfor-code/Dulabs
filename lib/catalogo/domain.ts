@@ -23,6 +23,14 @@ import { z } from "zod";
 export const PRODUCT_STATUSES = ["ACTIVE", "INACTIVE"] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
 
+/**
+ * Para quién es una pieza, en las tiendas que separan hombre y mujer (Delacour · Vértice, ver lib/catalogo/genero.ts). Lo que no se marca es de mujer. Es la columna `genero` del producto: se lee y se
+ * escribe aparte de lo demás (no está en las columnas de siempre), así que `CatalogProduct.gender` solo viene cuando la tienda lo pidió y la migración está aplicada.
+ */
+export const GENEROS = ["mujer", "hombre"] as const;
+export type Genero = (typeof GENEROS)[number];
+export const GENERO_PREDETERMINADO: Genero = "mujer";
+
 export const PRICE_CONTEXTS = ["retail", "wholesale"] as const;
 /** retail = detal, wholesale = mayor. Extensible sin tocar CatalogProduct: ver priceFor(). */
 export type PriceContext = (typeof PRICE_CONTEXTS)[number];
@@ -78,6 +86,8 @@ export interface CatalogProduct {
   color: string | null;
   pricing: ProductPricing;
   status: ProductStatus;
+  /** Para quién es la pieza. Ausente = la separación hombre/mujer no se pidió o aún no está disponible en la base (la pieza se trata como de mujer). */
+  gender?: Genero;
   /** false = el negocio no controla inventario desde DuLabs (no hay "agotado"). */
   tracksStock: boolean;
   /** Unidades en inventario (>= 0). Solo significa algo si tracksStock = true. */
@@ -97,6 +107,11 @@ export interface ProductPage {
   total: number;
   page: number;
   pageSize: number;
+  /**
+   * Solo cuando la tienda del negocio separa hombre y mujer Y la migración está aplicada: cuántas piezas de hombre hay (activas o no). Es la señal con que el panel sabe que puede ofrecer el campo
+   * «Para»; sin ella (otros negocios, o la migración pendiente) el panel se ve exactamente como siempre.
+   */
+  genero?: { hombres: number };
 }
 
 /** Precio del producto para un contexto comercial. null = no definido para ese contexto (nunca 0 inventado). */
@@ -259,6 +274,8 @@ export const productCreateSchema = z
     wholesalePrice: priceNumber.nullable().optional(),
     /** Unidades disponibles para venta. Obligatorio: todo producto nuevo nace con inventario controlado. */
     stock: stockNumber,
+    /** Para quién es la pieza (solo tiendas que separan hombre y mujer). Sin esto es de mujer. */
+    gender: z.enum(GENEROS, { message: "Elige Mujer u Hombre." }).optional(),
   })
   .strict();
 
@@ -281,6 +298,8 @@ export const productUpdateSchema = z
     /** Fijar el stock activa el control de inventario del producto (la referencia nunca cambia). */
     stock: stockNumber.optional(),
     status: z.enum(PRODUCT_STATUSES).optional(),
+    /** Para quién es la pieza (solo tiendas que separan hombre y mujer). */
+    gender: z.enum(GENEROS, { message: "Elige Mujer u Hombre." }).optional(),
   })
   .strict()
   .refine((v) => Object.values(v).some((x) => x !== undefined), { message: "No hay cambios para guardar." });
@@ -336,6 +355,13 @@ export const productListQuerySchema = z.object({
     .max(30)
     .refine((v) => v === "" || /^(?:sin|[a-z0-9]+(?:-[a-z0-9]+)*)$/.test(v), { message: "La línea no es válida." })
     .transform((v) => (v ? v : undefined))
+    .optional(),
+  /** Solo en tiendas que separan hombre y mujer: las piezas de ese lado. Vacío = todas. */
+  genero: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || (GENEROS as readonly string[]).includes(v), { message: "El filtro Para no es válido." })
+    .transform((v) => (v ? (v as Genero) : undefined))
     .optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(CATALOG_LIMITS.pageSizeMax).default(CATALOG_LIMITS.pageSizeDefault),
