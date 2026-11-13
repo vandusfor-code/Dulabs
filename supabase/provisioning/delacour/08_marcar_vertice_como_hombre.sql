@@ -4,9 +4,9 @@
 -- ORDEN: correr SOLO DESPUÉS de aplicar la migración 20261215000000_dulabs_catalogo_genero.sql (sin ella este script se niega). El código nuevo de la tienda (selector «Mujer | Hombre» y tema Vértice)
 -- puede desplegarse antes o después: hasta que haya al menos una pieza de hombre activa la tienda se ve como siempre, y con estas 76 marcadas aparece el lado de hombre.
 --
--- QUÉ HACE: pone genero = 'hombre' a EXACTAMENTE esas 76 piezas (las de la carga: referencia entre DL-000769 y DL-000844, material «Acero» y el nombre con «Santo · referencia de Camila»). Solo cambia ese
+-- QUÉ HACE: pone genero = 'hombre' a EXACTAMENTE esas 76 piezas (las de la carga: referencia entre DL-000769 y DL-000844, material «Acero» y el nombre con «Santo · referencia del catálogo de la clienta»). Solo cambia ese
 --   campo: no toca precios, stock, fotos, nombres, categorías ni estado.
--- GUARDAS: UNA sola tienda con slug «delacour»; la migración aplicada; y que las piezas que cumplen el patrón sean EXACTAMENTE 76 (si Camila agregó o editó algo en ese rango, se niega y dice cuántas hay).
+-- GUARDAS: UNA sola tienda con slug «delacour»; la migración aplicada; y que las piezas que cumplen el patrón sean EXACTAMENTE 76 (si la clienta agregó o editó algo en ese rango, se niega y dice cuántas hay).
 -- QUÉ NO HACE: no marca ninguna otra pieza. Las demás siguen siendo de mujer (lo predeterminado). Se puede repetir sin efectos nuevos.
 -- AUDITORÍA: cada pieza queda en dulabs_catalogo_eventos con el cambio «genero: mujer → hombre» (sin actor: viene del SQL Editor, no del panel).
 --

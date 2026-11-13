@@ -585,7 +585,8 @@ describe("el cableado de las pantallas del producto (la página del producto no 
   it("la lista del catálogo manda la línea al servidor y le pasa la clasificación a la lista solo si el negocio tiene líneas", () => {
     const fuente = leer("app/dashboard/catalogo/page.tsx");
     assert.ok(fuente.includes("linea: linea || undefined"), "el filtro viaja al listado");
-    assert.ok(fuente.includes("clasificacion={lineas.length > 0 ?"), "sin líneas no hay clasificación");
+    // (con la separación Mujer/Hombre la condición es «hay líneas O el negocio separa»: sin ninguna de las dos no hay clasificación, como siempre)
+    assert.ok(/clasificacion=\{\s*lineas\.length > 0 \|\| separaGenero\s*\?/.test(fuente), "sin líneas ni separación Mujer/Hombre no hay clasificación");
     assert.ok(fuente.includes("puedeAsignar: canWrite"), "solo quien puede editar cambia la línea");
   });
 });
