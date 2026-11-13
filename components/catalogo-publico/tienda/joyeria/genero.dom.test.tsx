@@ -229,10 +229,29 @@ describe("cabecera y menú lateral — el selector Mujer | Hombre", () => {
   it("con el selector la cabecera pide el ancho amplio (desde xl; por debajo se usa el menú lateral, que ya trae el selector)", () => {
     const { container } = render(conRuta(BASE, "", cromo(), slugNuevo()));
     assert.ok(nav(container).className.includes("xl:flex") && !nav(container).className.includes("lg:flex"), nav(container).className);
+    // y los accesos van más juntos (24 px y no 36) para caber en UNA fila: sin esto «Mayorista» bajaba a una segunda fila (medido en la tienda en vivo a 1920 px)
+    assert.ok(nav(container).className.includes("xl:gap-x-6") && !nav(container).className.includes("xl:gap-x-9"), nav(container).className);
     assert.deepEqual(
       [...nav(container).querySelectorAll("a")].map((a) => a.textContent),
       ["Mujer", "Hombre", "Inicio", "Catálogo", "Categorías", "Mayorista"],
     );
+  });
+
+  it("la cabecera ancha SIN selector (páginas propias en el menú) conserva su espacio de siempre (36 px): el ajuste es solo para el selector", () => {
+    const sinSelector = (
+      <CromoJoyeria
+        marca={{ name: "Tienda de prueba", descriptor: "Joyería" }}
+        basePath={BASE}
+        listPath={LISTA}
+        categorias={CATEGORIAS}
+        categoriasHref={`${BASE}#categorias`}
+        anuncios={[]}
+        mayorista
+        paginas={[{ texto: "Nuestra Esencia", href: `${BASE}/p/nuestra-esencia` }]}
+      />
+    );
+    const { container } = render(conRuta(BASE, "", sinSelector, slugNuevo()));
+    assert.ok(nav(container).className.includes("xl:gap-x-9") && !nav(container).className.includes("xl:gap-x-6"), nav(container).className);
   });
 
   it("elegir un lado desde el menú lateral lo cierra (como cualquier otro destino del menú)", async () => {

@@ -35,7 +35,7 @@ const FUNDIDO_MS = 280;
  */
 const CABECERA = {
   normal: { grid: "lg:grid-cols-[1fr_auto_1fr] lg:px-8", boton: "lg:hidden", marca: "lg:col-start-1 lg:items-start lg:text-left", nombre: "lg:text-[26px]", descriptor: "lg:text-[10px]", nav: "lg:flex xl:gap-9", iconos: "lg:gap-1" },
-  ancha: { grid: "xl:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)] xl:gap-x-6 xl:px-8", boton: "xl:hidden", marca: "xl:col-start-1 xl:items-start xl:text-left", nombre: "xl:text-[26px]", descriptor: "xl:text-[10px]", nav: "xl:flex xl:flex-wrap xl:justify-center xl:gap-x-9 xl:gap-y-1", iconos: "xl:gap-1" },
+  ancha: { grid: "xl:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)] xl:gap-x-6 xl:px-8", boton: "xl:hidden", marca: "xl:col-start-1 xl:items-start xl:text-left", nombre: "xl:text-[26px]", descriptor: "xl:text-[10px]", nav: "xl:flex xl:flex-wrap xl:justify-center xl:gap-y-1", iconos: "xl:gap-1" },
 } as const;
 
 function cn(...cls: Array<string | false | null | undefined>) {
@@ -270,7 +270,8 @@ export function CromoJoyeria({
               {marca.descriptor && <span className={cn("joy-tinta mt-1 text-[9px] font-medium uppercase tracking-[0.42em] opacity-80", cab.descriptor)}>{marca.descriptor}</span>}
             </Link>
 
-            <nav className={cn("col-start-2 row-start-1 hidden items-center gap-7", cab.nav)} aria-label="Menú principal">
+            {/* Con el selector Mujer | Hombre los accesos van más juntos (24 px y no 36): así caben en una sola fila y «Mayorista» no baja a una segunda. */}
+            <nav className={cn("col-start-2 row-start-1 hidden items-center gap-7", cab.nav, cab === CABECERA.ancha && (genero ? "xl:gap-x-6" : "xl:gap-x-9"))} aria-label="Menú principal">
               {genero && <SelectorGenero basePath={basePath} hombre={ladoHombre} etiquetas={genero.etiquetas} variante="nav" className="joy-tinta" />}
               <Link href={basePath} className="joy-enlace joy-tinta text-[15px]" aria-current={actual(esInicio)}>
                 Inicio
