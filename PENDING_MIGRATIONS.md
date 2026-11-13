@@ -1,6 +1,8 @@
 # Pasos manuales pendientes en producción
 
-## PENDIENTE — Delacour: lado de HOMBRE («Vértice»: Mujer | Hombre y tienda en grafito y plata)
+## ✅ APLICADA (12-nov-2026, verificada `true | 76 | 708`) — Delacour: lado de HOMBRE («Vértice»: Mujer | Hombre y tienda en grafito y plata)
+
+Corrida en producción el 12-nov-2026 por el dueño, en una sola pegada del SQL Editor (la migración y el SQL 08 de aprovisionamiento). Verificación: columna `true`, hombres `76`, mujeres `708` (784 piezas de Delacour). **Nada más que correr para esta función:** el inicio propio de hombre y su edición desde el panel (videos, imágenes, categorías y productos destacados, en Tienda → Página principal y Fotos y videos → «Hombre») NO llevan SQL, porque lo de hombre vive dentro de las mismas entidades del CMS comercial, bajo la clave `hombre`. Los pasos de abajo quedan como registro.
 
 Migración `supabase/migrations/20261215000000_dulabs_catalogo_genero.sql`. **Aditiva e idempotente**: agrega la columna `genero` a
 `dulabs_inventario_productos` (por defecto `'mujer'`; solo admite `mujer`/`hombre`) y un índice parcial de las piezas de hombre. No cambia
