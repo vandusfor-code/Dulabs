@@ -4599,5 +4599,7 @@ html:has([data-tema-genero="hombre"]) {
 }
 .tienda-joyeria .joy-hv-titulo {
   font-size: clamp(3.5rem, 13vw, 9.5rem);
-  line-height: 0.95;
+  line-height: 1.02;
+  /* El acento de la «É» sube por encima de la línea: hace falta aire sobre el título para que no toque el antetítulo. */
+  margin-top: clamp(1rem, 2.6vw, 2.25rem);
 }
