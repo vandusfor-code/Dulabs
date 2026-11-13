@@ -92,7 +92,7 @@ Precios, carrito, pedidos, stock, mayoristas y el agente de WhatsApp. La **refer
 ## 7. Decisiones y pendientes
 
 - **Nombre de la colección: «Vértice»** (decidido por el dueño; si cambia, un solo lugar: `lib/catalogo/vitrina.ts` → `delacour.joyeria.genero.hombre`).
-- **Stock 15 por pieza** en las 76 (provisional; Camila lo ajusta).
+- **Stock 15 por pieza** en las 76 (provisional; la clienta lo ajusta).
 - Pendientes, a decidir con la clienta: la **segunda marca «Orus»** («Delacour & Orus», relanzamiento: el código hoy tiene un solo nombre de colección para el lado de hombre); las **sublíneas de hombre**
   que saldrían de Plata y Acero; una columna **«Para» en la Carga masiva**; que el **agente de WhatsApp** distinga hombre y mujer al recomendar; y que el menú lateral, en el lado de hombre, ofrezca solo las
   categorías que tengan piezas de hombre (hoy ofrece todas).

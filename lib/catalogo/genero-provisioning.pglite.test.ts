@@ -155,7 +155,7 @@ describe("08_marcar_vertice_como_hombre.sql", () => {
     assert.equal((await eventosDeGenero()).length, antes);
   });
 
-  it("si Camila ya marcó alguna a mano desde el panel, no falla: marca las que faltan y las demás quedan como estaban", async () => {
+  it("si la clienta ya marcó alguna a mano desde el panel, no falla: marca las que faltan y las demás quedan como estaban", async () => {
     await db.query("update public.dulabs_inventario_productos set genero = 'hombre' where id_tenant = $1 and referencia in ('DL-000769', 'DL-000800')", [TD]);
     await db.exec(MARCAR());
     assert.equal(await cuantos(TD, "hombre"), 76);
