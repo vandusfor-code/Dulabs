@@ -13,11 +13,15 @@ import type { ColeccionJoyeria, MarcaJoyeria } from "@/lib/catalogo/vitrina";
 
 /**
  * Colección: video a pantalla completa que sube sobre la portada («cortina»). El texto va a la izquierda sobre un velo que lo hace legible (AA medido por píxel sobre los fotogramas del
- * video), el botón lleva al catálogo y el botón del video queda abajo a la izquierda.
+ * video), el botón lleva al catálogo y el botón del video queda abajo a la izquierda. `suave`: el video entra y sale de la página con un degradado (sin borde plano arriba ni abajo); es el del lado de hombre.
  */
-export function ColeccionVideo({ coleccion, href }: { coleccion: ColeccionJoyeria; href: string }) {
+export function ColeccionVideo({ coleccion, href, suave = false }: { coleccion: ColeccionJoyeria; href: string; suave?: boolean }) {
   return (
-    <section id="coleccion" aria-labelledby="joy-coleccion" className="joy-coleccion joy-ancla relative isolate flex h-[100svh] min-h-[34rem] items-center overflow-hidden bg-[var(--joy-espresso)]">
+    <section
+      id="coleccion"
+      aria-labelledby="joy-coleccion"
+      className={`joy-coleccion joy-ancla relative isolate flex h-[100svh] min-h-[34rem] items-center overflow-hidden bg-[var(--joy-espresso)]${suave ? " joy-suave" : ""}`}
+    >
       <VideoSeccion video={coleccion.video} control="pildora" className="-z-20" />
       <div className="joy-coleccion-velo pointer-events-none absolute inset-0 -z-10" aria-hidden />
       <div className="relative mx-auto w-full max-w-7xl px-6 sm:px-8 lg:px-10">

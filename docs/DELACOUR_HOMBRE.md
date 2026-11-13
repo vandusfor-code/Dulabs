@@ -25,15 +25,20 @@ listado; desde 1280 px sobra y se esconde (la cabecera ya trae el suyo).
 «Hombre» abre un **inicio propio**, no solo un listado: `?genero=hombre` es su inicio y `?genero=hombre&todo=1` su listado (`genero` solo ya no abre el listado; lo abre `todo=1` o algún filtro, igual que el de mujer lleva `?todo=1`).
 En el lado de hombre, «Inicio» y «Catálogo» (cabecera y menú) llevan a SU inicio y a SU listado, y «Catálogo» queda marcado en el listado de hombre.
 
+El inicio de hombre tiene el **mismo orden del inicio de mujer** (portada → video de la colección → categorías → marca → destacados → mayoristas), con su diseño y su contenido; las líneas, «Para él» y los acabados son cosas del lado de mujer y no van.
+
 | Bloque (en este orden) | De dónde sale |
 |---|---|
-| **Portada** de pantalla completa | Gráfica por defecto (grafito, destello de acero, rótulo de la colección). Si la clienta sube el **video de portada de hombre**, va detrás del texto con su velo. |
-| **Categorías** (carrusel) | Las que tienen piezas de hombre, con la foto de una pieza de hombre; o las que la clienta elija (y su orden) y las imágenes que suba para cada una. Cada categoría lleva al listado de hombre de esa categoría. |
-| **Productos destacados** | Lo más nuevo de hombre (con foto) o los que la clienta elija. La referencia `DL-…` va sobre cada foto. |
-| **Video de colección** (opcional) | Solo si la clienta lo sube: video a pantalla completa con su título y botón. |
+| **Portada** de pantalla completa | Gráfica por defecto (grafito, destello de acero, rótulo de la colección). Con el **video de portada de hombre** que sube la clienta, el video va detrás del texto con su velo y la portada se funde hacia abajo con la página (sin corte plano). |
+| **Video de la colección** (opcional) | Solo si la clienta lo sube: video a pantalla completa con su título y botón; entra y sale de la página con un degradado. |
+| **Categorías** | Las que tienen piezas de hombre, con la foto de una pieza de hombre; o las que la clienta elija (y su orden) y las imágenes que suba para cada una. Cada categoría lleva al listado de hombre de esa categoría. **Se adaptan a cuántas haya**: con UNA, una tarjeta destacada (foto grande a un lado, el nombre y el botón al otro); de DOS a CUATRO, mosaicos cuadrados; con MÁS, el carrusel de siempre. |
 | **Marca** (opcional) | Solo si la clienta lo sube: texto y tarjeta de video. |
+| **Productos destacados** | Lo más nuevo de hombre (con foto) o los que la clienta elija. La referencia `DL-…` va sobre cada foto. |
+| **Mayoristas** | La invitación a compradores mayoristas, que es de TODA la tienda: la misma del inicio de mujer, con el video que la clienta publicó para ellos y su botón de WhatsApp (sin WhatsApp no se dibuja). |
 
-Nada del inicio de mujer aparece aquí (ni líneas, ni «Para él», ni mayoristas); el pie, las páginas y las preguntas frecuentes son de toda la tienda. Un bloque sin datos no se dibuja.
+**Un solo lienzo, sin franjas ni cortes planos.** Todos los bloques comparten el fondo grafito de la página: lo que separa uno del siguiente es aire y degradado, nunca un cambio brusco de color (ninguna sección pinta su propio fondo; el pie toma el mismo grafito; los videos de la colección y de los mayoristas entran y salen con un degradado). Lo comprueban `inicio-hombre.ssr.test.tsx` (ninguna sección trae `bg-ink`) y `genero-css.test.ts` (los degradados y los velos grafito existen).
+
+Nada del inicio de mujer aparece aquí (ni líneas, ni «Para él», ni acabados); el pie, las páginas y las preguntas frecuentes son de toda la tienda. Un bloque sin datos no se dibuja.
 
 ## 2. Cómo se decide si una pieza es de hombre
 
@@ -125,10 +130,10 @@ Precios, carrito, pedidos, stock, mayoristas y el agente de WhatsApp. La **refer
 | `lib/catalogo/genero-servicio.test.ts` | El servicio (panel y tienda) con la migración aplicada y sin aplicar; el mismo resultado que sin separación | 26 |
 | `lib/catalogo/genero-sql.pglite.test.ts` | La migración y la lectura/escritura contra el SQL real (PGlite) | 11 |
 | `lib/catalogo/genero-provisioning.pglite.test.ts` | Los SQL 08 y su reversa contra el SQL real, con sus guardas | 20 |
-| `lib/catalogo/genero-css.test.ts` | Paleta de la clienta, contrastes, variables completas, «solo colores», señal y clases | 24 |
+| `lib/catalogo/genero-css.test.ts` | Paleta de la clienta, contrastes, variables completas, «solo colores», señal y clases, y el lienzo continuo (degradados, velos grafito, pie) | 30 |
 | `components/catalogo-publico/tienda/joyeria/genero.ssr.test.tsx` | HTML del servidor: selector, portada, migas, ficha, franja «Para él» y la referencia `DL-` sobre cada foto | 26 |
 | `components/catalogo-publico/tienda/joyeria/genero.dom.test.tsx` | Lo que hace el cliente: señal del tema, selector de la cabecera y del menú, filtros que conservan el lado | 19 |
-| `components/catalogo-publico/tienda/joyeria/inicio-hombre.ssr.test.tsx` | El inicio de hombre en el HTML del servidor: portada, categorías, destacados con `DL-`, videos opcionales y nada del inicio de mujer | 14 |
+| `components/catalogo-publico/tienda/joyeria/inicio-hombre.ssr.test.tsx` | El inicio de hombre en el HTML del servidor: el orden del inicio de mujer, un solo lienzo sin franjas, categorías que se adaptan (1, 2 a 4, más), destacados con `DL-`, videos opcionales, mayoristas y nada del inicio de mujer | 26 |
 | `lib/cms-comercial/hombre-contenido.test.ts` | El contenido de hombre en el CMS: esquemas, validación, archivos que puede servir la ruta pública y lo que se dibuja de lo publicado | 17 |
 | `components/dashboard/tienda/hombre.dom.test.tsx` | El panel de punta a punta: interruptor, subir un video de hombre, categorías, publicar y que la tienda lo lea por su lado | 11 |
 | `components/dashboard/catalogo/genero-panel.dom.test.tsx` | El panel: formulario, lista y la página real con las rutas reales y una base en memoria | 30 |
