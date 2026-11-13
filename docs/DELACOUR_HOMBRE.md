@@ -70,6 +70,8 @@ tienda (rebote del celular, barras de desplazamiento) también es grafito.
 
 ## 4. Lo que hay que correr en Supabase (lo corre el dueño en el SQL Editor)
 
+**Estado: ✅ corridos en producción el 12-nov-2026** por el dueño, en una sola pegada de ambos archivos. Verificación: columna `true`, hombres `76`, mujeres `708` (784 piezas de Delacour). Para esta función no queda nada por correr: el inicio propio de hombre y su edición desde el panel no llevan SQL (§5).
+
 | Orden | Archivo | Qué hace |
 |---|---|---|
 | 1 | `supabase/migrations/20261215000000_dulabs_catalogo_genero.sql` | Agrega `genero` (por defecto `'mujer'`, solo admite `mujer`/`hombre`) y un índice parcial de las piezas de hombre. **Aditiva e idempotente**: no cambia ningún dato existente. |
@@ -110,7 +112,7 @@ Precios, carrito, pedidos, stock, mayoristas y el agente de WhatsApp. La **refer
 
 - **Nombre de la colección: «Vértice»** (decidido por el dueño; si cambia, un solo lugar: `lib/catalogo/vitrina.ts` → `delacour.joyeria.genero.hombre`).
 - **Stock 15 por pieza** en las 76 (provisional; la clienta lo ajusta).
-- **Videos de hombre:** el sistema no trae ninguno (no se pueden inventar): la clienta los sube desde Tienda → Fotos y videos → Hombre, y hasta entonces la portada de hombre es gráfica y los bloques de colección y marca no se dibujan.
+- **Videos de hombre:** el sistema no trae ninguno incrustado (no se pueden inventar): se suben desde Tienda → Fotos y videos → Hombre. El 13-nov-2026 se publicaron 5 videos de PRUEBA hechos con las fotos de Vértice (portada y colección en horizontal y vertical, y marca) para que el lado de hombre no se viera vacío; la clienta los reemplaza cuando tenga los suyos, y si quita uno, ese bloque deja de dibujarse. Ojo si se hacen otros: las fotos de Vértice traen etiquetas de medida incrustadas («2.0 cm», «4 cm») y un video con ellas lleva texto dentro (el panel pide videos sin texto); hay que usar solo las fotos limpias o recortarlas.
 - Pendientes, a decidir con la clienta: la **segunda marca «Orus»** («Delacour & Orus», relanzamiento: el código hoy tiene un solo nombre de colección para el lado de hombre); las **sublíneas de hombre**
   que saldrían de Plata y Acero; una columna **«Para» en la Carga masiva**; que el **agente de WhatsApp** distinga hombre y mujer al recomendar; y que el menú lateral, en el lado de hombre, ofrezca solo las
   categorías que tengan piezas de hombre (hoy ofrece todas).
