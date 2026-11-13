@@ -4321,3 +4321,285 @@ body {
     transition: none;
   }
 }
+
+/* ==========================================================================================================================================================
+   LADO DE HOMBRE — Delacour · Vértice (pedido de la clienta, 2026-11-12).
+   La paleta es la de su catálogo «Vértice»: grafito frío y plata (no es negro puro). Fondo #111416, paneles #1b2023, líneas #394147, plata #c2c9cc, gris #9ba5aa, blanco #f4f5f5, acento acero #a7b7bd.
+   Cuando la página dice «estoy en el lado de hombre» (`data-tema-genero="hombre"`, ver TemaGenero.tsx) TODA la tienda (cabecera, listado, ficha y pie) cambia de colores; la franja «Para él» del inicio usa los
+   mismos colores solo dentro de ella (`.joy-vertice`). Solo cambian COLORES (ninguna medida ni movimiento): pasar de un lado al otro no mueve nada de lugar. Los contrastes (≥ 4,5:1 en texto) los
+   comprueba lib/catalogo/genero-css.test.ts con estos mismos valores.
+   ========================================================================================================================================================== */
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]),
+.catalogo-tienda.tienda-joyeria .joy-vertice {
+  --color-ink: #111416;
+  --color-ink-2: #171c1f;
+  --color-card: #1b2023;
+  --color-edge: #394147;
+  --color-fg: #f4f5f5;
+  /* Gris de apoyo: 7,4:1 sobre el fondo y 6,6:1 sobre los paneles. */
+  --color-mist: #9ba5aa;
+  /* El «dorado» del tema pasa a plata: texto y acentos pequeños (≥ 11:1 sobre el fondo). Los botones llenos de este color llevan texto oscuro (más abajo). */
+  --tienda-oro: #c2c9cc;
+  --tienda-oro-hover: #e3e9eb;
+  --tienda-oro-suave: #20272a;
+  /* Decorativo (filetes, rombos, destellos): el acero del catálogo. */
+  --joy-oro: #a7b7bd;
+  --joy-oro-claro: #d0d8db;
+  --joy-control: color-mix(in srgb, var(--color-mist) 75%, var(--color-card));
+  --joy-control-oro: color-mix(in srgb, var(--joy-oro) 50%, var(--tienda-oro));
+  --joy-espresso: #0b0e10;
+  color-scheme: dark;
+}
+
+/* La franja «Para él» del inicio (clara alrededor, oscura por dentro). */
+.catalogo-tienda.tienda-joyeria .joy-vertice {
+  background-color: var(--color-ink);
+  background-image: radial-gradient(ellipse at 78% 18%, #303b40 0%, transparent 62%);
+  color: var(--color-fg);
+  border-block: 1px solid var(--color-edge);
+}
+.tienda-joyeria .joy-vertice-interior {
+  display: grid;
+  gap: 2.5rem;
+  max-width: 80rem;
+  margin-inline: auto;
+  padding: 4rem 1.5rem;
+}
+@media (min-width: 1024px) {
+  .tienda-joyeria .joy-vertice-interior {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    align-items: center;
+    gap: 4rem;
+    padding: 6rem 2.5rem;
+  }
+}
+
+/* La columna del texto puede encogerse (un título largo no ensancha la franja). */
+.tienda-joyeria .joy-vertice-texto {
+  min-width: 0;
+}
+
+/* El rótulo de la colección (el del catálogo de Vértice): la casa en letras abiertas, un trazo de plata, el antetítulo, el título grande y el lema. */
+.tienda-joyeria .joy-vertice-casa {
+  font-size: clamp(0.8125rem, 1.6vw, 1rem);
+  font-weight: 800;
+  letter-spacing: 0.5em;
+  text-transform: uppercase;
+  color: var(--color-fg);
+}
+.tienda-joyeria .joy-vertice-trazo {
+  display: block;
+  width: 4.7rem;
+  height: 2px;
+  margin: 1.25rem 0;
+  background-color: var(--joy-oro);
+}
+.tienda-joyeria .joy-vertice-antetitulo {
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: var(--tienda-oro);
+}
+.tienda-joyeria .joy-vertice-titulo {
+  margin-top: 0.5rem;
+  font-size: clamp(2.5rem, 8vw, 5.25rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-fg);
+  overflow-wrap: anywhere;
+}
+.tienda-joyeria .joy-vertice-lema {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--tienda-oro);
+}
+.tienda-joyeria .joy-vertice-parrafo {
+  margin-top: 1.5rem;
+  max-width: 28rem;
+  font-size: 0.9375rem;
+  line-height: 1.8;
+  color: var(--color-mist);
+}
+.tienda-joyeria .joy-vertice-boton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  height: 3rem;
+  padding-inline: 1.75rem;
+  border: 1px solid var(--tienda-oro);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tienda-oro);
+  transition:
+    background-color 0.3s,
+    color 0.3s;
+}
+@media (hover: hover) {
+  .tienda-joyeria a.joy-vertice-boton:hover {
+    background-color: var(--tienda-oro);
+    color: var(--color-ink);
+  }
+}
+.tienda-joyeria .joy-vertice-piezas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+@media (min-width: 640px) {
+  .tienda-joyeria .joy-vertice-piezas {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+/* La portada del listado de hombre: el mismo degradado de la portada del catálogo de Vértice. */
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) header:has(.joy-vertice-cabecera) {
+  background-color: var(--color-ink);
+  background-image: radial-gradient(ellipse at 72% 20%, #303b40 0%, transparent 68%);
+}
+
+/* El selector Mujer | Hombre: hereda el color del texto del lugar donde está (claro sobre la portada, oscuro sobre el vidrio, claro en el lado de hombre); el lado actual va en relleno. */
+.tienda-joyeria .joy-genero {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  border-radius: 9999px;
+}
+.tienda-joyeria .joy-genero-lado {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding-inline: 1rem;
+  border-radius: 9999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: inherit;
+  transition:
+    background-color 0.25s,
+    color 0.25s;
+}
+.tienda-joyeria .joy-genero-lado[aria-current="true"] {
+  background-color: var(--color-fg);
+  color: var(--color-ink);
+}
+@media (hover: hover) {
+  .tienda-joyeria .joy-genero-lado:not([aria-current="true"]):hover {
+    background-color: color-mix(in srgb, currentColor 14%, transparent);
+  }
+}
+.tienda-joyeria .joy-genero-menu {
+  display: flex;
+  width: 100%;
+  color: var(--color-fg);
+}
+.tienda-joyeria .joy-genero-menu .joy-genero-lado {
+  flex: 1;
+  min-height: 2.75rem;
+  font-size: 0.875rem;
+}
+.tienda-joyeria .joy-genero-listado {
+  align-self: flex-start;
+  color: var(--color-fg);
+}
+/* Desde 1280 px la cabecera ya trae el selector a la vista: el del listado (pensado para el celular y la tableta) sobra. */
+@media (min-width: 1280px) {
+  .tienda-joyeria .joy-genero-listado {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tienda-joyeria .joy-genero-lado {
+    transition: none;
+  }
+}
+
+/* Lo que en el tema claro tiene un color escrito a mano (no sale de las variables) y en el de hombre debe cambiar. */
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-cab {
+  background-color: rgb(23 28 31 / 0.82);
+  box-shadow:
+    0 1px 0 rgb(57 65 71 / 0.9),
+    0 8px 28px -12px rgb(0 0 0 / 0.7);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-cab {
+    background-color: var(--color-ink);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-cab {
+    background-color: var(--color-ink);
+  }
+}
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-acabados-lista > li,
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-franja-lineas-lista > li {
+  background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.05), transparent);
+}
+/* Los botones y etiquetas LLENOS del color de acento (plata en este lado) llevan texto oscuro: el blanco de siempre no se lee sobre la plata. */
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) [class*="bg-[var(--tienda-oro)]"],
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) [class*="bg-[var(--tienda-oro-hover)]"],
+.catalogo-tienda.tienda-joyeria .joy-vertice [class*="bg-[var(--tienda-oro)]"],
+.catalogo-tienda.tienda-joyeria .joy-vertice [class*="bg-[var(--tienda-oro-hover)]"],
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-chip-activo,
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-filtro-contador,
+.catalogo-tienda.tienda-joyeria .joy-vertice .joy-chip-activo {
+  color: var(--color-ink);
+}
+
+/* Detrás de la tienda (al rebotar la página en el celular, o con las barras de desplazamiento a la vista) debe verse el grafito, no el blanco de la página. */
+html:has([data-tema-genero="hombre"]) {
+  background-color: #111416;
+  color-scheme: dark;
+}
+
+/* ==========================================================================================================================================================
+   INICIO DEL LADO DE HOMBRE — portada gráfica de Vértice (components/catalogo-publico/tienda/joyeria/HeroVertice.tsx). A pantalla completa, grafito con el destello de acero de la portada del catálogo de la
+   clienta y un rayado fino diagonal (acero cepillado). El texto usa las clases del rótulo de la colección (.joy-vertice-*). Si la administradora sube un video para este espacio va detrás, con el velo.
+   ========================================================================================================================================================== */
+.tienda-joyeria .joy-hv {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  min-height: 100svh;
+  background-color: var(--color-ink, #111416);
+  background-image:
+    radial-gradient(ellipse at 78% 18%, #303b40 0%, transparent 62%),
+    repeating-linear-gradient(135deg, rgb(255 255 255 / 0.022) 0, rgb(255 255 255 / 0.022) 1px, transparent 1px, transparent 9px);
+  color: var(--color-fg, #f4f5f5);
+}
+.tienda-joyeria .joy-hv-velo {
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgb(17 20 22 / 0.82), rgb(17 20 22 / 0.5) 55%, rgb(17 20 22 / 0.28));
+}
+.tienda-joyeria .joy-hv-interior {
+  position: relative;
+  width: 100%;
+  max-width: 80rem;
+  margin-inline: auto;
+  padding: calc(var(--joy-alto-barra) + var(--joy-alto-cab) + 3rem) 1.5rem 6rem;
+}
+@media (min-width: 1024px) {
+  .tienda-joyeria .joy-hv-interior {
+    padding-inline: 2.5rem;
+  }
+}
+.tienda-joyeria .joy-hv-titulo {
+  font-size: clamp(3.5rem, 13vw, 9.5rem);
+  line-height: 1.02;
+  /* El acento de la «É» sube por encima de la línea: hace falta aire sobre el título para que no toque el antetítulo. */
+  margin-top: clamp(1rem, 2.6vw, 2.25rem);
+}

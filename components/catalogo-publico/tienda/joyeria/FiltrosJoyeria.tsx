@@ -10,7 +10,7 @@
  */
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useOptimistic, useRef, useState, useTransition, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useOptimistic, useRef, useState, useTransition, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
 import { Dialogo } from "@/components/catalogo-publico/tienda/Dialogo";
 import { SIN_FILTROS, formatoPrecio, hayFiltros as hayFiltrosDe, puntoDeColor, urlFiltros, PRECIO_PASO, type FacetasCatalogo, type FiltrosCatalogo } from "@/lib/catalogo/filtros";
@@ -131,8 +131,11 @@ export function FiltrosJoyeria({
   const limites = facetas.precio !== null && facetas.precio.max > facetas.precio.min ? facetas.precio : null;
   const limiteMin = limites?.min;
   const limiteMax = limites?.max;
-  const quitarHref = urlFiltros(basePath, SIN_FILTROS);
-  const hay = hayFiltrosDe(elegidos);
+  // El lado (`?genero=hombre`) no es un filtro que se pueda quitar: es DÓNDE se está. «Quitar filtros» deja el lado y quita lo demás; el lado no cuenta como filtro elegido.
+  const lado = filtros.genero;
+  const sinFiltros = useMemo<FiltrosCatalogo>(() => (lado ? { ...SIN_FILTROS, genero: lado } : SIN_FILTROS), [lado]);
+  const quitarHref = urlFiltros(basePath, sinFiltros);
+  const hay = hayFiltrosDe({ ...elegidos, genero: undefined });
   const activos = cuantosFiltros(elegidos);
 
   useEffect(() => {
@@ -163,7 +166,7 @@ export function FiltrosJoyeria({
     });
   const quitar = () => {
     setArrastre(null);
-    aplicar(() => SIN_FILTROS);
+    aplicar(() => sinFiltros);
   };
 
   // El rango se aplica un momento después del último movimiento; solo se escribe en la dirección el extremo que no está en el límite.
@@ -205,6 +208,8 @@ export function FiltrosJoyeria({
       <form method="get" action={basePath} className="joy-filtros" onSubmit={(e) => e.preventDefault()}>
         {/* Sin JavaScript el formulario va a «?todo=1&…» (el listado) y el servidor aplica lo marcado. */}
         <input type="hidden" name="todo" value="1" />
+        {/* El lado se queda: un formulario sin JavaScript no debe sacar a nadie del lado de hombre. */}
+        {lado && <input type="hidden" name="genero" value={lado} />}
         {elegidos.precioMin !== undefined && <input type="hidden" name="precio_min" value={elegidos.precioMin} />}
         {elegidos.precioMax !== undefined && <input type="hidden" name="precio_max" value={elegidos.precioMax} />}
         {hay && (

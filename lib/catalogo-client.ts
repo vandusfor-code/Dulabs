@@ -6,7 +6,7 @@
  *   preparar (comprimir en el navegador) -> pedir URL firmada -> subir DIRECTO
  *   a Storage (imagen + miniatura) -> confirmar (el servidor verifica todo).
  */
-import type { CatalogCategory, CatalogCategoryWithCount, CatalogImage, CatalogProduct, CatalogProductDetail, CategoryDeleteResult, ProductPage, ProductStatus, StatusFilter } from "@/lib/catalogo/domain";
+import type { CatalogCategory, CatalogCategoryWithCount, CatalogImage, CatalogProduct, CatalogProductDetail, CategoryDeleteResult, Genero, ProductPage, ProductStatus, StatusFilter } from "@/lib/catalogo/domain";
 import { prepareProductImage, ImagePreparationError, type PreparedImage } from "@/lib/catalogo/image-processing";
 import type { CategoryDecision, ImageInfo, ImportAnalysis, ImportHistoryItem, ImportRecord, ImportRowResult, RawRow } from "@/lib/catalogo/import/types";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -56,6 +56,8 @@ export interface ProductDraft {
   wholesalePrice: number | null;
   /** Unidades disponibles para venta (entero >= 0). */
   stock: number;
+  /** Para quién es la pieza. Solo viaja en tiendas que separan Mujer/Hombre (el panel lo sabe por `ProductPage.genero`): sin esto la pieza es de mujer. */
+  gender?: Genero;
 }
 
 export type ProductPatch = Partial<ProductDraft> & { status?: ProductStatus };
@@ -66,6 +68,8 @@ export interface ProductListParams {
   status?: StatusFilter;
   /** Solo en tiendas con líneas: «sin» (las piezas sin línea) o la clave de una línea. */
   linea?: string;
+  /** Solo en tiendas que separan Mujer/Hombre: las piezas de ese lado. Vacío = todas. */
+  genero?: Genero;
   page?: number;
   pageSize?: number;
 }
@@ -125,6 +129,7 @@ export function createCatalogClient(accessToken: string) {
       if (params.categoryId) qs.set("categoryId", params.categoryId);
       if (params.status) qs.set("status", params.status);
       if (params.linea) qs.set("linea", params.linea);
+      if (params.genero) qs.set("genero", params.genero);
       if (params.page) qs.set("page", String(params.page));
       if (params.pageSize) qs.set("pageSize", String(params.pageSize));
       return call(accessToken, `/productos?${qs.toString()}`);

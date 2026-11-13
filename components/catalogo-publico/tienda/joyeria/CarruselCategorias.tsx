@@ -10,11 +10,12 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { EnlaceIntencion } from "@/components/catalogo-publico/tienda/EnlaceIntencion";
 import { indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
+import { SIN_FILTROS, urlFiltros } from "@/lib/catalogo/filtros";
 import type { PublicHome } from "@/lib/catalogo/service";
 
 const FLECHA = "joy-flecha absolute top-1/2 hidden size-11 -translate-y-1/2 items-center justify-center rounded-full bg-card text-fg shadow-lg active:scale-95 md:flex";
 
-export function CarruselCategorias({ categorias: todas, basePath }: { categorias: PublicHome["categories"]; basePath: string }) {
+export function CarruselCategorias({ categorias: todas, basePath, genero }: { categorias: PublicHome["categories"]; basePath: string; genero?: "hombre" }) {
   const riel = useRef<HTMLDivElement>(null);
   const [extremos, setExtremos] = useState({ inicio: true, fin: true });
   // Orden estable: las que tienen foto primero, cada grupo en su orden de siempre.
@@ -58,7 +59,10 @@ export function CarruselCategorias({ categorias: todas, basePath }: { categorias
         <ul className={`flex ${caben ? "lg:justify-center" : ""}`}>
           {categorias.map((c, i) => (
             <li key={c.id} className={`joy-item w-[64%] shrink-0 snap-start sm:w-[40%] md:w-[31%] ${caben ? "lg:w-1/4" : "lg:w-[23%]"}`} style={indice(i)}>
-              <EnlaceIntencion href={`${basePath}?categoria=${encodeURIComponent(c.id)}`} className="joy-cat group relative block aspect-[4/5] overflow-hidden bg-ink-2">
+              <EnlaceIntencion
+                href={genero === "hombre" ? urlFiltros(basePath, { ...SIN_FILTROS, genero: "hombre", categorias: [c.id] }) : `${basePath}?categoria=${encodeURIComponent(c.id)}`}
+                className="joy-cat group relative block aspect-[4/5] overflow-hidden bg-ink-2"
+              >
                 {c.coverUrl ? (
                   <>
                     {/* eslint-disable-next-line @next/next/no-img-element -- miniatura pública ya optimizada (WebP) del catálogo */}

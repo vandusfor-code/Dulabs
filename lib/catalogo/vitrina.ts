@@ -24,6 +24,7 @@
  * productos, los precios, las fotos y el carrito siguen saliendo del catálogo real.
  */
 
+import type { GeneroJoyeria } from "@/lib/catalogo/genero";
 import type { LineasJoyeria } from "@/lib/catalogo/lineas";
 
 export interface StorefrontImage {
@@ -255,6 +256,11 @@ export interface ConfigJoyeria {
    * «Material» (lib/catalogo/lineas.ts); las líneas existen en el menú, el inicio y los filtros aunque aún no tengan piezas. Sin esto, la tienda se ve exactamente como siempre.
    */
   lineas?: LineasJoyeria;
+  /**
+   * El lado de hombre de la tienda (Delacour · Vértice, lib/catalogo/genero.ts): cada pieza es de Mujer u Hombre (campo «Para» del panel), la tienda de siempre es la de mujer y el lado de hombre se
+   * pinta solo con la paleta de Vértice (grafito y plata). Sin esto no hay separación y la tienda se ve exactamente como siempre. Hasta que haya al menos una pieza de hombre activa no se muestra nada.
+   */
+  genero?: GeneroJoyeria;
   /** Bloque de compradores mayoristas del inicio (solo se dibuja si el negocio tiene un WhatsApp válido). */
   mayoristas?: MayoristasJoyeria;
   /** Frase breve bajo el nombre de la marca en el pie. */
@@ -408,6 +414,23 @@ const REGISTRO: Record<string, CatalogStorefrontConfig> = {
         boton: "Ver la colección",
       },
       acabados: { titulo: "Conoce nuestros acabados" },
+      // Lado de hombre (pedido de la clienta, 2026-11-12): la colección masculina se llama Vértice y su paleta es la de su catálogo (grafito y plata). Los textos son los de ese catálogo.
+      genero: {
+        mujer: { etiqueta: "Mujer" },
+        hombre: {
+          etiqueta: "Hombre",
+          casa: "Delacour",
+          marca: "Vértice",
+          antetitulo: "Colección masculina",
+          lema: "Identidad forjada en acero",
+          entrada: { etiqueta: "Para él", titulo: "Vértice", texto: "Una colección de dijes de acero para hombre donde el diseño, la fuerza y la identidad se encuentran.", boton: "Ver la colección" },
+          // Los bloques de video del inicio de hombre: sus textos. El video lo sube la administradora (Tienda → Fotos y videos → Hombre); mientras no haya video, el bloque no se dibuja.
+          bloques: {
+            coleccion: { etiqueta: "Colección masculina", titulo: "Forjados en acero", boton: "Ver la colección" },
+            marca: { titulo: "Vértice", texto: "Dijes de acero para hombre: el diseño, la fuerza y la identidad en cada pieza.", boton: "Ver la colección" },
+          },
+        },
+      },
       // Líneas de la joyería (pedido de la clienta, 2026-10-30): cada pieza cae en su línea por lo que dice su campo «Material» («Rodio · 3cm» y «Rodio platinado» son Rodio; «Plateado» es un color, no Plata).
       lineas: {
         titulo: "Nuestras líneas",

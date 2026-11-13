@@ -7,7 +7,7 @@
  * El negocio sale de la publicación (por el slug), jamás de la petición.
  */
 import { conPlazo } from "@/lib/cms-comercial/plazo";
-import { multimediaDesdeCms, type MultimediaTienda } from "@/lib/cms-comercial/multimedia-tienda";
+import { contenidoHombreDesdeCms, multimediaDesdeCms, type ContenidoHombre, type MultimediaTienda } from "@/lib/cms-comercial/multimedia-tienda";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
 
 export interface DepsMultimediaPublica {
@@ -47,6 +47,28 @@ export async function cargarMultimediaPublica(deps: DepsMultimediaPublica, slug:
       })(),
       deps.plazoMs ?? PLAZO_MULTIMEDIA_MS,
       "de las fotos y videos",
+    );
+  } catch (error) {
+    avisar(deps, error);
+    return null;
+  }
+}
+
+/**
+ * Lo publicado para el lado de HOMBRE de la tienda (videos, imágenes de categoría y lo elegido para su inicio); null si no hay nada (o si algo falló: nunca lanza, y el inicio de hombre usa lo automático).
+ * Misma lectura del CMS y mismo plazo que las fotos y videos del inicio de siempre.
+ */
+export async function cargarContenidoHombrePublicado(deps: DepsMultimediaPublica, slug: string): Promise<ContenidoHombre | null> {
+  try {
+    return await conPlazo(
+      (async (): Promise<ContenidoHombre | null> => {
+        const tenantId = await deps.tenantDe(slug);
+        if (!tenantId) return null;
+        const snap = await deps.cargar(tenantId);
+        return snap ? contenidoHombreDesdeCms(snap, slug) : null;
+      })(),
+      deps.plazoMs ?? PLAZO_MULTIMEDIA_MS,
+      "del contenido de hombre",
     );
   } catch (error) {
     avisar(deps, error);

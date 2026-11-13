@@ -14,7 +14,7 @@ import Image from "next/image";
 import { ArrowRight, MessageCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { Revelar } from "@/components/catalogo-publico/tienda/Revelar";
-import { AcabadosJoyeria, ColeccionVideo, FranjaLineas, MarcaVideo } from "@/components/catalogo-publico/tienda/joyeria/BloquesJoyeria";
+import { AcabadosJoyeria, ColeccionVideo, EntradaVertice, FranjaLineas, MarcaVideo } from "@/components/catalogo-publico/tienda/joyeria/BloquesJoyeria";
 import { CarruselCategorias } from "@/components/catalogo-publico/tienda/joyeria/CarruselCategorias";
 import { FlotantesJoyeria } from "@/components/catalogo-publico/tienda/joyeria/FlotantesJoyeria";
 import { HeroJoyeria } from "@/components/catalogo-publico/tienda/joyeria/HeroJoyeria";
@@ -25,6 +25,7 @@ import { VideoSeccion } from "@/components/catalogo-publico/tienda/joyeria/Video
 import { Destellos, ENLACE_TEXTO, EncabezadoSeccion, EnlaceJoyeria, indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
 import { formatCop } from "@/lib/business-agent-quote";
 import type { OpcionFaceta } from "@/lib/catalogo/filtros";
+import { hrefDeGenero } from "@/lib/catalogo/genero";
 import { acabadosVisibles, mayoristasVisible, rotuloDeDestacados, type LineaVisible, type MayoristasVisible } from "@/lib/catalogo/joyeria";
 import type { PublicHome } from "@/lib/catalogo/service";
 import { heroOf, ORDEN_INICIO_CLASICO, type CampanaVitrina, type CatalogStorefrontConfig, type ComboVitrina, type ConfigJoyeria, type OfertaVitrina, type SeccionInicio } from "@/lib/catalogo/vitrina";
@@ -424,6 +425,12 @@ export function TiendaInicioJoyeria({
       {joyeria.lineas && lineas.length > 0 && (
         <Revelar>
           <FranjaLineas titulo={joyeria.lineas.titulo} lineas={lineas} />
+        </Revelar>
+      )}
+      {/* «Para él»: solo en tiendas que separan hombre y mujer y con piezas de hombre. Es de la colección masculina, así que lleva su propia paleta aunque el resto del inicio sea claro. */}
+      {joyeria.genero && home.hombre && home.hombre.total > 0 && (
+        <Revelar>
+          <EntradaVertice config={joyeria.genero.hombre} href={hrefDeGenero(basePath, "hombre")} productos={home.hombre.items} basePath={basePath} />
         </Revelar>
       )}
       {joyeria.acabados && franja.length > 0 && (

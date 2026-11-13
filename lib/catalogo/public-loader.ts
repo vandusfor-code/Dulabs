@@ -3,9 +3,10 @@ import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { PriceContext } from "@/lib/catalogo/domain";
 import { consultaDeCatalogoPublico } from "@/lib/catalogo/consulta-publica";
+import { generoDeLaTienda } from "@/lib/catalogo/joyeria";
 import { createPublicCatalogService, type OpcionesInicio } from "@/lib/catalogo/service";
 import type { CatalogStorefrontConfig } from "@/lib/catalogo/vitrina";
-import { cargarMultimediaPublica } from "@/lib/cms-comercial/multimedia-publica";
+import { cargarContenidoHombrePublicado, cargarMultimediaPublica } from "@/lib/cms-comercial/multimedia-publica";
 import type { OpcionesPaginaMayoristas } from "@/lib/cms-comercial/pagina-mayoristas";
 import { cargarPaginaMayoristas as cargarPaginaMayoristasPublica } from "@/lib/cms-comercial/pagina-mayoristas-publica";
 import { cargarPaginaPublica } from "@/lib/cms-comercial/pagina-publica";
@@ -33,7 +34,7 @@ export const cargarCatalogoPublico = cache(
 );
 
 /** Marco de la tienda (layout): identidad, categorías y WhatsApp. Compartido con las páginas de la misma petición. */
-export const cargarTienda = cache((slug: string) => servicio().getStorefront(slug));
+export const cargarTienda = cache((slug: string) => servicio().getStorefront(slug, { separarGenero: generoDeLaTienda(slug) !== undefined }));
 
 /** Inicio: destacados + categorías con portada. */
 export const cargarInicio = cache((slug: string) => servicio().getHome(slug));
@@ -68,8 +69,14 @@ export const cargarPaginaTienda = cache((slug: string, clave: string) => cargarP
  */
 export const cargarMultimediaTienda = cache((slug: string) => cargarMultimediaPublica(crearDepsPublicasCms(), slug));
 
+/**
+ * Lo publicado para el lado de HOMBRE (videos de portada, colección y marca, imágenes de sus categorías y lo elegido para su inicio). NUNCA lanza ni tarda de más: sin nada publicado o ante cualquier
+ * problema devuelve null y el inicio de hombre usa lo automático (lo más nuevo y las categorías con piezas de hombre).
+ */
+export const cargarContenidoHombre = cache((slug: string) => cargarContenidoHombrePublicado(crearDepsPublicasCms(), slug));
+
 /** Inicio con lo que el CMS eligió (destacados, categorías, productos de la campaña). Sin opciones, igual que `cargarInicio`. */
-export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, opciones);
+export const cargarInicioElegido = (slug: string, opciones: OpcionesInicio) => servicio().getHome(slug, { ...opciones, ...(generoDeLaTienda(slug) ? { separarGenero: true } : {}) });
 
 /**
  * Acabados (colores con productos) de la franja del inicio del tema "joyeria". Es una lectura liviana de TODOS los productos activos, así que se guarda 10 minutos entre peticiones:

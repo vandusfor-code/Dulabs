@@ -3,9 +3,12 @@
  * Server Components: el texto llega en el HTML; solo el video (y su botón) es de cliente. Cada bloque se dibuja SOLO si tiene lo que necesita: la franja sin acabados reales no existe.
  */
 import { ArrowRight } from "lucide-react";
+import { TarjetaJoyeria } from "@/components/catalogo-publico/tienda/joyeria/TarjetaJoyeria";
 import { VideoSeccion } from "@/components/catalogo-publico/tienda/joyeria/VideoJoyeria";
-import { ENLACE_TEXTO, EnlaceJoyeria } from "@/components/catalogo-publico/tienda/joyeria/piezas";
+import { ENLACE_TEXTO, EnlaceJoyeria, indice } from "@/components/catalogo-publico/tienda/joyeria/piezas";
+import type { GeneroJoyeria } from "@/lib/catalogo/genero";
 import type { AcabadoVisible, LineaVisible } from "@/lib/catalogo/joyeria";
+import type { PublicCatalogProduct } from "@/lib/catalogo/publicacion";
 import type { ColeccionJoyeria, MarcaJoyeria } from "@/lib/catalogo/vitrina";
 
 /**
@@ -72,6 +75,45 @@ export function FranjaLineas({ titulo, lineas }: { titulo: string; lineas: reado
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/**
+ * Entrada «Para él» del inicio (Delacour · Vértice): una franja oscura, con la paleta de la colección masculina (grafito y plata) aunque el resto del inicio sea claro, que lleva al lado de hombre de la
+ * tienda. A un lado el nombre de la colección con su lema y un botón y, al otro, las piezas de hombre más recientes (con su foto y su referencia, como en cualquier tarjeta de la tienda). Solo se dibuja
+ * si hay piezas de hombre: sin ellas la tienda no tiene ese lado. Server Component.
+ */
+export function EntradaVertice({ config, href, productos, basePath }: { config: GeneroJoyeria["hombre"]; href: string; productos: readonly PublicCatalogProduct[]; basePath: string }) {
+  const e = config.entrada;
+  return (
+    <section id="vertice" aria-labelledby="joy-vertice" className="joy-vertice joy-ancla">
+      <div className="joy-vertice-interior">
+        <div className="joy-vertice-texto">
+          <p className="joy-vertice-casa">{config.casa}</p>
+          <span className="joy-vertice-trazo" aria-hidden />
+          <p className="joy-vertice-antetitulo">{e.etiqueta}</p>
+          <h2 id="joy-vertice" className="joy-vertice-titulo">
+            {e.titulo}
+          </h2>
+          <p className="joy-vertice-lema">{config.lema}</p>
+          <p className="joy-vertice-parrafo">{e.texto}</p>
+          <EnlaceJoyeria href={href} className="joy-vertice-boton group">
+            {e.boton}
+            <ArrowRight className="size-4 transition-transform duration-300 group-hover:translate-x-1" strokeWidth={1.7} aria-hidden />
+          </EnlaceJoyeria>
+        </div>
+        {productos.length > 0 && (
+          <ul className="joy-vertice-piezas" aria-label={`Piezas de ${config.marca}`}>
+            {productos.slice(0, 4).map((p, i) => (
+              <li key={p.reference} className="joy-item" style={indice(i)}>
+                {/* Sin `posicion`: la franja queda muy por debajo de la primera pantalla (portada y video), sus fotos se cargan al acercarse y no le quitan prioridad a la portada. */}
+                <TarjetaJoyeria product={p} basePath={basePath} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }

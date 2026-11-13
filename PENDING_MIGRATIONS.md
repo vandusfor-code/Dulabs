@@ -1,5 +1,37 @@
 # Pasos manuales pendientes en producción
 
+## ✅ APLICADA (12-nov-2026, verificada `true | 76 | 708`) — Delacour: lado de HOMBRE («Vértice»: Mujer | Hombre y tienda en grafito y plata)
+
+Corrida en producción el 12-nov-2026 por el dueño, en una sola pegada del SQL Editor (la migración y el SQL 08 de aprovisionamiento). Verificación: columna `true`, hombres `76`, mujeres `708` (784 piezas de Delacour). **Nada más que correr para esta función:** el inicio propio de hombre y su edición desde el panel (videos, imágenes, categorías y productos destacados, en Tienda → Página principal y Fotos y videos → «Hombre») NO llevan SQL, porque lo de hombre vive dentro de las mismas entidades del CMS comercial, bajo la clave `hombre`. Los pasos de abajo quedan como registro.
+
+Migración `supabase/migrations/20261215000000_dulabs_catalogo_genero.sql`. **Aditiva e idempotente**: agrega la columna `genero` a
+`dulabs_inventario_productos` (por defecto `'mujer'`; solo admite `mujer`/`hombre`) y un índice parcial de las piezas de hombre. No cambia
+ningún dato existente: todo lo que ya había queda como «mujer».
+Reversa: `supabase/rollbacks/20261215000000_dulabs_catalogo_genero.down.sql` (se niega si todavía hay piezas de hombre).
+Verificación local (PGlite, SQL real): `lib/catalogo/genero-sql.pglite.test.ts`.
+
+Sin la migración el sistema NO se rompe: el código nuevo lee el «para quién» aparte y, si la columna no existe, la tienda es la de siempre
+y el panel no muestra «Para». Se puede correr antes o después de desplegar el código.
+
+1. Correr el archivo de la migración completo en el SQL Editor.
+2. Verificar (esperado: una fila con `true` y el valor por defecto `'mujer'::text`):
+   ```sql
+   select exists (select 1 from information_schema.columns
+                   where table_schema = 'public' and table_name = 'dulabs_inventario_productos' and column_name = 'genero') as columna,
+          (select column_default from information_schema.columns
+            where table_schema = 'public' and table_name = 'dulabs_inventario_productos' and column_name = 'genero') as por_defecto;
+   ```
+3. Correr `supabase/provisioning/delacour/08_marcar_vertice_como_hombre.sql` (UNA sentencia, atómica): marca como de hombre **exactamente las 76**
+   piezas de la carga de Vértice (DL-000769 a DL-000844, material «Acero»). Se niega, sin dejar nada a medias, si falta la migración, si no hay UNA
+   sola tienda `delacour` o si las piezas del patrón no son 76. Reversa: `08_marcar_vertice_como_hombre.reversa.sql`. Verificar (esperado: `76`):
+   ```sql
+   select count(*) from public.dulabs_inventario_productos
+    where genero = 'hombre' and id_tenant = (select id_tenant from public.dulabs_catalogo_publicacion where slug = 'delacour');
+   ```
+4. Con el código desplegado y al menos una pieza de hombre activa aparece el selector «Mujer | Hombre» y el lado de hombre. La Carga masiva todavía
+   no tiene columna «Para» (las piezas importadas nacen de mujer).
+5. Detalle completo, colores, panel y pruebas: `docs/DELACOUR_HOMBRE.md`.
+
 ## PENDIENTE — AMORE: «Mi cita» (reservas solo por enlace + gestión por enlace personal)
 
 Migración `supabase/migrations/20261209000000_dulabs_cita_enlaces.sql`. **Aditiva**: crea la tabla

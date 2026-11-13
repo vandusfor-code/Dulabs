@@ -102,6 +102,10 @@ export function dependenciasDe(tipo: TipoEntidad, borrador: unknown): Dependenci
     destino(banner.destino, "banner.destino", dep);
     cats(b.categorias_destacadas, "categorias_destacadas");
     refs(b.productos_destacados, "productos_destacados");
+    // El inicio del lado de hombre: sus categorías y productos destacados se comprueban igual (existen, están activos).
+    const hombre = objeto(b.hombre);
+    cats(hombre.categorias_destacadas, "hombre.categorias_destacadas");
+    refs(hombre.productos_destacados, "hombre.productos_destacados");
   } else if (tipo === "oferta") {
     imagen(b.imagen, "imagen", dep);
     const alcance = objeto(b.alcance);
@@ -124,19 +128,24 @@ export function dependenciasDe(tipo: TipoEntidad, borrador: unknown): Dependenci
   } else if (tipo === "pie") {
     lista(b.columnas).forEach((columna, i) => lista(objeto(columna).enlaces).forEach((enlace, j) => destino(objeto(enlace).destino, "columnas." + i + ".enlaces." + j + ".destino", dep)));
   } else if (tipo === "multimedia") {
-    const videos = objeto(b.videos);
-    for (const archivo of ARCHIVOS_VIDEO) {
-      const [espacio, orientacion] = archivo.split(".");
-      const ref = objeto(objeto(videos[espacio])[orientacion]);
-      const campo = `videos.${espacio}.${orientacion}`;
-      if (cadena(ref.video)) dep.videos.push({ valor: ref.video as string, campo: `${campo}.video`, archivo });
-      if (cadena(ref.poster)) dep.assets.push({ valor: ref.poster as string, campo: `${campo}.poster` });
-    }
-    lista(b.categorias).forEach((c, i) => {
-      const item = objeto(c);
-      if (cadena(item.categoria_id)) dep.categorias.push({ valor: item.categoria_id as string, campo: `categorias.${i}.categoria_id` });
-      imagen(item.imagen, `categorias.${i}.imagen`, dep);
-    });
+    // Los videos y las imágenes de categoría del lado de siempre (`prefijo` vacío) y los del lado de hombre (`hombre.`): mismos espacios, mismas reglas (el `archivo` es el mismo espacio).
+    const recoger = (m: Json, prefijo: string) => {
+      const videos = objeto(m.videos);
+      for (const archivo of ARCHIVOS_VIDEO) {
+        const [espacio, orientacion] = archivo.split(".");
+        const ref = objeto(objeto(videos[espacio])[orientacion]);
+        const campo = `${prefijo}videos.${espacio}.${orientacion}`;
+        if (cadena(ref.video)) dep.videos.push({ valor: ref.video as string, campo: `${campo}.video`, archivo });
+        if (cadena(ref.poster)) dep.assets.push({ valor: ref.poster as string, campo: `${campo}.poster` });
+      }
+      lista(m.categorias).forEach((c, i) => {
+        const item = objeto(c);
+        if (cadena(item.categoria_id)) dep.categorias.push({ valor: item.categoria_id as string, campo: `${prefijo}categorias.${i}.categoria_id` });
+        imagen(item.imagen, `${prefijo}categorias.${i}.imagen`, dep);
+      });
+    };
+    recoger(b, "");
+    recoger(objeto(b.hombre), "hombre.");
   }
   return dep;
 }
@@ -254,7 +263,13 @@ const ETIQUETAS: Readonly<Record<string, string>> = {
 
 const rutaDe = (path: ReadonlyArray<PropertyKey>) => path.map(String).join(".");
 const sinIndices = (campo: string) => campo.split(".").filter((s) => !/^\d+$/.test(s)).join(".");
-export const etiquetaDeCampo = (campo: string): string => ETIQUETAS[sinIndices(campo)] ?? sinIndices(campo).split(".").pop() ?? campo;
+export const etiquetaDeCampo = (campo: string): string => {
+  const limpio = sinIndices(campo);
+  // Lo del lado de hombre se llama como lo de siempre, con su lado por delante («Lado de hombre · Video de la portada»).
+  if (limpio === "hombre") return "Lado de hombre";
+  if (limpio.startsWith("hombre.")) return `Lado de hombre · ${etiquetaDeCampo(limpio.slice("hombre.".length))}`;
+  return ETIQUETAS[limpio] ?? limpio.split(".").pop() ?? campo;
+};
 
 function mensajeDeZod(issue: z.core.$ZodIssue): string {
   const campo = rutaDe(issue.path);
@@ -430,9 +445,14 @@ function revisarPagina(p: { en_menu?: boolean }, ctx: ContextoValidacion, err: R
   err("menu_lleno", "en_menu", `El menú de arriba admite ${MAX_PAGINAS_EN_MENU} páginas y ya tiene ${otras.map((n) => `«${n}»`).join(", ")}. Quita una del menú (apaga «Mostrar en el menú de arriba» en esa página) para poner esta.`);
 }
 
-function revisarMultimedia(m: { videos?: Record<string, unknown>; categorias?: unknown[]; mayoristas?: Record<string, unknown> }, adv: Reportar) {
-  const hayVideos = m.videos !== undefined && Object.values(m.videos).some((v) => v !== undefined);
-  const hayCategorias = (m.categorias?.length ?? 0) > 0;
+function revisarMultimedia(
+  m: { videos?: Record<string, unknown>; categorias?: unknown[]; mayoristas?: Record<string, unknown>; hombre?: { videos?: Record<string, unknown>; categorias?: unknown[] } },
+  adv: Reportar,
+) {
+  const conVideos = (v: Record<string, unknown> | undefined) => v !== undefined && Object.values(v).some((x) => x !== undefined);
+  // Lo del lado de hombre también cuenta: publicar solo sus videos o imágenes sí cambia algo en la tienda.
+  const hayVideos = conVideos(m.videos) || conVideos(m.hombre?.videos);
+  const hayCategorias = (m.categorias?.length ?? 0) > 0 || (m.hombre?.categorias?.length ?? 0) > 0;
   const hayTextos = m.mayoristas !== undefined && Object.values(m.mayoristas).some((v) => v !== undefined);
   if (!hayVideos && !hayCategorias && !hayTextos) adv("multimedia_vacia", "", "No elegiste ningún video, ninguna imagen de categoría ni cambiaste ningún texto: publicar esto no cambia nada en tu tienda (se siguen viendo los originales).");
 }

@@ -3,6 +3,7 @@
  * migas de pan. Sin I/O y sin React: se prueba aparte (joyeria.test.ts). Nunca toca precios, stock, carrito ni pedidos.
  */
 import { SIN_FILTROS, urlFiltros, type OpcionFaceta } from "@/lib/catalogo/filtros";
+import type { GeneroJoyeria } from "@/lib/catalogo/genero";
 import type { LineaConfig, LineasJoyeria } from "@/lib/catalogo/lineas";
 import { joyeriaOf, storefrontConfigFor, type ConfigJoyeria, type MayoristasJoyeria } from "@/lib/catalogo/vitrina";
 import type { FeaturedPolicy } from "@/lib/catalogo/service";
@@ -125,6 +126,11 @@ export function lineasVisibles(config: LineasJoyeria | undefined, categorias: Re
 /** Las líneas de la tienda de ese negocio, de su configuración; vacía si no tiene (entonces la tienda se ve como siempre). */
 export function lineasDeLaTienda(slug: string): readonly LineaConfig[] {
   return joyeriaOf(storefrontConfigFor(slug))?.lineas?.lineas ?? [];
+}
+
+/** El lado de hombre de la tienda de ese negocio (Vértice), de su configuración; undefined si no separa hombre y mujer (entonces la tienda y el panel se ven como siempre). */
+export function generoDeLaTienda(slug: string): GeneroJoyeria | undefined {
+  return joyeriaOf(storefrontConfigFor(slug))?.genero;
 }
 
 /** A dónde lleva el acceso «Líneas» de la cabecera: la franja de líneas del inicio. */

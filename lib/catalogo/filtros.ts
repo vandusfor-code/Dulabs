@@ -7,6 +7,7 @@
  *   - cómo viajan los filtros en la dirección (`?categoria=…&color=…&material=…&precio_min=…&precio_max=…`), de modo que cada vista se puede compartir y funciona sin JavaScript.
  */
 
+import { generoDeParam, GENERO_PREDETERMINADO, type Genero } from "@/lib/catalogo/genero";
 import { calcularLineas, esClaveDeLinea, lineasDeMaterial, type LineaConfig, type LineaFaceta } from "@/lib/catalogo/lineas";
 
 /** Paso del deslizador de precio (pesos). */
@@ -22,6 +23,11 @@ const MAX_CLAVE = 40;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface FiltrosCatalogo {
+  /**
+   * Para quién (`?genero=hombre`, ver lib/catalogo/genero.ts). Solo existe cuando la dirección pide el lado de hombre; el de mujer es el de siempre y no se escribe. El servicio lo aplica solo en las
+   * tiendas que separan hombre y mujer (sin esa separación se ignora, como una línea que el negocio no tiene).
+   */
+  genero?: Genero;
   /** Claves de línea (`?linea=plata`, ver lib/catalogo/lineas.ts): cualquiera de ellas. Solo existe cuando la dirección trae una; las líneas que el negocio no tiene se ignoran. */
   lineas?: string[];
   /** Ids de categoría (cualquiera de ellas). */
@@ -38,12 +44,12 @@ export interface FiltrosCatalogo {
 export const SIN_FILTROS: FiltrosCatalogo = { categorias: [], colores: [], materiales: [] };
 
 export function hayFiltros(f: FiltrosCatalogo): boolean {
-  return f.categorias.length > 0 || f.colores.length > 0 || f.materiales.length > 0 || (f.lineas?.length ?? 0) > 0 || f.precioMin !== undefined || f.precioMax !== undefined;
+  return f.genero !== undefined || f.categorias.length > 0 || f.colores.length > 0 || f.materiales.length > 0 || (f.lineas?.length ?? 0) > 0 || f.precioMin !== undefined || f.precioMax !== undefined;
 }
 
 /** Solo una categoría y nada más: es el listado de siempre (`?categoria=<id>`), con su consulta paginada en la base. */
 export function soloUnaCategoria(f: FiltrosCatalogo): string | null {
-  return f.categorias.length === 1 && f.colores.length === 0 && f.materiales.length === 0 && !f.lineas?.length && f.precioMin === undefined && f.precioMax === undefined ? f.categorias[0] : null;
+  return f.genero === undefined && f.categorias.length === 1 && f.colores.length === 0 && f.materiales.length === 0 && !f.lineas?.length && f.precioMin === undefined && f.precioMax === undefined ? f.categorias[0] : null;
 }
 
 /**
@@ -105,6 +111,8 @@ export interface FacetasCatalogo {
 
 /** Lo mínimo de un producto para filtrar: nada de imágenes ni datos internos. */
 export interface FilaFaceta {
+  /** Para quién es la pieza. Sin dato (tiendas que no separan hombre y mujer) es de mujer, que es lo predeterminado. */
+  genero?: Genero;
   categoryId: string | null;
   color: string | null;
   material: string | null;
@@ -153,6 +161,7 @@ export function calcularFacetas(
 
 /** Dentro de un grupo basta con uno de los valores elegidos; entre grupos deben cumplirse todos. Un producto sin precio (a consultar o en 0) no cumple ningún rango. */
 export function cumpleFiltros(fila: FilaFaceta, f: FiltrosCatalogo, lineas?: readonly LineaConfig[]): boolean {
+  if (f.genero !== undefined && (fila.genero ?? GENERO_PREDETERMINADO) !== f.genero) return false;
   // Sin las líneas del negocio una `?linea=` no significa nada: se ignora (nunca deja la lista vacía por una dirección vieja).
   if (f.lineas && f.lineas.length > 0 && lineas && lineas.length > 0) {
     const deLaFila = lineasDeMaterial(fila.material, lineas);
@@ -197,7 +206,9 @@ export function leerFiltros(sp: Params): FiltrosCatalogo {
   let precioMax = entero(sp.precio_max);
   if (precioMin !== undefined && precioMax !== undefined && precioMin > precioMax) [precioMin, precioMax] = [precioMax, precioMin];
   const lineas = clavesDeLinea(sp.linea);
+  const genero = generoDeParam(sp.genero);
   return {
+    ...(genero ? { genero } : {}),
     ...(lineas.length > 0 ? { lineas } : {}),
     categorias: [...new Set(lista(sp.categoria).filter((c) => UUID_PATTERN.test(c)))].slice(0, MAX_VALORES),
     colores: claves(sp.color),
@@ -210,6 +221,7 @@ export function leerFiltros(sp: Params): FiltrosCatalogo {
 /** Los filtros como pares de la dirección, en orden estable. */
 export function paramsDeFiltros(f: FiltrosCatalogo): Array<[string, string]> {
   return [
+    ...(f.genero ? [["genero", f.genero] as [string, string]] : []),
     ...(f.lineas ?? []).map((l): [string, string] => ["linea", l]),
     ...f.categorias.map((c): [string, string] => ["categoria", c]),
     ...f.colores.map((c): [string, string] => ["color", c]),
@@ -235,7 +247,8 @@ export function filtrosDeTexto(texto: string): FiltrosCatalogo {
 export function urlFiltros(basePath: string, f: FiltrosCatalogo, pagina?: number): string {
   const qs = new URLSearchParams(paramsDeFiltros(f));
   if (pagina && pagina > 1) qs.set("pagina", String(pagina));
-  if (!qs.toString()) qs.set("todo", "1");
+  // Sin filtros (o solo con el lado: `genero` no abre el listado, es el inicio de ese lado) es el listado completo: `todo=1`.
+  if ([...qs.keys()].every((clave) => clave === "genero")) qs.set("todo", "1");
   return `${basePath}?${qs.toString()}`;
 }
 

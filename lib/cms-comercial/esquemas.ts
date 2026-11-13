@@ -114,6 +114,24 @@ const botonSchema = z.strictObject({ texto: texto("El texto del botón", 30, 2),
 // Página principal (una por negocio)
 // ---------------------------------------------------------------------------
 
+const categoriasDestacadasSchema = z
+  .array(uuid("La categoría"))
+  .max(12, { message: "Máximo 12 categorías destacadas." })
+  .refine(sinRepetidos, { message: "Una categoría destacada no puede repetirse." });
+const productosDestacadosSchema = z
+  .array(referencia)
+  .max(24, { message: "Máximo 24 productos destacados." })
+  .refine(sinRepetidos, { message: "Un producto destacado no puede repetirse." });
+
+/**
+ * Lo que la administradora elige para el INICIO DEL LADO DE HOMBRE de la tienda (Delacour · Vértice): las categorías que se ven (y su orden) y los productos destacados. Sin esto el inicio de hombre
+ * usa lo automático: lo más nuevo y las categorías que tienen piezas de hombre.
+ */
+export const homeHombreSchema = z.strictObject({
+  categorias_destacadas: categoriasDestacadasSchema.optional(),
+  productos_destacados: productosDestacadosSchema.optional(),
+});
+
 export const homeSchema = z.strictObject({
   portada: z.strictObject({
     visible: z.boolean({ message: "Indica si la portada está visible." }),
@@ -135,14 +153,10 @@ export const homeSchema = z.strictObject({
     .array(z.strictObject({ tipo: z.enum(SECCIONES_HOME, { message: "Sección desconocida." }), visible: z.boolean() }))
     .max(SECCIONES_HOME.length, { message: "Hay demasiadas secciones." })
     .refine((s) => sinRepetidos(s.map((x) => x.tipo)), { message: "Una sección no puede repetirse." }),
-  categorias_destacadas: z
-    .array(uuid("La categoría"))
-    .max(12, { message: "Máximo 12 categorías destacadas." })
-    .refine(sinRepetidos, { message: "Una categoría destacada no puede repetirse." }),
-  productos_destacados: z
-    .array(referencia)
-    .max(24, { message: "Máximo 24 productos destacados." })
-    .refine(sinRepetidos, { message: "Un producto destacado no puede repetirse." }),
+  categorias_destacadas: categoriasDestacadasSchema,
+  productos_destacados: productosDestacadosSchema,
+  /** El inicio del LADO DE HOMBRE (una tienda dentro de la tienda): sus categorías y productos destacados. Sin esto, el inicio de hombre usa lo automático. */
+  hombre: homeHombreSchema.optional(),
 });
 export type Home = z.infer<typeof homeSchema>;
 
@@ -437,17 +451,30 @@ export const textosMayoristasSchema = z.strictObject({
 } satisfies Record<CampoTextoMayoristas, z.ZodType>);
 export type TextosMayoristasCms = z.infer<typeof textosMayoristasSchema>;
 
+/** La imagen de presentación de cada categoría que la administradora eligió (las que no estén usan la foto de uno de sus productos). */
+const imagenesDeCategoriasSchema = z
+  .array(z.strictObject({ categoria_id: uuid("La categoría"), imagen: imagenSchema }))
+  .max(MAX_CATEGORIAS_CON_IMAGEN, { message: `Máximo ${MAX_CATEGORIAS_CON_IMAGEN} categorías con imagen.` })
+  .refine((c) => sinRepetidos(c.map((x) => x.categoria_id)), { message: "Una categoría no puede repetirse." });
+
+/**
+ * Las fotos y videos del LADO DE HOMBRE de la tienda: los mismos espacios que el inicio de mujer (portada, colección y marca; los mayoristas son de toda la tienda) con las mismas reglas, y la imagen
+ * de presentación de sus categorías. Lo que no esté aquí no se dibuja en el inicio de hombre (no hay un video «de siempre» al que volver).
+ */
+export const multimediaHombreSchema = z.strictObject({
+  videos: z.strictObject({ portada: videoHorizontalYVertical.optional(), coleccion: videoHorizontalYVertical.optional(), marca: videoUnico.optional() }).optional(),
+  categorias: imagenesDeCategoriasSchema.optional(),
+});
+
 export const multimediaSchema = z.strictObject({
   /** Los videos de los espacios del inicio. Un espacio que no está aquí conserva el video que trae la tienda (el original de DuLabs). */
   videos: z.strictObject({ portada: videoHorizontalYVertical.optional(), coleccion: videoHorizontalYVertical.optional(), marca: videoUnico.optional(), mayoristas: videoUnico.optional() }).optional(),
   /** La imagen de presentación de cada categoría que la administradora eligió. Una categoría que no está aquí usa la foto de uno de sus productos (como siempre). */
-  categorias: z
-    .array(z.strictObject({ categoria_id: uuid("La categoría"), imagen: imagenSchema }))
-    .max(MAX_CATEGORIAS_CON_IMAGEN, { message: `Máximo ${MAX_CATEGORIAS_CON_IMAGEN} categorías con imagen.` })
-    .refine((c) => sinRepetidos(c.map((x) => x.categoria_id)), { message: "Una categoría no puede repetirse." })
-    .optional(),
+  categorias: imagenesDeCategoriasSchema.optional(),
   /** Los textos del bloque «Compras por mayor» (el del inicio y la banda de la página de mayoristas). Los que no estén aquí conservan los que trae la tienda. */
   mayoristas: textosMayoristasSchema.optional(),
+  /** Las fotos y videos del lado de hombre de la tienda (su inicio propio). */
+  hombre: multimediaHombreSchema.optional(),
 });
 export type Multimedia = z.infer<typeof multimediaSchema>;
 

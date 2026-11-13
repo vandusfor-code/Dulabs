@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight, ClipboardList, FileSpreadsheet, PackagePlus, Plus, Search, Tags, X } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/shell/ui";
 import { useI18n } from "@/lib/i18n";
-import type { CatalogCategory, CatalogProduct, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
+import type { CatalogCategory, CatalogProduct, Genero, ProductPage, StatusFilter } from "@/lib/catalogo/domain";
 import { LINEA_SIN, materialConLinea } from "@/lib/catalogo/lineas";
 import { CatalogLinks } from "@/components/dashboard/catalogo/CatalogLinks";
 import { CategoriasDialog } from "@/components/dashboard/catalogo/CategoriasDialog";
@@ -29,6 +29,9 @@ export default function CatalogoPage() {
   const [categoryId, setCategoryId] = useState("");
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const [linea, setLinea] = useState("");
+  // «Para» (Mujer/Hombre): el filtro y los productos cuyo lado se está guardando desde la lista. Solo cuentan en negocios cuya tienda separa los dos lados.
+  const [genero, setGenero] = useState<"" | Genero>("");
+  const [asignandoGenero, setAsignandoGenero] = useState<ReadonlyMap<string, Genero>>(new Map());
   // Productos cuya línea se está guardando desde la lista (id -> línea elegida).
   const [asignando, setAsignando] = useState<ReadonlyMap<string, string>>(new Map());
   const [page, setPage] = useState(1);
@@ -58,24 +61,26 @@ export default function CatalogoPage() {
     };
   }, [client]);
 
-  const key = useMemo(() => JSON.stringify({ q, categoryId, status, linea, page, recarga }), [q, categoryId, status, linea, page, recarga]);
+  const key = useMemo(() => JSON.stringify({ q, categoryId, status, linea, genero, page, recarga }), [q, categoryId, status, linea, genero, page, recarga]);
 
   useEffect(() => {
     if (!client) return;
     let vivo = true;
-    void client.listProducts({ q: q || undefined, categoryId: categoryId || undefined, status, linea: linea || undefined, page, pageSize: PAGE_SIZE }).then((r) => {
+    void client.listProducts({ q: q || undefined, categoryId: categoryId || undefined, status, linea: linea || undefined, genero: genero || undefined, page, pageSize: PAGE_SIZE }).then((r) => {
       if (!vivo) return; // respuesta vieja: nunca pisa a la actual
       setResultado({ key, page: r.ok ? r.data : null, error: r.ok ? null : r.error.message });
     });
     return () => {
       vivo = false;
     };
-  }, [client, key, q, categoryId, status, linea, page]);
+  }, [client, key, q, categoryId, status, linea, genero, page]);
 
   const cargando = resultado?.key !== key;
   const data = resultado?.page ?? null;
   const totalPaginas = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  const hayFiltros = Boolean(q || categoryId || status !== "ALL" || linea);
+  // La separación Mujer/Hombre la dice el servidor (la tienda del negocio la tiene y la migración está aplicada): sin ella no hay filtro «Para» ni selectores y la pantalla es la de siempre.
+  const separaGenero = Boolean(data?.genero);
+  const hayFiltros = Boolean(q || categoryId || status !== "ALL" || linea || genero);
 
   // El filtro de línea de AHORA: al terminar de guardar se mira este y no el de cuando se empezó (la persona pudo cambiarlo mientras tanto).
   const lineaDelFiltro = useRef(linea);
@@ -109,6 +114,35 @@ export default function CatalogoPage() {
     else setResultado((previo) => (previo?.page ? { ...previo, page: { ...previo.page, items: previo.page.items.map((x) => (x.id === actualizado.id ? actualizado : x)) } } : previo));
   };
 
+  // El filtro «Para» de AHORA (igual que con la línea: al terminar de guardar se mira este y no el de cuando se empezó).
+  const generoDelFiltro = useRef(genero);
+  useEffect(() => {
+    generoDelFiltro.current = genero;
+  }, [genero]);
+
+  /**
+   * Marca para quién es una pieza desde la lista (solo «Para»: no se toca nada más del producto). Con el filtro «Para» puesto la pieza puede dejar de pertenecer a esta lista (p. ej. al pasarla a Hombre
+   * deja de estar en Mujer), así que se vuelve a pedir la página; sin filtro solo se cambia la fila.
+   */
+  const asignarGenero = async (producto: CatalogProduct, destino: Genero) => {
+    if (!client || asignandoGenero.has(producto.id) || (producto.gender ?? "mujer") === destino) return;
+    setAsignandoGenero((m) => new Map(m).set(producto.id, destino));
+    const r = await client.updateProduct(producto.id, { gender: destino });
+    setAsignandoGenero((m) => {
+      const resto = new Map(m);
+      resto.delete(producto.id);
+      return resto;
+    });
+    if (!r.ok) {
+      toast(r.error.message, "error");
+      return;
+    }
+    toast(destino === "hombre" ? t(`«${producto.name}» quedó para Hombre.`, `“${producto.name}” is now for Men.`) : t(`«${producto.name}» quedó para Mujer.`, `“${producto.name}” is now for Women.`));
+    const actualizado = r.data.product;
+    if (generoDelFiltro.current) setRecarga((n) => n + 1);
+    else setResultado((previo) => (previo?.page ? { ...previo, page: { ...previo.page, items: previo.page.items.map((x) => (x.id === actualizado.id ? actualizado : x)) } } : previo));
+  };
+
   const cambiarPagina = (p: number) => {
     setPage(p);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -130,6 +164,7 @@ export default function CatalogoPage() {
     setCategoryId("");
     setStatus("ALL");
     setLinea("");
+    setGenero("");
     setPage(1);
   };
 
@@ -230,6 +265,21 @@ export default function CatalogoPage() {
                 ))}
               </select>
             )}
+            {separaGenero && (
+              <select
+                value={genero}
+                onChange={(e) => {
+                  setGenero(e.target.value as "" | Genero);
+                  setPage(1);
+                }}
+                aria-label={t("Filtrar por para quién es", "Filter by who it is for")}
+                className={cn(inputCls, "sm:w-40")}
+              >
+                <option value="">{t("Para: todos", "For: all")}</option>
+                <option value="mujer">{t("Para Mujer", "For Women")}</option>
+                <option value="hombre">{t("Para Hombre", "For Men")}</option>
+              </select>
+            )}
             <div role="radiogroup" aria-label={t("Estado", "Status")} className="inline-flex shrink-0 rounded-lg border border-edge bg-ink p-1">
               {estados.map((e) => (
                 <button
@@ -313,7 +363,15 @@ export default function CatalogoPage() {
               </div>
             )
           ) : data ? (
-            <ProductList products={data.items} dimmed={cargando} clasificacion={lineas.length > 0 ? { lineas, puedeAsignar: canWrite, asignando, onAsignar: asignarLinea } : undefined} />
+            <ProductList
+              products={data.items}
+              dimmed={cargando}
+              clasificacion={
+                lineas.length > 0 || separaGenero
+                  ? { lineas, puedeAsignar: canWrite, asignando, onAsignar: asignarLinea, ...(separaGenero ? { genero: { puedeAsignar: canWrite, asignando: asignandoGenero, onAsignar: asignarGenero } } : {}) }
+                  : undefined
+              }
+            />
           ) : null}
         </div>
 
