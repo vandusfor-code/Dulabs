@@ -4603,3 +4603,266 @@ html:has([data-tema-genero="hombre"]) {
   /* El acento de la «É» sube por encima de la línea: hace falta aire sobre el título para que no toque el antetítulo. */
   margin-top: clamp(1rem, 2.6vw, 2.25rem);
 }
+
+/* ==========================================================================================================================================================
+   INICIO DEL LADO DE HOMBRE — un solo lienzo grafito, sin franjas ni cortes planos (components/catalogo-publico/tienda/joyeria/TiendaInicioHombre.tsx).
+   Todos los bloques comparten el fondo de la página (#111416): lo que separa uno del siguiente es aire y degradado, nunca un cambio brusco de color. La portada se funde hacia abajo con la página, los
+   videos de la colección y de los mayoristas entran y salen de ella con un degradado (`.joy-suave`) y el pie toma el mismo grafito. El orden es el del inicio de mujer: portada, colección, categorías,
+   marca, destacados y mayoristas. Solo colores, degradados y espacios: ningún movimiento nuevo.
+   ========================================================================================================================================================== */
+.tienda-joyeria .joy-inicio-hombre {
+  position: relative;
+  background-color: var(--color-ink);
+  /* Resplandores de acero muy suaves que recorren la página: dan profundidad sin dibujar ningún borde. */
+  background-image:
+    radial-gradient(70rem 40rem at 90% 3%, rgb(48 59 64 / 0.34), transparent 70%),
+    radial-gradient(64rem 42rem at 4% 40%, rgb(48 59 64 / 0.24), transparent 70%),
+    radial-gradient(72rem 42rem at 96% 74%, rgb(48 59 64 / 0.28), transparent 70%);
+  background-repeat: no-repeat;
+}
+/* Cada bloque respira lo mismo, arriba y abajo. */
+.tienda-joyeria .joy-hm-seccion {
+  padding-block: clamp(4.5rem, 9vw, 8rem);
+}
+
+/* La portada: arriba una sombra que deja leer el menú sobre el video y abajo un degradado que la funde con la página (sin el corte plano de antes). */
+.tienda-joyeria .joy-hv::before,
+.tienda-joyeria .joy-hv::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  z-index: -5;
+  pointer-events: none;
+}
+.tienda-joyeria .joy-hv::before {
+  top: 0;
+  height: 9rem;
+  background-image: linear-gradient(to bottom, rgb(17 20 22 / 0.6), transparent);
+}
+.tienda-joyeria .joy-hv::after {
+  bottom: 0;
+  height: clamp(9rem, 32vh, 20rem);
+  background-image: linear-gradient(to bottom, transparent, var(--color-ink));
+}
+
+/* Un bloque de video que entra y sale de la página con un degradado (la colección y los mayoristas): el borde de arriba y el de abajo se funden con el fondo. Va por encima del video y de su velo y por
+   debajo del texto. */
+.tienda-joyeria .joy-suave::before,
+.tienda-joyeria .joy-suave::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  z-index: -5;
+  height: clamp(7rem, 24vh, 15rem);
+  pointer-events: none;
+}
+.tienda-joyeria .joy-suave::before {
+  top: 0;
+  background-image: linear-gradient(to bottom, var(--color-ink), transparent);
+}
+.tienda-joyeria .joy-suave::after {
+  bottom: 0;
+  background-image: linear-gradient(to top, var(--color-ink), transparent);
+}
+
+/* Categorías. Encabezado (con dos o más categorías). */
+.tienda-joyeria .joy-hm-encabezado {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: clamp(1.5rem, 3vw, 2.5rem);
+}
+.tienda-joyeria .joy-hm-eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--tienda-oro);
+}
+.tienda-joyeria .joy-hm-trazo {
+  display: block;
+  width: 4.7rem;
+  height: 2px;
+  background-color: var(--joy-oro);
+}
+.tienda-joyeria .joy-hm-inicial {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 4.5rem;
+  font-weight: 500;
+  color: var(--tienda-oro);
+  background-color: var(--tienda-oro-suave);
+}
+
+/* Una sola categoría: tarjeta destacada dentro del ancho de la página. La foto se funde hacia el texto (sin borde duro entre las dos mitades). */
+.tienda-joyeria .joy-hm-destacada {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  border-radius: 1.75rem;
+  border: 1px solid rgb(57 65 71 / 0.75);
+  background-image: linear-gradient(135deg, #1b2124 0%, #15191b 58%, #111416 100%);
+  box-shadow: 0 40px 90px -50px rgb(0 0 0 / 0.9);
+  color: var(--color-fg);
+}
+.tienda-joyeria .joy-hm-destacada-foto {
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background-color: var(--color-card);
+}
+/* La foto llena su mitad sin estirarla: quien manda en la altura de la tarjeta es la tarjeta, no la proporción de la foto. */
+.tienda-joyeria .joy-hm-destacada-foto > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 62%;
+}
+.tienda-joyeria .joy-hm-destacada-foto::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(to top, #15191b 0%, transparent 42%);
+}
+.tienda-joyeria .joy-hm-destacada-texto {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  padding: 0.5rem 1.75rem 2.5rem;
+  text-align: center;
+}
+.tienda-joyeria .joy-hm-destacada-titulo {
+  font-size: clamp(2.8rem, 7vw, 6rem);
+  font-weight: 500;
+  line-height: 1.02;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-fg);
+  overflow-wrap: anywhere;
+}
+.tienda-joyeria .joy-hm-destacada-boton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  height: 3rem;
+  padding-inline: 1.75rem;
+  border: 1px solid var(--tienda-oro);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tienda-oro);
+  transition:
+    background-color 0.3s,
+    color 0.3s;
+}
+@media (min-width: 768px) {
+  .tienda-joyeria .joy-hm-destacada {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    min-height: 30rem;
+  }
+  .tienda-joyeria .joy-hm-destacada-foto {
+    aspect-ratio: auto;
+  }
+  .tienda-joyeria .joy-hm-destacada-foto::after {
+    background-image: linear-gradient(to right, transparent 52%, #161b1d 100%);
+  }
+  .tienda-joyeria .joy-hm-destacada-texto {
+    padding: 3rem 3.5rem 3rem 1rem;
+  }
+}
+@media (hover: hover) {
+  .tienda-joyeria a.joy-hm-destacada:hover .joy-cat-foto,
+  .tienda-joyeria a.joy-hm-mosaico-item:hover .joy-cat-foto {
+    transform: scale(1.05);
+  }
+  .tienda-joyeria a.joy-hm-destacada:hover .joy-hm-destacada-boton {
+    background-color: var(--tienda-oro);
+    color: var(--color-ink);
+  }
+}
+
+/* De dos a cuatro categorías: mosaicos cuadrados que llenan el ancho de la página. */
+.tienda-joyeria .joy-hm-mosaico {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.tienda-joyeria .joy-hm-mosaico[data-n="3"] > li:last-child {
+  grid-column: 1 / -1;
+}
+.tienda-joyeria .joy-hm-mosaico-item {
+  position: relative;
+  display: block;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  border: 1px solid rgb(57 65 71 / 0.55);
+  background-color: var(--color-card);
+}
+.tienda-joyeria .joy-hm-mosaico[data-n="3"] > li:last-child .joy-hm-mosaico-item {
+  aspect-ratio: 2 / 1;
+}
+.tienda-joyeria .joy-hm-mosaico-velo {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(to top, rgb(11 14 16 / 0.8), rgb(11 14 16 / 0.12) 52%, transparent);
+}
+.tienda-joyeria .joy-hm-mosaico-rotulo {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 1.25rem 1.25rem 1.4rem;
+}
+@media (min-width: 768px) {
+  .tienda-joyeria .joy-hm-mosaico[data-n="3"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .tienda-joyeria .joy-hm-mosaico[data-n="3"] > li:last-child {
+    grid-column: auto;
+  }
+  .tienda-joyeria .joy-hm-mosaico[data-n="3"] > li:last-child .joy-hm-mosaico-item {
+    aspect-ratio: 1 / 1;
+  }
+  .tienda-joyeria .joy-hm-mosaico[data-n="4"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* En el lado de hombre los velos y resplandores de los videos son grafito (los de siempre son café y dorado), y el pie toma el mismo grafito de la página: sin banda de otro color antes del final. */
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-coleccion-velo {
+  background-image: linear-gradient(to bottom, rgb(17 20 22 / 0.72) 0%, rgb(17 20 22 / 0.5) 45%, rgb(17 20 22 / 0.22) 75%, rgb(17 20 22 / 0.5) 100%);
+}
+@media (min-width: 768px) {
+  .catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-coleccion-velo {
+    background-image:
+      linear-gradient(to right, rgb(17 20 22 / 0.78) 0%, rgb(17 20 22 / 0.55) 40%, rgb(17 20 22 / 0.12) 72%, transparent 100%),
+      linear-gradient(to top, rgb(17 20 22 / 0.4), transparent 36%);
+  }
+}
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-mayoristas-velo {
+  background-color: rgb(17 20 22 / 0.62);
+}
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-mayoristas-fondo {
+  background-image:
+    radial-gradient(60% 80% at 50% 0%, rgb(167 183 189 / 0.2) 0%, transparent 70%),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.03), transparent 30%, rgb(0 0 0 / 0.25));
+}
+.catalogo-tienda.tienda-joyeria:has([data-tema-genero="hombre"]) .joy-pie {
+  background-color: var(--color-ink);
+}

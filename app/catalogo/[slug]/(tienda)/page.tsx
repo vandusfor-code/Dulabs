@@ -13,7 +13,7 @@ import { generoDeParam, hrefListadoDeGenero } from "@/lib/catalogo/genero";
 import { esListado } from "@/lib/catalogo/inicio";
 import { cargarAcabados, cargarCatalogoPublico, cargarContenidoHombre, cargarInicio, cargarInicioElegido, cargarMultimediaTienda, cargarTienda, cargarVitrinaInicio, paginaDe, param } from "@/lib/catalogo/public-loader";
 import { retailPath } from "@/lib/catalogo/publicacion";
-import { generoDeLaTienda, lineasDeLaTienda, lineasVisibles } from "@/lib/catalogo/joyeria";
+import { generoDeLaTienda, lineasDeLaTienda, lineasVisibles, mayoristasVisible } from "@/lib/catalogo/joyeria";
 import { joyeriaOf, storefrontConfigFor, tecnologiaOf } from "@/lib/catalogo/vitrina";
 import { aplicarCategorias, aplicarMultimedia, videosDeHombre } from "@/lib/cms-comercial/multimedia-tienda";
 
@@ -59,13 +59,16 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
     const generoInicio = joyeriaOf(registro) && tienda.genero ? generoDeLaTienda(tienda.slug) : undefined;
     if (generoInicio && generoDeParam(sp.genero) === "hombre") {
       // Lo que la administradora publicó para el lado de hombre (videos, imágenes de categoría y los destacados y categorías que eligió); sin nada publicado, lo automático.
-      const publicado = await cargarContenidoHombre(slug);
+      // Y los mayoristas, que son de TODA la tienda: la misma invitación del inicio de mujer, con el video que la administradora publicó para ellos.
+      const [publicado, multimediaTienda] = await Promise.all([cargarContenidoHombre(slug), cargarMultimediaTienda(tienda.slug)]);
       const inicioHombre = await cargarInicioElegido(slug, {
         lado: "hombre",
         ...(publicado && publicado.destacadas.length > 0 ? { destacadas: publicado.destacadas } : {}),
         ...(publicado && publicado.categorias.length > 0 ? { categorias: publicado.categorias } : {}),
       });
       if (!inicioHombre) notFound();
+      const configJoyeria = joyeriaOf(registro);
+      const mayoristas = configJoyeria ? mayoristasVisible(aplicarMultimedia(configJoyeria, multimediaTienda), tienda.whatsapp) : null;
       const homeHombre = publicado?.multimedia ? { ...inicioHombre, categories: aplicarCategorias(inicioHombre.categories, publicado.multimedia) } : inicioHombre;
       const videos = videosDeHombre(publicado?.multimedia);
       const cfgHombre = generoInicio.hombre;
@@ -79,6 +82,7 @@ export default async function CatalogoDetalPage({ params, searchParams }: Props)
           video={videos.portada}
           coleccion={videos.coleccion && cfgHombre.bloques?.coleccion ? { ...cfgHombre.bloques.coleccion, video: videos.coleccion } : undefined}
           marca={videos.marca && cfgHombre.bloques?.marca ? { ...cfgHombre.bloques.marca, video: videos.marca } : undefined}
+          mayoristas={mayoristas}
         />
       );
     }

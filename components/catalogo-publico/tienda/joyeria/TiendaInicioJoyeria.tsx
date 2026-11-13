@@ -244,11 +244,11 @@ function CombosInicio({ combos, fondo }: { combos: readonly ComboVitrina[]; fond
 
 /**
  * Invitación a compradores mayoristas: una banda oscura con un único botón que abre WhatsApp (sin precios ni condiciones inventados). Con video, corre detrás del texto (con su velo para
- * que se lea y su botón de pausa).
+ * que se lea y su botón de pausa). `suave`: la banda entra y sale de la página con un degradado (sin borde plano arriba ni abajo); es la del lado de hombre.
  */
-function Mayoristas({ m }: { m: MayoristasVisible }) {
+export function Mayoristas({ m, suave = false }: { m: MayoristasVisible; suave?: boolean }) {
   return (
-    <section id="mayoristas" aria-labelledby="joy-mayoristas" className="joy-ancla joy-mayoristas relative isolate overflow-hidden px-6 py-24 text-center md:py-32">
+    <section id="mayoristas" aria-labelledby="joy-mayoristas" className={`joy-ancla joy-mayoristas relative isolate overflow-hidden px-6 py-24 text-center md:py-32${suave ? " joy-suave" : ""}`}>
       {m.video && <VideoSeccion video={m.video} control="icono" className="-z-30" />}
       {m.video && <div className="joy-mayoristas-velo pointer-events-none absolute inset-0 -z-20" aria-hidden />}
       <div className="joy-mayoristas-fondo pointer-events-none absolute inset-0 -z-10" aria-hidden />

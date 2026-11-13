@@ -286,3 +286,55 @@ describe("la señal que enciende el tema y las clases nuevas", () => {
     assert.deepEqual(sueltas.map((r) => r.selector), [], "reglas del lado de hombre que no cuelgan de .tienda-joyeria");
   });
 });
+
+describe("el inicio de hombre es un solo lienzo: sin franjas ni cortes planos (el CSS)", () => {
+  const conSelector = (selector: string) => REGLAS.filter((r) => r.selector.split(",").map((s) => s.trim()).includes(selector));
+  const declaraConGrafito = (r: { decl: Record<string, string> }) => `${r.decl["background-image"] ?? ""} ${r.decl["background-color"] ?? ""}`.includes("var(--color-ink)");
+
+  it("el inicio pinta el fondo de la página (--color-ink) y el pie del lado de hombre toma el MISMO grafito: ninguna banda de otro color antes del final", () => {
+    const lienzo = conSelector(".tienda-joyeria .joy-inicio-hombre");
+    assert.ok(lienzo.some((r) => r.decl["background-color"] === "var(--color-ink)"), "el inicio de hombre no pinta el fondo de la página");
+    const pie = conSelector(`.catalogo-tienda.tienda-joyeria:has(${MARCA}) .joy-pie`);
+    assert.ok(pie.some((r) => r.decl["background-color"] === "var(--color-ink)"), "el pie del lado de hombre no toma el fondo de la página");
+  });
+
+  it("la portada se funde hacia abajo con la página (degradado a --color-ink) y arriba lleva una sombra que deja leer el menú", () => {
+    const abajo = conSelector(".tienda-joyeria .joy-hv::after");
+    assert.ok(abajo.some(declaraConGrafito), "falta el degradado de abajo de la portada");
+    assert.ok(abajo.some((r) => /to bottom, transparent, var\(--color-ink\)/.test(r.decl["background-image"] ?? "")), "debe ir de transparente a --color-ink");
+    assert.ok(conSelector(".tienda-joyeria .joy-hv::before").length > 0, "falta la sombra de arriba");
+  });
+
+  it("los videos que entran y salen de la página (colección y mayoristas) se funden con ella por arriba y por abajo", () => {
+    const arriba = conSelector(".tienda-joyeria .joy-suave::before");
+    const abajo = conSelector(".tienda-joyeria .joy-suave::after");
+    assert.ok(arriba.some((r) => /to bottom, var\(--color-ink\), transparent/.test(r.decl["background-image"] ?? "")), "falta el degradado de arriba");
+    assert.ok(abajo.some((r) => /to top, var\(--color-ink\), transparent/.test(r.decl["background-image"] ?? "")), "falta el degradado de abajo");
+  });
+
+  it("los velos y resplandores de los videos del lado de hombre son grafito, no los cafés y dorados de siempre", () => {
+    const velos = [".joy-coleccion-velo", ".joy-mayoristas-velo", ".joy-mayoristas-fondo"].flatMap((c) => conSelector(`.catalogo-tienda.tienda-joyeria:has(${MARCA}) ${c}`));
+    assert.ok(velos.length >= 4, `se esperaban los velos de la colección (celular y escritorio) y los de los mayoristas: ${velos.length}`);
+    for (const r of velos) assert.ok(!/(24 16 10|34 22 14|181 141 74)/.test(JSON.stringify(r.decl)), `${r.selector} conserva un color café o dorado`);
+  });
+
+  it("toda clase joy-hm-* y joy-suave que usan los componentes del inicio de hombre existe en el CSS (una errata dejaría un bloque sin estilo)", () => {
+    const archivos = ["TiendaInicioHombre.tsx", "CategoriasHombre.tsx", "BloquesJoyeria.tsx", "TiendaInicioJoyeria.tsx"].map((f) =>
+      leer("components", "catalogo-publico", "tienda", "joyeria", f)
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, ""),
+    );
+    const usadas = new Set(archivos.flatMap((src) => [...src.matchAll(/\bjoy-(?:hm|suave|inicio-hombre)[a-z-]*/g)].map((m) => m[0])).filter((c) => !c.endsWith("-")));
+    assert.ok(usadas.size >= 12, `se esperaban muchas clases, hay ${usadas.size}: ${[...usadas].join(", ")}`);
+    const definidas = new Set([...SIN_COMENTARIOS.matchAll(/\.(joy-(?:hm|suave|inicio-hombre)[a-z-]*)/g)].map((m) => m[1]));
+    const sinEstilo = [...usadas].filter((c) => !definidas.has(c));
+    assert.deepEqual(sinEstilo, [], `clases sin estilo: ${sinEstilo.join(", ")}`);
+  });
+
+  it("la tarjeta de una sola categoría y los mosaicos usan los colores del tema (variables), no un color escrito a mano que no cambie de lado", () => {
+    const delBloque = REGLAS.filter((r) => /joy-hm-(destacada|mosaico|eyebrow|trazo|inicial)/.test(r.selector));
+    assert.ok(delBloque.length >= 10);
+    const colores = delBloque.flatMap((r) => ["color", "border-color"].map((p) => r.decl[p]).filter(Boolean));
+    for (const c of colores) assert.match(c, /^(var\(--[a-z-]+\)|#fff|white)$/, `color escrito a mano: ${c}`);
+  });
+});
