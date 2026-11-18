@@ -3,6 +3,9 @@
 **Catálogo + backend = fuente de verdad. Gemini = razonamiento y conversación.
 Herramientas = interfaz controlada entre ambos.**
 
+> **Guía única del agente de la joyería** (mapa de documentos, cómo validarlo con y sin saldo de Gemini, SQL de salud, qué hacer si no hay saldo, costo medido por mensaje): [`docs/AGENTE_JOYERIA.md`](../../docs/AGENTE_JOYERIA.md).
+> Validación completa sin gastar nada: `npm run validar:agente`.
+
 ## Capas
 
 ```
@@ -12,7 +15,7 @@ WhatsApp → app/webhook-dulabs/route.ts (firma, dedupe por wamid, tenant por ph
         → lib/agente/runtime.ts        bucle de tool calling + guardas + envío + estado + traza
         → lib/ia-proveedores/          contrato AIProvider (neutral)
              └─ gemini.ts              GeminiProvider: REST generateContent + function calling
-        → lib/agente/herramientas.ts   13 herramientas (reutilizan lib/catalogo/pedidos)
+        → lib/agente/herramientas.ts   21 herramientas: 16 de venta (reutilizan lib/catalogo/pedidos) + consultar_envio + 4 del CMS
         → motor de pedidos / catálogo (Fase 6-7)
 ```
 
@@ -20,8 +23,8 @@ WhatsApp → app/webhook-dulabs/route.ts (firma, dedupe por wamid, tenant por ph
 | --- | --- |
 | `lib/ia-proveedores/contrato.ts` | Contrato neutral: un paso del modelo (texto y/o llamadas a herramientas), errores normalizados, estado opaco de continuación. Sin streaming ni fallback. |
 | `lib/ia-proveedores/registro.ts` | Proveedores y modelos SOPORTADOS (lista cerrada), credencial por referencia `env:GEMINI_KEY_*`. **Sin default**: config incompleta = fail-closed. |
-| `lib/ia-proveedores/gemini.ts` | `functionDeclarations` + `functionCallingConfig` `VALIDATED` con `allowedFunctionNames`; devuelve las partes del modelo con su `thoughtSignature`; `thinkingLevel`; errores HTTP normalizados sin filtrar la key ni el cuerpo. Aislado del `gemini-client.ts` de AMORE/Flow. |
-| `lib/ia-proveedores/reintentos.ts` | 1 reintento (máx. 3) solo para errores transitorios, dentro del plazo del turno. Nunca cambia de proveedor. |
+| `lib/ia-proveedores/gemini.ts` | `functionDeclarations` + `functionCallingConfig` `VALIDATED` con `allowedFunctionNames`; devuelve las partes del modelo con su `thoughtSignature`; `thinkingLevel`; errores HTTP normalizados sin filtrar la key ni el cuerpo. El 429 de **crédito o cupo agotado** («Your prepayment credits are depleted», tope de gasto, cupo diario o de valor 0) se distingue del 429 de un pico de peticiones: `quota` vs `rate_limit` (`isQuotaExhausted`, solo mira señales; no guarda el mensaje de Google). Aislado del `gemini-client.ts` de AMORE/Flow. |
+| `lib/ia-proveedores/reintentos.ts` | 1 reintento (máx. 3) solo para errores transitorios (`rate_limit`, `timeout`, `server`, `network`), dentro del plazo del turno. `quota`, `auth` y `config` (fallas **sistémicas**: `AIProviderError.systemic`) no se reintentan. Nunca cambia de proveedor. |
 | `lib/ia-proveedores/simulado.ts` | Proveedor determinista para TODAS las pruebas. |
 | `lib/agente/config.ts` | Fila de `dulabs_agente_runtime_config` → `none` / `disabled` / `invalid` / `ok`. |
 | `lib/agente/estado.ts` | Memoria de corto plazo estructurada (`dulabs_agente_conversaciones`, compare-and-set). Nunca precios. |
@@ -70,6 +73,7 @@ prompt; los demás conversan EXACTAMENTE como siempre (`lib/agente/piloto-comerc
 - **Anclaje**: los montos del cliente nunca respaldan un precio.
 - **Anclaje comercial** (`comercial-anclaje.ts`, solo con las herramientas del CMS en la lista del número): porcentajes, descuentos, ofertas, combos, campañas, vigencias, «no hay…», fuga mayorista y plazos de políticas solo salen si lo devuelto por las herramientas **en ese turno** los respalda (ni el cliente ni el prompt respaldan nada). Una corrección y, si el modelo insiste, mensaje fijo + asesora; la traza guarda solo los códigos (`trace.grounding.codes`). Corre también en las preguntas durante el checkout.
 - **Fallos**: mensaje fijo; dos fallos seguidos → asesora (pausa del chat). Seguridad del modelo → mensaje fijo.
+- **Falla sistémica del proveedor** (sin saldo o cupo agotado `quota`, credencial rechazada `auth`, configuración `config`): no depende del mensaje del cliente y escribir de nuevo no la arregla, así que el turno **no se reintenta** y la conversación pasa **de una vez** a una asesora con el mensaje fijo de traspaso (motivo `repeated_failures`; la causa exacta queda en `trace.error_kind`). Si el traspaso no se puede registrar, mensaje técnico (nunca se promete una asesora que no viene). Ver `docs/AGENTE_JOYERIA.md` §4.
 - **Asesora**: si tomó el chat mientras el agente pensaba, no se envía nada (ni texto ni fotos); si ya lo tiene, ni se llama al modelo. Tras `handoff_to_human` solo sale la despedida.
 - **Selección**: con varias opciones ya mostradas, al carrito solo entra la que el cliente señaló (respondió a su foto, dijo la posición, la referencia o un nombre inequívoco). "Quiero este" sin señal => `CHOICE_REQUIRED` y el agente pregunta.
 - **Fotos**: por la URL pública del catálogo publicado, en JPEG, sin ids internos; cada una queda registrada con su wamid para poder citarla.
@@ -213,6 +217,12 @@ similar_products(referencia) -> misma categoría primero, sin el producto base
 
 Sin coincidencia con todas las palabras, se relaja a "alguna" y se marca `relaxed`
 (los filtros nunca se relajan). Sin la migración, se usa la búsqueda anterior.
+
+**Hombre / Mujer** (solo en negocios cuya tienda separa los dos lados, como Delacour; sin migración nueva). El runtime lee UNA vez por turno las referencias de hombre
+(`lib/catalogo/genero-negocio.ts`: la tienda separa + migración 20261215 + hay piezas, y nunca lanza) y, solo entonces, declara el parámetro `genero` en `search_products` y
+`get_catalog_link`. `genero = mujer` excluye esas piezas en la búsqueda SQL (`p_excluir`); `genero = hombre` busca **en memoria** sobre ellas (`lib/catalogo/busqueda-local.ts`: las mismas reglas
+que la función SQL; una prueba compara las dos). Texto como «qué tienen para él» o «joyas para hombre» trae todo lo de ese lado. El cursor (`lastSearch.gender`, opcional) mantiene el lado en
+«muéstrame más»; `similar_products` usa siempre el lado de la pieza base; cada pieza trae `para`. En cualquier otro negocio las declaraciones al modelo son **idénticas byte a byte** a las de antes.
 
 ## Flujo de fotos y respuesta a una foto
 

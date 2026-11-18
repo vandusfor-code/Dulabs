@@ -504,6 +504,10 @@ lib/catalogo/clientes/eliminar-b35.test.ts
 lib/agente/formato-whatsapp.test.ts
 lib/agente/agente-meta-contexto.test.ts
 lib/agente/agente-busqueda.test.ts
+lib/agente/agente-genero.test.ts
+lib/agente/agente-presupuesto.test.ts
+lib/agente/agente-verificacion-sql.pglite.test.ts
+scripts/eval/presupuesto.test.ts
 lib/agente/agente-buzon.test.ts
 lib/agente/agente-etapa.test.ts
 lib/agente/agente-trazas.test.ts
@@ -734,6 +738,7 @@ components/admin/cliente/SeccionCobro.dom.test.tsx
 # color en app/globals.css (paleta de la clienta, contrastes, solo colores), el HTML del servidor (selector, portada, migas, ficha, franja «Para él» y la referencia DL- sobre cada foto), lo que hace el cliente
 # (señal del tema, selector de la cabecera y del menú, filtros que conservan el lado) y el panel (formulario, lista y la página real con las rutas reales).
 lib/catalogo/genero.test.ts
+lib/catalogo/busqueda-local.test.ts
 lib/catalogo/genero-servicio.test.ts
 lib/catalogo/genero-sql.pglite.test.ts
 lib/catalogo/genero-provisioning.pglite.test.ts

@@ -258,6 +258,76 @@ describe("GeminiProvider: transporte, errores y secretos", () => {
     assert.equal(geminiHttpError(418, null).detail.providerCode, undefined);
   });
 
+  describe("sin saldo / cupo agotado (quota) vs. pico de peticiones (rate_limit)", () => {
+    const cuerpo = (message: string, details?: unknown[]) => ({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message, ...(details ? { details } : {}) } });
+
+    it("crédito prepagado agotado (la frase real de Google) => quota: persistente, SIN reintento y sistémico", () => {
+      const e = geminiHttpError(429, cuerpo("Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing."));
+      assert.equal(e.kind, "quota");
+      assert.equal(e.retryable, false);
+      assert.equal(e.systemic, true);
+      assert.equal(e.detail.httpStatus, 429);
+      assert.equal(e.detail.providerCode, "RESOURCE_EXHAUSTED");
+      assert.doesNotMatch(e.message, /prepayment|AI Studio|projects/i, "el mensaje de Google no entra al error");
+    });
+
+    it("402 (pago requerido), tope de gasto, fondos insuficientes y cupo con límite 0 => quota", () => {
+      assert.equal(geminiHttpError(402, null).kind, "quota");
+      for (const m of ["Your project has exceeded its spending cap.", "Insufficient credits to run this request.", "Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0"]) {
+        assert.equal(geminiHttpError(429, cuerpo(m)).kind, "quota", m);
+      }
+    });
+
+    it("cupo DIARIO (quotaId …PerDay…) o con valor 0 en los detalles => quota", () => {
+      const violacion = (quotaId: string, quotaValue = "250") => [{ "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaMetric: "x", quotaId, quotaValue }] }, { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "17s" }];
+      assert.equal(geminiHttpError(429, cuerpo("You exceeded your current quota.", violacion("GenerateRequestsPerDayPerProjectPerModel-FreeTier"))).kind, "quota");
+      assert.equal(geminiHttpError(429, cuerpo("You exceeded your current quota.", violacion("GenerateRequestsPerDayPerProjectPerModel"))).kind, "quota");
+      assert.equal(geminiHttpError(429, cuerpo("You exceeded your current quota.", violacion("GenerateContentInputTokensPerModelPerMinute", "0"))).kind, "quota");
+    });
+
+    it("un 429 de pico por minuto o sin detalles SIGUE siendo rate_limit: se reintenta y no es sistémico", () => {
+      const pico = [{ "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaMetric: "x", quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier", quotaValue: "10" }] }];
+      for (const body of [
+        cuerpo("You exceeded your current quota, please check your plan and billing details.", pico), // frase genérica: NO basta con "quota"/"billing"
+        cuerpo("Resource has been exhausted (e.g. check quota)."),
+        cuerpo("Too many requests"),
+        null,
+        "texto que no es JSON",
+        { error: null },
+      ]) {
+        const e = geminiHttpError(429, body);
+        assert.equal(e.kind, "rate_limit");
+        assert.equal(e.retryable, true);
+        assert.equal(e.systemic, false);
+      }
+    });
+
+    it("sistémicas = quota, auth y config; transitorias y de petición NO", () => {
+      const sistemicas = ["quota", "auth", "config"] as const;
+      const resto = ["rate_limit", "timeout", "server", "network", "invalid_request", "safety_blocked", "invalid_response", "unknown"] as const;
+      for (const k of sistemicas) assert.equal(new AIProviderError(k, "gemini").systemic, true, k);
+      for (const k of resto) assert.equal(new AIProviderError(k, "gemini").systemic, false, k);
+      assert.equal(new AIProviderError("quota", "gemini").retryable, false);
+    });
+
+    it("quota no se reintenta (una sola llamada), a diferencia de rate_limit", async () => {
+      const p = createSimulatedProvider([{ error: new AIProviderError("quota", "gemini") }, { text: "no debería llegar" }]);
+      await assert.rejects(generateWithRetry(p, baseReq(), { deadlineAt: 60_000, now: () => 0, sleep: async () => {}, random: () => 0 }), (e: AIProviderError) => e.kind === "quota");
+      assert.equal(p.requests.length, 1);
+    });
+
+    it("de punta a punta con el transporte: el cuerpo real de Google llega como quota, sin la key ni el mensaje", async () => {
+      const f = fakeFetch(() => json(429, cuerpo(`Your prepayment credits are depleted (${KEY}).`)));
+      const p = createGeminiProvider({ apiKey: KEY, fetchImpl: f.impl });
+      await assert.rejects(p.generate(baseReq()), (e: AIProviderError) => {
+        assert.equal(e.kind, "quota");
+        assert.doesNotMatch(e.message, new RegExp(KEY));
+        return true;
+      });
+      assert.equal(f.calls.length, 1, "una sola petición");
+    });
+  });
+
   it("red caída => network; se excede el timeout => timeout", async () => {
     const caida = createGeminiProvider({
       apiKey: KEY,

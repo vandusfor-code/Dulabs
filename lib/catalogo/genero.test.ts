@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { GENEROS, productCreateSchema, productListQuerySchema, productUpdateSchema } from "@/lib/catalogo/domain";
 import { SIN_FILTROS, cumpleFiltros, hayFiltros, leerFiltros, paramsDeFiltros, soloUnaCategoria, textoDeFiltros, filtrosDeTexto, urlFiltros } from "@/lib/catalogo/filtros";
-import { ATRIBUTO_TEMA_GENERO, claveDeReferencia, conjuntoDeHombres, esGenero, generoDe, generoDeParam, hrefDeGenero, hrefListadoDeGenero, referenciaDeRuta, temaDeHombre } from "@/lib/catalogo/genero";
+import { ATRIBUTO_TEMA_GENERO, claveDeReferencia, conjuntoDeHombres, esGenero, generoDe, generoDeParam, hrefDeGenero, hrefListadoDeGenero, referenciaDeRuta, temaDeHombre, textoSinGenero } from "@/lib/catalogo/genero";
 import { esListado, esListadoDeUrl } from "@/lib/catalogo/inicio";
 import { generoDeLaTienda } from "@/lib/catalogo/joyeria";
 import { storefrontConfigFor } from "@/lib/catalogo/vitrina";
@@ -175,5 +175,25 @@ describe("los esquemas de la API", () => {
     const mal = productListQuerySchema.safeParse({ genero: "otro" });
     assert.equal(mal.success, false);
     assert.match(mal.error!.issues[0].message, /Para no es válido/);
+  });
+});
+
+describe("el texto de una búsqueda ya filtrada por género (agente de WhatsApp)", () => {
+  it("quita lo que solo repite el filtro (y las palabras vacías) y deja lo que describe la pieza", () => {
+    assert.equal(textoSinGenero("dijes para hombre"), "dijes");
+    assert.equal(textoSinGenero("Anillo de acero para caballero"), "anillo acero");
+    assert.equal(textoSinGenero("collar para mi mamá, mujer"), "collar mama");
+    assert.equal(textoSinGenero("aretes dorados femeninos"), "aretes dorados");
+  });
+
+  it("si no queda nada que describa una pieza, queda vacío: se muestra TODO lo de ese lado", () => {
+    for (const t of ["hombre", "para hombre", "joyas para hombre", "un regalo para él", "piezas masculinas", "qué tienen para mujer", "quiero ver todo para ella", "Regalos", "", "   "]) {
+      assert.equal(textoSinGenero(t), "", JSON.stringify(t));
+    }
+  });
+
+  it("no toca lo que no es de género: «hombrera» se conserva y los acentos se normalizan", () => {
+    assert.equal(textoSinGenero("hombrera de acero"), "hombrera acero");
+    assert.equal(textoSinGenero("cadena Ñandú"), "cadena ñandu");
   });
 });

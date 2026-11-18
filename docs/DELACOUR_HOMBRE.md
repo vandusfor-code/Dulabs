@@ -109,7 +109,7 @@ medias si una guarda falla.
 
 ## 6. Lo que NO cambia
 
-Precios, carrito, pedidos, stock, mayoristas y el agente de WhatsApp. La **referencia `DL-…` sigue sobre cada foto** (tarjetas del listado, de la franja «Para él» y galería de la ficha: el módulo
+Precios, carrito, pedidos, stock y mayoristas (el agente de WhatsApp tampoco cambia sus precios ni sus pedidos; lo único nuevo es que distingue Hombre y Mujer al recomendar: §10). La **referencia `DL-…` sigue sobre cada foto** (tarjetas del listado, de la franja «Para él» y galería de la ficha: el módulo
 `marca_referencia`) y debajo del nombre, para que el cliente o el bot puedan identificar la pieza; las pruebas lo comprueban en cada sitio donde se dibuja una pieza de hombre. Las fotos de la franja
 «Para él» se cargan al acercarse (no le quitan prioridad de carga a la portada).
 
@@ -119,7 +119,7 @@ Precios, carrito, pedidos, stock, mayoristas y el agente de WhatsApp. La **refer
 - **Stock 15 por pieza** en las 76 (provisional; la clienta lo ajusta).
 - **Videos de hombre:** el sistema no trae ninguno incrustado: se suben desde Tienda → Fotos y videos → Hombre. Hoy hay 5 videos de PRUEBA publicados (13-nov-2026): clips de stock de Pexels (licencia de Pexels: uso comercial libre, sin atribución obligatoria) — «A Man Holding His Gold Necklace» (id 9731938) y «Close-up of a Silver Necklace» (id 6620872) —, recortados a las medidas del panel (portada y colección en horizontal y vertical, y marca), de 7 a 9 s, sin sonido y con el final fundido con el principio para que el bucle no dé un salto. La clienta los reemplaza por los suyos cuando los tenga; si quita uno, ese bloque deja de dibujarse. (Los primeros videos de prueba eran fotos animadas, no video real, y se reemplazaron el mismo día; si se hacen otros con fotos de Vértice, ojo: traen etiquetas de medida incrustadas («2.0 cm», «4 cm») y el panel pide videos sin texto.)
 - Pendientes, a decidir con la clienta: la **segunda marca «Orus»** («Delacour & Orus», relanzamiento: el código hoy tiene un solo nombre de colección para el lado de hombre); las **sublíneas de hombre**
-  que saldrían de Plata y Acero; una columna **«Para» en la Carga masiva**; que el **agente de WhatsApp** distinga hombre y mujer al recomendar; y que el menú lateral, en el lado de hombre, ofrezca solo las
+  que saldrían de Plata y Acero; una columna **«Para» en la Carga masiva**; y que el menú lateral, en el lado de hombre, ofrezca solo las
   categorías que tengan piezas de hombre (hoy ofrece todas).
 
 ## 8. Pruebas
@@ -150,3 +150,7 @@ Todas están en `scripts/test-flow-manifest.txt`.
 - Devolver las 76 a mujer: `08_marcar_vertice_como_hombre.reversa.sql`. Sin piezas de hombre activas la tienda vuelve a ser la de siempre, sin tocar código.
 - Apagarlo para siempre en el código: quitar `genero` de `delacour.joyeria` en `lib/catalogo/vitrina.ts`.
 - Quitar la columna: `supabase/rollbacks/20261215000000_dulabs_catalogo_genero.down.sql` (después de devolver las piezas a mujer).
+
+## 10. El agente de WhatsApp
+
+El agente de la joyería también respeta los dos lados (sin migración nueva): si el cliente dice para quién es («un anillo para mi novio», «algo para ella»), la búsqueda trae solo piezas de ese lado, «muéstrame más» sigue en el mismo lado, lo parecido a una pieza es siempre de su mismo lado y puede mandar el enlace de la colección de hombre (`?genero=hombre`). Sin esa información (el cliente no dijo para quién es) busca en toda la tienda, como siempre. Solo aplica a los negocios cuya tienda separa Hombre y Mujer: los demás ven exactamente las mismas herramientas de siempre. Detalle, pruebas y lo que falta validar con el modelo real: [`docs/AGENTE_JOYERIA.md`](AGENTE_JOYERIA.md) §6 y §7.

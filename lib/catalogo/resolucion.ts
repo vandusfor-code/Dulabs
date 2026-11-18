@@ -26,7 +26,9 @@
  * Todas reciben el `tenantId` del backend autenticado: una referencia de
  * otro negocio simplemente NO existe para este.
  */
-import { availabilityOf, isReference, maxOrderableUnits, normalizeSearch, type Availability, type CatalogProduct, type PriceContext, type ProductStatus } from "@/lib/catalogo/domain";
+import { availabilityOf, isReference, maxOrderableUnits, normalizeSearch, type Availability, type CatalogProduct, type Genero, type PriceContext, type ProductStatus } from "@/lib/catalogo/domain";
+import { buscarEnPiezas } from "@/lib/catalogo/busqueda-local";
+import { textoSinGenero } from "@/lib/catalogo/genero";
 import { normalizeText } from "@/lib/catalogo/import/analisis";
 import { precioQueRige, type OfertaDePrecio } from "@/lib/catalogo/precios";
 import { normalizeOrderItems, prepareOrder, type OrderItem, type PreparedOrder, type ResolvedOrderProduct } from "@/lib/catalogo/pedido";
@@ -114,6 +116,13 @@ export interface CatalogSearchInput {
   exclude?: readonly string[];
   /** Forzar modo; sin él: primero todas las palabras y, si no hay nada, alguna ("relaxed"). */
   mode?: "all" | "any";
+  /**
+   * Solo en tiendas que separan Hombre y Mujer: para quién es lo que se busca. Solo cuenta si TAMBIÉN llega `hombres` (las referencias de hombre del negocio, que trae quien llama:
+   * ver genero-negocio.ts). «mujer» = todo menos esas piezas (la búsqueda SQL de siempre, con `exclude`); «hombre» = solo esas piezas (búsqueda local: son pocas y conocidas).
+   * Con género, las palabras que solo repiten el filtro («para hombre») o no describen nada («joyas») no buscan: ver `textoSinGenero`. Sin `hombres` se ignora.
+   */
+  gender?: Genero | null;
+  hombres?: ReadonlySet<string> | null;
 }
 
 export interface CatalogSearchResult {
@@ -128,6 +137,8 @@ export interface CatalogSearchResult {
 
 export const SEARCH_PAGE_MAX = 20;
 export const SEARCH_OFFSET_MAX = 200;
+/** Referencias por consulta al leer las piezas de hombre (la dirección de PostgREST lleva todas: lotes cortos). */
+const LOTE_HOMBRES = 100;
 
 export interface ResolvedOrder {
   channel: PriceContext;
@@ -192,6 +203,34 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
         image: storagePath ? { storagePath, url: repo.publicUrl(storagePath) } : null,
       };
     });
+  }
+
+  /**
+   * «Solo lo de hombre»: las piezas de hombre son pocas y se conocen por su lista de referencias, así que se leen por lotes y se buscan AQUÍ con las mismas reglas que la
+   * búsqueda SQL (busqueda-local.ts): texto, filtros, precio del canal, orden y «relajar» a alguna palabra. El total y la paginación son los de esta lista.
+   */
+  async function buscarSoloHombres(tenantId: string, input: CatalogSearchInput, text: string, offset: number, limit: number, hombres: ReadonlySet<string>): Promise<CatalogSearchResult> {
+    const referencias = [...hombres];
+    const piezas: CatalogProduct[] = [];
+    for (let i = 0; i < referencias.length; i += LOTE_HOMBRES) piezas.push(...(await repo.getProductsByReferences(tenantId, referencias.slice(i, i + LOTE_HOMBRES))));
+    const filtros = {
+      channel: input.channel,
+      category: input.category ?? null,
+      color: input.color ?? null,
+      material: input.material ?? null,
+      categoryId: input.categoryId ?? null,
+      maxPrice: input.maxPrice ?? null,
+      exclude: input.exclude ?? [],
+    };
+    let ordenadas = buscarEnPiezas(piezas, { text, mode: input.mode ?? "all", ...filtros });
+    let relaxed = false;
+    if (ordenadas.length === 0 && !input.mode && offset === 0 && text.split(" ").length > 1) {
+      ordenadas = buscarEnPiezas(piezas, { text, mode: "any", ...filtros });
+      relaxed = ordenadas.length > 0;
+    }
+    const porReferencia = new Map(piezas.map((p) => [p.reference, p]));
+    const pagina = ordenadas.slice(offset, offset + limit).flatMap((r) => porReferencia.get(r) ?? []);
+    return { candidates: await resolverProductos(tenantId, pagina), total: ordenadas.length, offset, relaxed, indexed: true };
   }
 
   return {
@@ -281,8 +320,13 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
         const candidates = r ? [r] : [];
         return { candidates, total: candidates.length, offset, relaxed: false, indexed: true };
       }
+      // Género (solo con las piezas de hombre a la mano): hombre = búsqueda local sobre esas piezas; mujer = la de siempre sin ellas.
+      const hombres = input.gender && input.hombres ? input.hombres : null;
+      const genero = hombres ? (input.gender ?? null) : null;
+      const textoBuscado = genero ? textoSinGenero(text) : text;
+      if (genero === "hombre" && hombres) return buscarSoloHombres(tenantId, input, textoBuscado, offset, limit, hombres);
       const query = {
-        text,
+        text: textoBuscado,
         channel: input.channel,
         limit,
         offset,
@@ -291,16 +335,18 @@ export function createResolucionCatalogo({ repo }: { repo: CatalogRepository }) 
         material: input.material ?? null,
         categoryId: input.categoryId ?? null,
         maxPrice: input.maxPrice ?? null,
-        exclude: input.exclude ?? [],
+        exclude: genero === "mujer" && hombres ? [...new Set([...(input.exclude ?? []), ...hombres])] : (input.exclude ?? []),
       };
       let relaxed = false;
       let page = await repo.searchCatalog(tenantId, { ...query, mode: input.mode ?? "all" });
       if (page === null) {
         // Sin la migración de búsqueda: la búsqueda anterior (el nombre contiene el texto), sin filtros en BD.
-        const { items, total } = await repo.listProducts(tenantId, { status: "ACTIVE", search: text || undefined, offset, limit });
-        return { candidates: await resolverProductos(tenantId, items), total, offset, relaxed: false, indexed: false };
+        const { items, total } = await repo.listProducts(tenantId, { status: "ACTIVE", search: textoBuscado || undefined, offset, limit });
+        // (Esta base no puede tener la columna de género sin la búsqueda; por si acaso, «mujer» deja fuera las piezas de hombre de esta página.)
+        const visibles = genero === "mujer" && hombres ? items.filter((p) => !hombres.has(p.reference.toUpperCase())) : items;
+        return { candidates: await resolverProductos(tenantId, visibles), total, offset, relaxed: false, indexed: false };
       }
-      if (page.total === 0 && !input.mode && offset === 0 && text.split(" ").length > 1) {
+      if (page.total === 0 && !input.mode && offset === 0 && textoBuscado.split(" ").length > 1) {
         page = (await repo.searchCatalog(tenantId, { ...query, mode: "any" })) ?? page;
         relaxed = page.total > 0;
       }

@@ -504,6 +504,67 @@ describe("handoff, fotos, límites y fallos", () => {
     assert.equal(sent.at(-1), FALLBACK_MESSAGES.handoff);
   });
 
+  describe("21 bis. proveedor sin saldo o con credencial inválida (falla SISTÉMICA): asesora de una vez, sin pedirle al cliente que reintente", () => {
+    const sinSaldo = () => new AIProviderError("quota", "gemini", { httpStatus: 429, providerCode: "RESOURCE_EXHAUSTED" });
+
+    it("sin saldo (quota) => asesora YA en el primer mensaje, con el mensaje fijo, una sola llamada y la causa en la traza", async () => {
+      const r = await turno([{ error: sinSaldo() }, { text: "no debería llegar" }], "hola, busco unos aretes");
+      assert.equal(r.outcome, "handoff");
+      assert.equal(r.trace.error_kind, "quota");
+      assert.equal(r.trace.retries, 0, "no se reintenta: reintentar no devuelve el saldo");
+      assert.equal(r.provider.requests.length, 1);
+      assert.deepEqual(pausas, [CLIENTE]);
+      assert.deepEqual(sent, [FALLBACK_MESSAGES.handoff]);
+      assert.deepEqual(r.trace.handoff, { source: "system", motive: "repeated_failures" });
+    });
+
+    it("credencial inválida (auth) => igual: asesora de una vez", async () => {
+      const r = await turno([{ error: new AIProviderError("auth", "gemini", { httpStatus: 403 }) }], "hola");
+      assert.equal(r.outcome, "handoff");
+      assert.equal(r.trace.error_kind, "auth");
+      assert.deepEqual(pausas, [CLIENTE]);
+      assert.deepEqual(sent, [FALLBACK_MESSAGES.handoff]);
+    });
+
+    it("la falla llega a mitad del turno (ya hubo una consulta al catálogo) => también asesora; la consulta queda en la traza", async () => {
+      const r = await turno([call("search_products", { query: "anillo" }), { error: sinSaldo() }], "anillos");
+      assert.equal(r.outcome, "handoff");
+      assert.equal(r.trace.tool_calls[0]?.name, "search_products");
+      assert.equal(r.trace.error_kind, "quota");
+      assert.deepEqual(sent, [FALLBACK_MESSAGES.handoff]);
+    });
+
+    it("una falla TRANSITORIA (server) no pasa de una vez: primero el mensaje técnico para que el cliente reintente", async () => {
+      const r = await turno([{ error: new AIProviderError("server", "gemini") }, { error: new AIProviderError("server", "gemini") }], "hola");
+      assert.equal(r.outcome, "fallback");
+      assert.deepEqual(pausas, []);
+      assert.deepEqual(sent, [FALLBACK_MESSAGES.technical]);
+    });
+
+    it("sin saldo y el traspaso NO se pudo registrar => no se promete una asesora: mensaje técnico y la causa sigue en la traza", async () => {
+      const sinPausa = createOrderEngine({
+        orders: pedidos,
+        catalog: mem.repo,
+        key: Buffer.alloc(32, 3),
+        sink: memoryOrderEventSink(),
+        log: () => {},
+        now: () => new Date(reloj),
+        handoff: { pauseConversation: async () => ({ ok: false }) },
+      });
+      const r = await turno([{ error: sinSaldo() }], "hola", { tools: { engine: sinPausa } });
+      assert.equal(r.outcome, "fallback");
+      assert.deepEqual(sent, [FALLBACK_MESSAGES.technical]);
+      assert.equal(r.trace.error_kind, "quota");
+      assert.deepEqual(pausas, []);
+    });
+
+    it("la traza y el mensaje no llevan el cuerpo de Google, la clave ni el texto del cliente", async () => {
+      const r = await turno([{ error: sinSaldo() }], "mi número es 3001234567 y mi clave es secreta123");
+      const salida = JSON.stringify({ trace: r.trace, sent });
+      assert.doesNotMatch(salida, /secreta123|prepayment|AI Studio/i);
+    });
+  });
+
   it("22. respuesta inválida del modelo o bloqueada por seguridad => mensajes fijos", async () => {
     assert.equal((await turno([{ finish: "invalid_output" }], "hola")).outcome, "fallback");
     const s = await turno([{ finish: "safety" }], "algo indebido");

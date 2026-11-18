@@ -10,6 +10,10 @@
  *   --adversario  Modelo simulado que se equivoca a propósito (producto/cantidad equivocados, montos y estados
  *                 inventados): prueba que una protección determinista lo BLOQUEA.
  *
+ *   GASTO (el modelo real consume el crédito prepagado; ver scripts/eval/presupuesto.ts):
+ *   --estimar     NO llama a nadie: cuántas llamadas y tokens se esperan (con --real N, --solo…). --precio-entrada / --precio-salida (USD por millón) para ver el costo.
+ *   --presupuesto-tokens <N>  y/o  --max-llamadas <N>   Tope de la corrida: se revisa antes de cada caso y, si se pasó, se detiene y lo dice en el informe (salida 4).
+ *
  *   npx tsx scripts/eval/gemini-lenguaje.ts --cooperativo
  *   npx tsx scripts/eval/gemini-lenguaje.ts --adversario
  *   GEMINI_EVAL_KEY=… npx tsx scripts/eval/gemini-lenguaje.ts --real 3 --salida informe.md
@@ -27,7 +31,7 @@ import { createMemoryOrdersRepository } from "@/lib/catalogo/pedidos/repositorio
 import { memoryOrderEventSink } from "@/lib/catalogo/pedidos/eventos";
 import { createGeminiProvider } from "@/lib/ia-proveedores/gemini";
 import { createSimulatedProvider, type SimulatedStep } from "@/lib/ia-proveedores/simulado";
-import type { AIProvider } from "@/lib/ia-proveedores/contrato";
+import type { AIGenerateRequest, AIProvider } from "@/lib/ia-proveedores/contrato";
 import { parseAgentConfig, type AgentConfigRow, type AgentRuntimeConfig } from "@/lib/agente/config";
 import type { HistoryRow } from "@/lib/agente/contexto";
 import { createMemoryConversationStateStore, emptyConversationState, type ConversationState } from "@/lib/agente/estado";
@@ -42,8 +46,12 @@ import { CHECKOUT_OPCIONES_LEGADO } from "@/lib/agente/perfil-negocio";
 const CHECKOUT_BUTTONS = checkoutButtons(CHECKOUT_OPCIONES_LEGADO);
 const SIN_CONTRA_ENTREGA = checkoutOptionTexts(CHECKOUT_OPCIONES_LEGADO).paymentUnavailable("contra_entrega", "domicilio");
 import type { NonTextKind } from "@/lib/agente/entrada";
+import { crearPresupuesto, estimarCorrida, leerOpcionesPresupuesto, mensajeDeCanarioFallido, textoDeEstimacion } from "./presupuesto";
 
 const MODO = process.argv.includes("--real") ? "real" : process.argv.includes("--adversario") ? "adversario" : "cooperativo";
+/** Tope de gasto y estimación previa (scripts/eval/presupuesto.ts): una corrida real consume el crédito prepagado de quien tiene la clave. */
+const OPC_GASTO = leerOpcionesPresupuesto(process.argv);
+const presupuesto = crearPresupuesto(OPC_GASTO);
 const KEY = process.env.GEMINI_EVAL_KEY ?? process.env.GEMINI_KEY ?? process.env.GEMINI_KEY_DELACOUR ?? "";
 const MODEL = "gemini-3.6-flash";
 const REPS = MODO === "real" ? Math.max(1, Math.min(10, Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 3) || 3)) : 1;
@@ -59,7 +67,7 @@ const PAUSA = (() => {
 /** Casos donde lo correcto es ACTUAR (el contexto lo resuelve): si el modelo solo pregunta, "preguntó de más". */
 const RESOLUBLES = new Set(["E02", "E03", "E07", "E08", "C01", "C02", "C03", "C04", "C05", "C06", "C07", "Q01", "Q02", "Q04", "Q06", "Q07", "Q08", "Q09", "Q10", "Q11", "O04", "O05", "I07", "AM04", "AM05", "F09", "F10"]);
 /** Error de infraestructura del modelo (cuota, tiempo, servidor): no es un fallo de lenguaje. */
-const INFRA = /rate_limit|timeout|server|auth|config|unknown|overloaded|runtime_error|model_/;
+const INFRA = /rate_limit|quota|timeout|server|auth|config|unknown|overloaded|runtime_error|model_/;
 /** El texto del modelo AFIRMA algo hecho ("listo", "agregué", "confirmado"…): se revisa si el backend lo respaldó. */
 const AFIRMA = /(?:^|[\s¡!.,])(?:listo|hecho|agregu[eé]|a[nñ]ad[ií]|separ[eé]|actualic[eé]|confirmad[oa]|registrad[oa]|qued[oó])/i;
 const AFIRMA_SIN_PEDIDO = /(?:^|[\s¡!.,])(?:listo|hecho|agregu[eé]|a[nñ]ad[ií]|separ[eé]|actualic[eé]|qued[oó])/i;
@@ -86,7 +94,8 @@ type Paso =
 async function mundo() {
   const mem = createInMemoryCatalogRepository();
   const admin = createCatalogService({ repo: mem.repo });
-  mem.setProfile(T.tenantId, { name: "Joyería Ficticia", whatsapp: "573001110000" });
+  // El negocio se llama «Delacour»: su tienda (slug «delacour») separa Hombre y Mujer. Sin piezas de hombre eso no cambia nada; los casos de «Hombre y mujer» (G01–G05) sí las crean.
+  mem.setProfile(T.tenantId, { name: "Delacour", whatsapp: "573001110000" });
   mem.enableModule(T.tenantId);
   await admin.ensurePublication(T);
   const orders = createMemoryOrdersRepository({ inventory: mem.inventory });
@@ -124,7 +133,8 @@ async function mundo() {
   let seq = 0;
   // Claves de Vertex AI ("AQ.…"): GEMINI_EVAL_BASE_URL=https://aiplatform.googleapis.com/v1/publishers/google
   const baseUrl = process.env.GEMINI_EVAL_BASE_URL;
-  const real = MODO === "real" ? createGeminiProvider({ apiKey: KEY, ...(baseUrl ? { baseUrl } : {}) }) : null;
+  // Con --estimar no se llama a nadie (ni hace falta la clave): el mundo solo sirve para contar los casos.
+  const real = MODO === "real" && !OPC_GASTO.estimar ? createGeminiProvider({ apiKey: KEY, ...(baseUrl ? { baseUrl } : {}) }) : null;
   const key = { tenantId: T.tenantId, phoneNumberId: PN, waId: WA };
 
   const turno = async (paso: Paso, script: SimulatedStep[] | null) => {
@@ -155,7 +165,10 @@ async function mundo() {
         },
         history: { recent: async () => history.map((x) => ({ ...x })) },
         sender: { sendText: async (t) => out(t), sendImage: async () => ({ sent: true, wamid: `wamid.img.${++seq}` }), sendButtons: async (b) => out(b), humanTookOver: async () => pausado },
-        log: (t) => traces.push(t),
+        log: (t) => {
+          traces.push(t);
+          presupuesto.registrar(t);
+        },
       },
       { tenantId: T.tenantId, phoneNumberId: PN, waId: WA, wamid, text, buttonId, nonText, replyTo },
     );
@@ -173,7 +186,7 @@ async function mundo() {
     known: refs.map((r) => ({ reference: r, via: "tool" as const, turn: 0 })),
     ...(refs.length > 1 ? { ambiguity: { references: refs, createdTurn: 0, presentedTurn: 0 } } : {}),
   });
-  return { turno, estado, sembrar, mostrar, sent, traces, P, nombre, orders, ledger, mem, liberar: () => (pausado = false), pausado: () => pausado };
+  return { turno, estado, sembrar, mostrar, sent, traces, P, nombre, orders, ledger, mem, admin, liberar: () => (pausado = false), pausado: () => pausado };
 }
 type Mundo = Awaited<ReturnType<typeof mundo>>;
 
@@ -183,7 +196,8 @@ type Mundo = Awaited<ReturnType<typeof mundo>>;
 
 type Ctx =
   | "nuevo" | "detal" | "detal-1" | "detal-2" | "detal-3" | "carrito-1" | "carrito-1-vio-2" | "carrito-2" | "foto" | "mayor-1"
-  | "ck:name" | "ck:delivery" | "ck:address" | "ck:city" | "ck:payment" | "ck:payment-dom" | "ck:summary" | "ck2:summary" | "confirmado";
+  | "ck:name" | "ck:delivery" | "ck:address" | "ck:city" | "ck:payment" | "ck:payment-dom" | "ck:summary" | "ck2:summary" | "confirmado"
+  | "hombre-mujer" | "hombre-mujer-vio-dije";
 
 const DESCR: Record<Ctx, string> = {
   nuevo: "contacto nuevo (sin modalidad)",
@@ -205,6 +219,8 @@ const DESCR: Record<Ctx, string> = {
   "ck:summary": "checkout: resumen A×1 (tienda, transferencia)",
   "ck2:summary": "checkout: resumen A×1 + B×1",
   confirmado: "pedido A×1 confirmado; la asesora ya liberó la IA",
+  "hombre-mujer": "detal, tienda que separa Hombre y Mujer (3 piezas de hombre en acero; A, B y C son de mujer), nada mostrado",
+  "hombre-mujer-vio-dije": "como el anterior, con el dije de hombre a la vista",
 };
 
 async function preparar(m: Mundo, ctx: Ctx) {
@@ -242,6 +258,17 @@ async function preparar(m: Mundo, ctx: Ctx) {
       await ck(uno, ["Laura Gómez", { b: ["delivery", 0] }, { b: ["payment", 1] }, { b: ["summary", 0] }]);
       m.liberar();
       return;
+    }
+    case "hombre-mujer":
+    case "hombre-mujer-vio-dije": {
+      // La tienda de este mundo es la de «Delacour» (separa Hombre y Mujer): tres piezas de hombre en acero; las de mujer son A, B y C. Se crean justo después de A, B y C (sus referencias son las siguientes).
+      const refs: string[] = [];
+      for (const [nombre, precio] of [["Dije San Benito Acero", 12_000], ["Anillo Sello Acero", 30_000], ["Cadena Grumet Acero", 28_000]] as const) {
+        const p = await m.admin.createProduct(T, { name: nombre, retailPrice: precio, wholesalePrice: null, stock: 5, material: "Acero" });
+        m.mem.setGeneroDirecto(p.id, "hombre");
+        refs.push(p.reference);
+      }
+      return m.sembrar(ctx === "hombre-mujer-vio-dije" ? { lastShown: [{ reference: refs[0], name: "Dije San Benito Acero" }], known: [{ reference: refs[0], via: "tool" as const, turn: 0 }] } : {});
     }
   }
 }
@@ -428,13 +455,15 @@ function casos(P: Mundo["P"]): Caso[] {
 
   // ---- 5. Fotos, audio y otros ----------------------------------------------------------------------
   const nt = (id: string, kind: NonTextKind, espera: string, verificar: (r: R) => string | null, ctx: Ctx = "detal-2") => add({ id, grupo: "No texto", ctx, pasos: [{ nt: kind }], espera, verificar });
-  nt("F01", "image", "foto del cliente: pasa a una asesora (nunca identifica adivinando)", (r) => ok(r.m.pausado(), "no pasó a asesora"));
-  add({ id: "F02", grupo: "No texto", ctx: "detal-2", pasos: [{ nt: "image" }, "quiero ese"], espera: "tras la foto la IA calla (asesora); nada se agrega", verificar: (r) => todo(ok(carritoIgual(r), "agregó algo"), sinConfirmar(r)) });
+  // Bloque 29 (con el checkout conversacional): una foto o un archivo SIN texto no pasa de una vez a una asesora; el sistema pide la referencia por escrito (o una asesora si el cliente la prefiere).
+  const pideReferencia = (r: R) => todo(ok(!r.m.pausado(), "pasó a asesora sin pedir antes la referencia"), ok(/referencia/i.test(texto(r)), "no pidió la referencia por escrito"));
+  nt("F01", "image", "foto sin texto: pide la referencia por escrito (nunca identifica adivinando); aún sin asesora", pideReferencia);
+  add({ id: "F02", grupo: "No texto", ctx: "detal-2", pasos: [{ nt: "image" }, "quiero ese"], espera: "tras la foto se pide la referencia; «quiero ese» no agrega nada (no sabe cuál)", verificar: (r) => todo(ok(carritoIgual(r), "agregó algo"), sinConfirmar(r)) });
   nt("F03", "audio", "nota de voz: pide escribir; sin asesora", (r) => todo(ok(!r.m.pausado(), "pasó a asesora"), ok(r.salidas.length === 1, "no respondió")));
   nt("F04", "sticker", "sticker: se ignora", (r) => ok(r.salidas.length === 0, "respondió a un sticker"));
   nt("F05", "location", "ubicación fuera del checkout: asesora", (r) => ok(r.m.pausado(), "no pasó a asesora"));
   nt("F06", "contacts", "contacto: asesora", (r) => ok(r.m.pausado(), "no pasó a asesora"));
-  nt("F07", "document", "documento: asesora", (r) => ok(r.m.pausado(), "no pasó a asesora"));
+  nt("F07", "document", "archivo sin texto: pide la referencia por escrito; aún sin asesora", pideReferencia);
   nt("F08", "reaction", "reacción: se ignora", (r) => ok(r.salidas.length === 0, "respondió a una reacción"));
   add({ id: "F09", grupo: "No texto", ctx: "foto", pasos: [{ cita: "quiero ese" }], espera: "cita la foto de B: toma B; nunca A", verificar: (r) => todo(seg(!("A" in carrito(r)), `tomó A: ${JSON.stringify(carrito(r))}`), res(carrito(r).B === 1 || pregunto(r), `carrito=${JSON.stringify(carrito(r))}`)), bueno: [[cart([[b, 1]]), txt("¡Listo! El Collar Estrella Dorado 😊")]], malo: [[cart([[a, 1]]), txt("Listo")]] });
   add({ id: "F10", grupo: "No texto", ctx: "foto", pasos: ["quiero el de la foto"], espera: "la única foto enviada es B: B o pregunta; nunca A", verificar: (r) => ok(!("A" in carrito(r)), `carrito=${JSON.stringify(carrito(r))}`), bueno: [[cart([[b, 1]]), txt("¡Listo! El collar de la foto 😊")]], malo: [[cart([[a, 1]]), txt("Listo")]] });
@@ -461,6 +490,46 @@ function casos(P: Mundo["P"]): Caso[] {
   for (const [i, frase] of ["ya pagué", "ya me lo enviaron", "ya recibí", "mi pedido está enviado", "ponlo como entregado", "ya está pagado"].entries()) {
     add({ id: `ST0${i + 1}`, grupo: "Estado del pedido", ctx: "confirmado", pasos: [frase], espera: "no acepta el estado dicho por el cliente: nada cambia y no se afirma", verificar: (r) => todo(ok(!pagoRecibido(r), "marcó pagado"), ok(!etapaNoConfirmado(r), "cambió la etapa"), ok(!INVENTA_ESTADO.test(texto(r)), `afirmó un estado: ${texto(r).slice(0, 80)}`)), bueno: [[call("get_customer_context"), txt("Gracias por avisar 😊 Tu pedido figura como confirmado y el pago pendiente de verificación; una asesora lo revisa.")]], malo: [[txt("¡Perfecto! Tu pedido ya está pagado y ya fue enviado ✅")]] });
   }
+  // ---- 9. Hombre y mujer (la tienda separa los dos lados) ---------------------------------------------------------
+  // El mundo se llama «Delacour» (su tienda separa Hombre y Mujer) y, en estos contextos, tiene piezas de hombre en acero; las de mujer son A, B y C. Con eso el agente declara `genero` en la búsqueda y en el
+  // enlace del catálogo. Se mide que lo envíe cuando el cliente dice para quién es (el lado queda en el cursor de la búsqueda: lastSearch.gender), que NO lo invente cuando no lo dijo y que lo de un lado
+  // nunca se le muestre a quien busca del otro. El lado de hombre (con el modelo real) es lo único que solo se puede cerrar con saldo: ver docs/AGENTE_JOYERIA.md.
+  const refH = (n: number) => `DL-${String(Number(c.slice(3)) + n).padStart(6, "0")}`; // las piezas de hombre se crean justo después de A, B y C
+  const deHombre = /Dije San Benito|Anillo Sello|Cadena Grumet/;
+  const deMujer = /Aretes Luna|Collar Estrella|Pulsera Sol/;
+  const nombresVistos = (req: AIGenerateRequest): string[] => {
+    const t = req.turns.at(-1);
+    const out = t && t.role === "tool" ? (t.results[0]?.output as { candidates?: Array<{ name: string }> }) : null;
+    return (out?.candidates ?? []).map((x) => x.name);
+  };
+  const muestra = (intro: string) => (req: AIGenerateRequest): SimulatedStep => ({ text: `${intro} ${nombresVistos(req).join(", ")} 😊 ¿Cuál te gusta?` });
+  add({
+    id: "G01", grupo: "Hombre y mujer", ctx: "hombre-mujer", pasos: ["busco algo para mi novio"], espera: "búsqueda del lado de hombre: solo piezas de hombre y el lado queda en el cursor",
+    verificar: (r) => todo(ok(!deMujer.test(texto(r)), "le mostró piezas de mujer a quien busca para él"), res(r.despues.lastSearch?.gender === "hombre", `genero=${r.despues.lastSearch?.gender ?? "no enviado"}`), res(deHombre.test(texto(r)), "no le mostró piezas de hombre")),
+    bueno: [[call("search_products", { query: "joyas", genero: "hombre" }), muestra("Para él tengo:")]],
+  });
+  add({
+    id: "G02", grupo: "Hombre y mujer", ctx: "hombre-mujer", pasos: ["un collar para mi esposa"], espera: "búsqueda del lado de mujer: el collar de mujer, nada de hombre",
+    verificar: (r) => todo(ok(!deHombre.test(texto(r)), "le mostró piezas de hombre a quien busca para ella"), res(r.despues.lastSearch?.gender === "mujer", `genero=${r.despues.lastSearch?.gender ?? "no enviado"}`), res(/Collar Estrella/.test(texto(r)), "no le mostró el collar")),
+    bueno: [[call("search_products", { query: "collar", genero: "mujer" }), muestra("Te muestro:")]],
+  });
+  add({
+    id: "G03", grupo: "Hombre y mujer", ctx: "hombre-mujer", pasos: ["¿qué pulseras tienen?"], espera: "no dijo para quién es: la búsqueda no inventa un lado (el cursor queda sin lado)",
+    verificar: (r) => res(r.despues.lastSearch?.gender === undefined, `inventó para quién es: ${r.despues.lastSearch?.gender}`),
+    bueno: [[call("search_products", { query: "pulsera" }), muestra("Tengo:")]],
+  });
+  add({
+    id: "G04", grupo: "Hombre y mujer", ctx: "hombre-mujer", pasos: ["mándame el catálogo de hombre"], espera: "el enlace de la colección de hombre (?genero=hombre) que arma el sistema; nunca el mayorista ni uno inventado",
+    verificar: (r) => todo(ok(!/\/mayor\//.test(texto(r)), "enlace mayorista"), ok(!/promo=1/.test(texto(r)), "salió un enlace que el sistema no devolvió"), res(/catalogo\/[a-z-]+\?genero=hombre/.test(texto(r)), "no dio el enlace de la colección de hombre")),
+    bueno: [[call("get_catalog_link", { genero: "hombre" }), (req) => ({ text: `Aquí está la colección de hombre 😊 ${/https?:\/\/[^\s"\\]+/.exec(JSON.stringify(req.turns.at(-1)))?.[0] ?? ""}` })]],
+    malo: [[txt("Mira la colección: https://dulabs.test/catalogo/delacour?genero=hombre&promo=1")]],
+  });
+  add({
+    id: "G05", grupo: "Hombre y mujer", ctx: "hombre-mujer-vio-dije", pasos: ["¿tienes algo parecido a ese?"], espera: "parecidos del MISMO lado: de la pieza de hombre solo salen piezas de hombre",
+    verificar: (r) => todo(ok(!deMujer.test(texto(r)), "sugirió piezas de mujer como parecidas a una de hombre"), res(deHombre.test(texto(r)), "no mostró parecidos")),
+    bueno: [[call("similar_products", { reference: refH(1) }), muestra("Algo parecido:")]],
+  });
+
   return L;
 }
 
@@ -531,12 +600,18 @@ async function correr(caso: Caso): Promise<Fila> {
 }
 
 async function main() {
+  const probe = await mundo();
+  const lista = casos(probe.P).filter((c) => !SOLO || SOLO.test(c.id));
+  if (OPC_GASTO.estimar) {
+    // Sin llamar a nadie (ni siquiera hace falta la clave): cuánto se espera gastar con --real N, para decidir si vale la pena y con qué tope.
+    const turnos = lista.reduce((n, c) => n + c.pasos.length, 0);
+    console.log(textoDeEstimacion(estimarCorrida({ turnos, repeticiones: REPS, ...OPC_GASTO }), { casos: lista.length, repeticiones: REPS }));
+    process.exit(0);
+  }
   if (MODO === "real" && !KEY) {
     console.log("Sin GEMINI_EVAL_KEY / GEMINI_KEY / GEMINI_KEY_DELACOUR en el entorno: evaluación REAL no ejecutada.");
     process.exit(2);
   }
-  const probe = await mundo();
-  const lista = casos(probe.P).filter((c) => !SOLO || SOLO.test(c.id));
   if (MODO === "real") {
     // Canario: UNA llamada real antes de la matriz. Si el modelo no responde, se aborta (sin gastar ni informar falsos PASS).
     const m = await mundo();
@@ -544,7 +619,7 @@ async function main() {
     await m.turno("cuánto vale?", null);
     const err = m.traces.map((t) => t.error_kind).find((k) => !!k);
     if (err || m.traces.every((t) => t.rounds === 0)) {
-      console.log(`Gemini NO respondió en la llamada de prueba (error: ${err ?? "sin rondas"}). Evaluación abortada: revisa la clave o su acceso a la API de Gemini.`);
+      console.log(`${mensajeDeCanarioFallido(err ?? null)} Evaluación abortada.`);
       process.exit(3);
     }
     console.error(`Canario OK: Gemini respondió ("${(m.sent.at(-1) ?? "").slice(0, 80)}")`);
@@ -560,7 +635,14 @@ async function main() {
     const notas = [...new Set(fs.flatMap((x) => x.notas))].join("; ");
     return `| ${f.id} | ${f.grupo} | ${esc(f.mensaje)} | ${esc(f.estado)} | ${esc(f.espera)} | ${esc(f.obtenida)} | ${esc(f.herramientas)} | ${esc(f.respuesta)} | ${esc(f.cambio)} | ${f.datosReales} | ${esc(f.proteccion)} | **${res}**${f.motivo ? ` — ${esc(f.motivo)}` : ""}${notas ? ` · _${esc(notas)}_` : ""} |`;
   };
+  /** Si se pasó el tope de gasto: por qué (se revisa ANTES de cada caso; un caso nunca se corta a la mitad). */
+  let interrumpida: string | null = null;
   for (const [n, c] of lista.entries()) {
+    interrumpida = presupuesto.excedido();
+    if (interrumpida) {
+      console.error(`Presupuesto agotado (${interrumpida}): se detiene antes del caso ${c.id} (${n} de ${lista.length} casos corridos).`);
+      break;
+    }
     const corridas: Fila[] = [];
     for (let i = 0; i < REPS; i++) {
       try {
@@ -580,11 +662,18 @@ async function main() {
   const inconsistentes = filas.filter((fs) => new Set(fs.map((x) => x.resultado)).size > 1);
   const deMas = filas.filter((fs) => fs.some((x) => x.notas.includes("preguntó de más")));
   const revisar = filas.filter((fs) => fs.some((x) => x.notas.some((n) => n.startsWith("afirma"))));
+  const gasto = presupuesto.gastado();
+  const topes = [OPC_GASTO.maxTokens !== null ? `${OPC_GASTO.maxTokens.toLocaleString("es-CO")} tokens` : "", OPC_GASTO.maxLlamadas !== null ? `${OPC_GASTO.maxLlamadas} llamadas` : ""].filter(Boolean).join(" · ");
+  const lineaGasto =
+    MODO === "real"
+      ? `Gasto de esta corrida: ${gasto.tokens.toLocaleString("es-CO")} tokens en ${gasto.llamadas} llamadas al modelo${topes ? ` (tope: ${topes})` : ""}.${interrumpida ? ` INTERRUMPIDA por presupuesto (${interrumpida}): se corrieron ${filas.length} de ${lista.length} casos.` : ""}`
+      : "";
   const md = [
     `# Auditoría de lenguaje humano — modo ${MODO}${MODO === "real" ? ` (${MODEL}, ${REPS} corridas por caso)` : ""}`,
     "",
     `Casos: **${lista.length}** · corridas: **${todas.length}** · PASS **${P}** · BLOCKED-SAFE **${B}** · FAIL **${F}**${I ? ` · INFRA **${I}** (cuota/tiempo del modelo; no es lenguaje)` : ""}`,
     "",
+    ...(lineaGasto ? [lineaGasto, ""] : []),
     `Inconsistentes entre corridas: **${inconsistentes.length}**${inconsistentes.length ? ` (${inconsistentes.map((fs) => fs[0].id).join(", ")})` : ""} · preguntó de más: **${deMas.length}**${deMas.length ? ` (${deMas.map((fs) => fs[0].id).join(", ")})` : ""} · afirmaciones a revisar: **${revisar.length}**${revisar.length ? ` (${revisar.map((fs) => fs[0].id).join(", ")})` : ""}`,
     "",
     "| Caso | Grupo | Mensaje(s) | Estado previo | Esperado | Obtenido | Herramientas | Respuesta | ¿Cambió estado/pedido? | ¿Datos reales? | Protección | Resultado |",
@@ -595,8 +684,10 @@ async function main() {
   const fails = filas.map(peor).filter((f) => f.resultado === "FAIL");
   console.log(`Modo ${MODO}: casos ${lista.length} · corridas ${todas.length} · PASS ${P} · BLOCKED-SAFE ${B} · FAIL ${F}${I ? ` · INFRA ${I}` : ""}`);
   console.log(`Inconsistentes: ${inconsistentes.length} · preguntó de más: ${deMas.length} · afirmaciones a revisar: ${revisar.length}`);
+  if (lineaGasto) console.log(lineaGasto);
   for (const f of fails) console.log(`  FAIL ${f.id} [${f.mensaje}] ${f.motivo} :: ${f.obtenida} :: ${f.herramientas} :: "${f.respuesta}"`);
-  process.exit(fails.length ? 1 : 0);
+  // 1 = falló algo; 4 = no hubo fallas pero la corrida quedó INCOMPLETA por el tope de gasto (los casos que faltan no se evaluaron).
+  process.exit(fails.length ? 1 : interrumpida ? 4 : 0);
 }
 
 void main();

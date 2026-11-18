@@ -10,6 +10,9 @@
  *   --adversario    Modelo simulado que INVENTA (porcentajes, precios, fechas, ofertas, combos): la guarda debe frenarlo.
  *   --convivencia   Perfil de transición: los textos del negocio están a la vez en el prompt (negocio.conocimiento) y en el CMS (por defecto: solo en el CMS).
  *   --solo <regex>  Solo los casos cuyo id coincida.   --pausa <ms>  Pausa entre corridas.   --salida <archivo.md>  Informe en Markdown.
+ *   GASTO (el modelo real consume el crédito prepagado; ver scripts/eval/presupuesto.ts):
+ *   --estimar       NO llama a nadie: cuántas llamadas y tokens se esperan (con --real N, --solo…). --precio-entrada / --precio-salida (USD por millón) para ver el costo.
+ *   --presupuesto-tokens <N>  y/o  --max-llamadas <N>   Tope de la corrida: se revisa antes de cada caso y, si se pasó, se detiene y lo dice en el informe (salida 4).
  *
  *   npx tsx scripts/eval/gemini-comercial.ts --cooperativo
  *   npx tsx scripts/eval/gemini-comercial.ts --adversario
@@ -49,6 +52,7 @@ import { crearPuertoPreciosCms } from "@/lib/cms-comercial/precios";
 import type { InstantaneaCms } from "@/lib/cms-comercial/publicado";
 import { variablesDeNegocio } from "@/lib/cms-comercial/variables-negocio";
 import { AHORA, campana, combo, contenido, instantanea, oferta, publicada } from "@/lib/cms-comercial/testing/fixtures";
+import { crearPresupuesto, estimarCorrida, leerOpcionesPresupuesto, mensajeDeCanarioFallido, textoDeEstimacion } from "./presupuesto";
 
 const argv = process.argv;
 const MODO = argv.includes("--real") ? "real" : argv.includes("--adversario") ? "adversario" : "cooperativo";
@@ -65,6 +69,9 @@ const PAUSA = Math.max(0, Number(opcion("--pausa")) || 0);
 /** Con el modelo real, una corrida que termina en INFRA (503 «alta demanda», tiempo agotado) se repite hasta N veces antes de contarse como INFRA. */
 const REINTENTOS = MODO === "real" ? Math.max(0, Number(opcion("--reintentos") ?? 1) || 0) : 0;
 const BASE_URL = process.env.GEMINI_EVAL_BASE_URL;
+/** Tope de gasto y estimación previa (scripts/eval/presupuesto.ts): una corrida real consume el crédito prepagado de quien tiene la clave. */
+const OPC_GASTO = leerOpcionesPresupuesto(argv);
+const presupuesto = crearPresupuesto(OPC_GASTO);
 
 // ---------------------------------------------------------------------------
 // Clave (SOLO GEMINI_EVAL_KEY) y red restringida
@@ -280,7 +287,10 @@ async function mundo(opts: { tenant?: "A" | "B"; checkout?: boolean } = {}) {
         },
         history: { recent: async () => history.map((x) => ({ ...x })) },
         sender: { sendText: async (t) => out(t), sendImage: async () => ({ sent: true, wamid: `wamid.img.${++seq}` }), sendButtons: async (b) => out(b), humanTookOver: async () => pausado },
-        log: (t) => traces.push(t),
+        log: (t) => {
+          traces.push(t);
+          presupuesto.registrar(t);
+        },
         now: () => reloj,
         // Con el modelo real se miden CONDUCTA y latencia, no el tope de producción (15 s por llamada): un tiempo agotado no mide nada del lenguaje.
         ...(MODO === "real" ? { limits: { modelTimeoutMs: 60_000, turnDeadlineMs: 150_000 } } : {}),
@@ -701,6 +711,13 @@ const percentil = (xs: number[], p: number): number => {
 };
 
 async function main() {
+  const lista = casos().filter((c) => (!SOLO || SOLO.test(c.id)) && (MODO === "real" || !c.soloReal));
+  if (OPC_GASTO.estimar) {
+    // Sin llamar a nadie (ni siquiera hace falta la clave): cuánto se espera gastar con --real N, para decidir si vale la pena y con qué tope.
+    const turnos = lista.reduce((n, c) => n + c.pasos.length + (c.checkout ? 1 : 0), 0);
+    console.log(textoDeEstimacion(estimarCorrida({ turnos, repeticiones: REPS, ...OPC_GASTO }), { casos: lista.length, repeticiones: REPS }));
+    process.exit(0);
+  }
   if (MODO === "real") {
     if (!CLAVE) {
       console.log("Sin GEMINI_EVAL_KEY en el entorno ni en .env.local: evaluación REAL no ejecutada.");
@@ -708,7 +725,6 @@ async function main() {
     }
     restringirRed();
   }
-  const lista = casos().filter((c) => (!SOLO || SOLO.test(c.id)) && (MODO === "real" || !c.soloReal));
   if (MODO === "real") {
     // Canario: UNA llamada real antes de la matriz. Si el modelo no responde, se aborta (sin gastar ni informar falsos PASS).
     const m = await mundo();
@@ -716,7 +732,7 @@ async function main() {
     await m.turno("hola", "retail", null);
     const err = m.traces.map((t) => t.error_kind).find((x) => !!x);
     if (err || m.traces.every((t) => t.rounds === 0)) {
-      console.log(`Gemini NO respondió en la llamada de prueba (error: ${err ?? "sin rondas"}). Evaluación abortada: revisa la clave o su acceso a la API de Gemini.`);
+      console.log(`${mensajeDeCanarioFallido(err ?? null)} Evaluación abortada.`);
       console.log(`Estados HTTP de Google: ${[...estadosGoogle].map(([k, v]) => `${k || "red"}×${v}`).join(" ") || "ninguna llamada"}`);
       for (const mensaje of mensajesGoogle) console.log(`  error de Google: ${mensaje}`);
       process.exit(3);
@@ -734,7 +750,14 @@ async function main() {
     const notas = [...new Set(fs.flatMap((x) => x.notas))].join("; ");
     return `| ${f.id} | ${f.grupo} | ${esc(f.mensaje)} | ${esc(f.espera)} | ${esc(f.herramientas)} | ${esc(f.respuesta)} | ${esc(f.proteccion)} | **${res}**${f.motivo ? ` — ${esc(f.motivo)}` : ""}${notas ? ` · _${esc(notas)}_` : ""} |`;
   };
+  /** Si se pasó el tope de gasto: por qué (se revisa ANTES de cada caso; un caso nunca se corta a la mitad). */
+  let interrumpida: string | null = null;
   for (const [n, c] of lista.entries()) {
+    interrumpida = presupuesto.excedido();
+    if (interrumpida) {
+      console.error(`Presupuesto agotado (${interrumpida}): se detiene antes del caso ${c.id} (${n} de ${lista.length} casos corridos).`);
+      break;
+    }
     const corridas: Fila[] = [];
     for (let i = 0; i < REPS; i++) {
       for (let intento = 0; intento <= REINTENTOS; intento++) {
@@ -775,6 +798,12 @@ async function main() {
   const limpios = stats.filter((s) => !s.intervino && !malo(s));
   const sinConsultar = todas.filter((f) => f.notas.some((n) => n.includes("sin consultar")));
   const lineaStat = (s: TurnoStat) => `- ${s.caso} (paso ${s.paso}) [${s.codigos.join("+") || "-"}] «${esc(s.borrador)}»${s.borradorFalso.length ? ` — cifras sin respaldo: ${s.borradorFalso.join(", ")}` : ""}`;
+  const gasto = presupuesto.gastado();
+  const topes = [OPC_GASTO.maxTokens !== null ? `${OPC_GASTO.maxTokens.toLocaleString("es-CO")} tokens` : "", OPC_GASTO.maxLlamadas !== null ? `${OPC_GASTO.maxLlamadas} llamadas` : ""].filter(Boolean).join(" · ");
+  const lineaGasto =
+    MODO === "real"
+      ? `Gasto de esta corrida: ${gasto.tokens.toLocaleString("es-CO")} tokens en ${gasto.llamadas} llamadas al modelo${topes ? ` (tope: ${topes})` : ""}.${interrumpida ? ` INTERRUMPIDA por presupuesto (${interrumpida}): se corrieron ${filas.length} de ${lista.length} casos.` : ""}`
+      : "";
   const md = [
     `# ARIA con Gemini real — información comercial del CMS · modo ${MODO}${MODO === "real" ? ` (${MODEL}, ${REPS} corrida(s) por caso)` : ""} · perfil ${PERFIL}`,
     "",
@@ -782,6 +811,7 @@ async function main() {
     "",
     `Red: llamadas a Google **${llamadasGoogle}**${estadosGoogle.size ? ` (estados HTTP: ${[...estadosGoogle].map(([k, v]) => `${k || "falla de red"}×${v}`).join(" · ")})` : ""} · salidas BLOQUEADAS a otros destinos **${salidasBloqueadas.length}**${salidasBloqueadas.length ? ` (${[...new Set(salidasBloqueadas)].join(", ")})` : ""}.`,
     `Inconsistentes entre corridas: **${inconsistentes.length}**${inconsistentes.length ? ` (${inconsistentes.map((fs) => fs[0].id).join(", ")})` : ""} · casos donde respondió sin consultar una herramienta: **${sinConsultar.length}**.`,
+    ...(lineaGasto ? [lineaGasto] : []),
     "",
     ...(latencias.length ? [`Latencia por llamada al modelo: mediana **${percentil(latencias, 50)} ms** · p95 **${percentil(latencias, 95)} ms** · máx **${Math.max(...latencias)} ms** (${latencias.length} llamadas); llamadas por turno: mediana **${percentil(llamadasPorTurno, 50)}** · máx **${Math.max(...llamadasPorTurno)}**.`, ""] : []),
     "## La guarda de anclaje (por turno con un borrador del modelo)",
@@ -816,6 +846,7 @@ async function main() {
   console.log(`Modo ${MODO}${MODO === "real" ? ` · perfil ${PERFIL}` : ""}: casos ${lista.length} · corridas ${todas.length} · PASS ${P} · BLOCKED-SAFE ${B} · FAIL ${F} (seguridad ${fallaSeg.length}, resolución ${fallaRes.length})${I ? ` · INFRA ${I}` : ""}`);
   console.log(`Guarda: borradores ${stats.length} · justificadas ${justificadas.length} · por diseño ${porDiseno.length} · cualitativas a revisar ${cualitativas.length} · falsos positivos probables ${posiblesFP.length} · falsos negativos ${falsosNegativos.length} · limpios ${limpios.length}`);
   console.log(`Red: Google ${llamadasGoogle} · bloqueadas ${salidasBloqueadas.length}${estadosGoogle.size ? ` · estados ${[...estadosGoogle].map(([k, v]) => `${k || "red"}×${v}`).join(" ")}` : ""}`);
+  if (lineaGasto) console.log(lineaGasto);
   for (const m of mensajesGoogle) console.log(`  error de Google: ${m}`);
   if (latencias.length) console.log(`Latencia por llamada: mediana ${percentil(latencias, 50)} ms · p95 ${percentil(latencias, 95)} ms · máx ${Math.max(...latencias)} ms · llamadas por turno: mediana ${percentil(llamadasPorTurno, 50)} · máx ${Math.max(...llamadasPorTurno)}`);
   const conInfra = filas.filter((fs) => fs.some((f) => f.resultado === "INFRA")).map((fs) => fs[0].id);
@@ -824,7 +855,8 @@ async function main() {
   for (const s of falsosNegativos) console.log(`  FALSO NEGATIVO ${s.caso} paso ${s.paso}: «${s.borrador}» (${s.borradorFalso.join(", ") || "prohibido por el caso"})`);
   for (const s of posiblesFP) console.log(`  FALSO POSITIVO? ${s.caso} paso ${s.paso} [${s.codigos.join("+")}]: «${s.borrador}»`);
   for (const s of cualitativas) console.log(`  CUALITATIVA (revisar) ${s.caso} paso ${s.paso} [${s.codigos.join("+")}]: «${s.borrador}»`);
-  process.exit(fallaSeg.length > 0 ? 1 : fails.length ? 1 : 0);
+  // 1 = falló algo; 4 = no hubo fallas pero la corrida quedó INCOMPLETA por el tope de gasto (los casos que faltan no se evaluaron).
+  process.exit(fallaSeg.length > 0 ? 1 : fails.length ? 1 : interrumpida ? 4 : 0);
 }
 
 void main();

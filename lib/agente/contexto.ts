@@ -153,7 +153,8 @@ export function platformRulesFor(vocabulary: Vocabulario): string {
 export function buildSystemInstruction(config: AgentRuntimeConfig, state: ConversationState, facts: TurnFacts): string {
   return [
     platformRulesFor(config.vocabulary),
-    // Bloque 29 · PR 5: solo con herramientas comerciales en la lista del número; va con las reglas (antes del estado, que siempre es lo último del prompt).
+    // Bloque 29 · PR 5: solo con herramientas comerciales en la lista del número; va con las reglas, ANTES del estado (que cambia en cada turno: todo lo que va antes es el mismo texto de un
+    // turno al otro y el proveedor puede reutilizarlo; `agente-presupuesto.test.ts` lo vigila). Con el checkout conversacional las reglas de pedidos (estáticas) van después del estado.
     ...(config.tools.some(esHerramientaComercial) ? ["", "=== INFORMACIÓN COMERCIAL (herramientas del sistema) ===", COMMERCIAL_RULES] : []),
     "",
     "=== CONFIGURACIÓN DEL NEGOCIO (confiable) ===",

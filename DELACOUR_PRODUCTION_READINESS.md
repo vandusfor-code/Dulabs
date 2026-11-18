@@ -1,5 +1,7 @@
 # Delacour — preparación para producción (Catálogo + Agente)
 
+> **Documento HISTÓRICO (24-sep-2026).** La guía vigente del agente — mapa, validación con y sin saldo de Gemini, SQL de salud en producción — es [`docs/AGENTE_JOYERIA.md`](docs/AGENTE_JOYERIA.md).
+
 Estado al **24-sep-2026**, actualizado en el **Bloque 23** (robustez del agente antes del piloto).
 Documento operativo: qué está listo, cómo se comprobó, qué falta comprobar con servicios reales y
 el procedimiento para cargar los productos reales (secciones escritas en el Bloque 21).
