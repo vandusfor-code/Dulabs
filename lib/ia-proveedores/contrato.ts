@@ -101,7 +101,8 @@ export interface AIGenerateResult {
 export type AIErrorKind =
   | "config" // proveedor/modelo/credencial inválidos: no se llama a nadie
   | "auth"
-  | "rate_limit"
+  | "quota" // crédito prepagado, tope de gasto o cupo DIARIO agotado: persiste, reintentar o reescribir no lo arregla
+  | "rate_limit" // pico momentáneo de peticiones: se reintenta
   | "timeout"
   | "server"
   | "network"
@@ -113,12 +114,20 @@ export type AIErrorKind =
 const RETRYABLE: ReadonlySet<AIErrorKind> = new Set(["rate_limit", "timeout", "server", "network"]);
 
 /**
+ * Fallas SISTÉMICAS: no dependen del mensaje del cliente ni de este turno (credencial, crédito/cupo o configuración).
+ * Pedirle al cliente que "escriba de nuevo" no las arregla y afectan a TODOS los chats: el agente pasa la conversación a una persona.
+ */
+const SYSTEMIC: ReadonlySet<AIErrorKind> = new Set(["quota", "auth", "config"]);
+
+/**
  * Error NORMALIZADO. Nunca lleva la API key, el cuerpo de la petición ni el
  * texto del cliente: solo el tipo, el estado HTTP y un código corto del
  * proveedor (p. ej. "INVALID_ARGUMENT") para diagnóstico.
  */
 export class AIProviderError extends Error {
   readonly retryable: boolean;
+  /** true = la falla no depende del mensaje (credencial, crédito/cupo, configuración): ver `SYSTEMIC`. */
+  readonly systemic: boolean;
   constructor(
     readonly kind: AIErrorKind,
     readonly provider: AIProviderId | null,
@@ -127,6 +136,7 @@ export class AIProviderError extends Error {
     super(`ai_${kind}${detail.httpStatus ? `:${detail.httpStatus}` : ""}${detail.providerCode ? `:${detail.providerCode}` : ""}`);
     this.name = "AIProviderError";
     this.retryable = RETRYABLE.has(kind);
+    this.systemic = SYSTEMIC.has(kind);
   }
 }
 

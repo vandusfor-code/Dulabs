@@ -14,6 +14,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { GENEROS } from "@/lib/catalogo/domain";
 import { ORDER_MAX_QUANTITY } from "@/lib/catalogo/pedido";
 import { DELIVERY_TYPES, PAYMENT_METHODS } from "@/lib/catalogo/pedidos/contrato";
 
@@ -132,6 +133,11 @@ export const conversationStateSchema = z
         maxPrice: z.number().int().min(1).nullable(),
         /** Búsqueda de "parecidos" a esta referencia. */
         similarTo: reference.nullable(),
+        /**
+         * Para quién era la búsqueda (solo tiendas que separan Hombre y Mujer): «muéstrame más» sigue en el MISMO lado. Opcional sin default y solo se escribe cuando existe: un negocio que no
+         * separa guarda el mismo estado de siempre, y un rollback del código no invalida los estados guardados.
+         */
+        gender: z.enum(GENEROS).optional(),
         offset: z.number().int().min(0),
         total: z.number().int().min(0),
         relaxed: z.boolean(),

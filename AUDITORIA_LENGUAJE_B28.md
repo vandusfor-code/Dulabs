@@ -1,5 +1,8 @@
 # Auditoría final de lenguaje humano — Bloque 28
 
+> **Informe HISTÓRICO** (corrida simulada del Bloque 28). Los casos de «No texto» (F01, F07) se actualizaron después al comportamiento del Bloque 29 (la foto o el archivo sin texto pide la referencia por escrito antes de pasar a una
+> asesora). Para validar hoy: `npm run validar:agente` y [`docs/AGENTE_JOYERIA.md`](docs/AGENTE_JOYERIA.md).
+
 Generado con `scripts/eval/gemini-lenguaje.ts` (runtime real del agente, motor de pedidos y reservas en memoria, negocio y productos ficticios). La corrida con **Gemini real** queda pendiente de una clave en el entorno (`GEMINI_EVAL_KEY`): ver DELACOUR_PILOTO.md, Bloque 28 · auditoría final.
 
 ## Auditoría de lenguaje humano — modo cooperativo

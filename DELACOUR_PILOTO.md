@@ -1,5 +1,8 @@
 # Piloto de Delacour — preparación técnica (Bloque 24)
 
+> **Documento HISTÓRICO por bloques (24 a 35).** Cuenta cómo se llegó aquí y conserva el detalle de cada bloque; **no es la guía vigente**. Para saber dónde vive cada cosa, cómo validar el agente (con y sin saldo de
+> Gemini), qué hacer si no hay saldo y cuánto cuesta cada mensaje: [`docs/AGENTE_JOYERIA.md`](docs/AGENTE_JOYERIA.md).
+
 Estado al **24-sep-2026**. Este documento es el puente entre "probado localmente" y "piloto real":
 qué quedó comprobado con el código real, qué solo se puede comprobar en producción y la lista
 exacta de pruebas manuales para cuando se encienda Gemini.

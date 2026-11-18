@@ -7,6 +7,7 @@
  * El «para quién» de cada pieza es la columna `genero` del producto (migración 20261215000000). El código LEE esa columna aparte de la lectura de siempre de los productos (no está en la lista de columnas
  * de `listProducts`): si la migración aún no se aplicó, la separación queda apagada y la tienda y el panel se ven EXACTAMENTE como antes. Nada de esto cambia precios, inventario, carrito ni pedidos.
  */
+import { PALABRAS_VACIAS, normalizarParaBusqueda } from "@/lib/catalogo/busqueda-local";
 import { GENEROS, GENERO_PREDETERMINADO, type Genero } from "@/lib/catalogo/domain";
 import { referenceFromUrl } from "@/lib/catalogo/publicacion";
 
@@ -68,6 +69,26 @@ export function conjuntoDeHombres(referencias: readonly string[] | ReadonlySet<s
 /** Para quién es una pieza, dadas las referencias de hombre del negocio. Lo que no está en esa lista es de mujer. */
 export function generoDe(referencia: string, hombres: ReadonlySet<string>): Genero {
   return hombres.has(claveDeReferencia(referencia)) ? "hombre" : GENERO_PREDETERMINADO;
+}
+
+/**
+ * Para limpiar el texto de una búsqueda YA filtrada por género: las palabras que dicen «para quién» (el filtro ya lo dice y ninguna pieza lo trae en su nombre), las de relleno de una
+ * frase («qué tienen», «quiero ver») y las genéricas que no describen ninguna pieza («joyas», «regalo»).
+ */
+const PALABRAS_DE_GENERO: ReadonlySet<string> = new Set(["hombre", "hombres", "caballero", "caballeros", "masculino", "masculina", "masculinos", "masculinas", "varon", "varones", "mujer", "mujeres", "dama", "damas", "femenino", "femenina", "femeninos", "femeninas"]);
+const PALABRAS_DE_RELLENO: ReadonlySet<string> = new Set(["tiene", "tienen", "tienes", "tengo", "quiero", "quisiera", "busco", "necesito", "ver", "muestra", "muestrame", "muestras", "mostrar", "dame", "hola"]);
+const PALABRAS_GENERICAS: ReadonlySet<string> = new Set(["joya", "joyas", "joyeria", "pieza", "piezas", "producto", "productos", "articulo", "articulos", "accesorio", "accesorios", "regalo", "regalos", "obsequio", "obsequios", "algo", "cosa", "cosas", "todo", "todos", "catalogo", "coleccion"]);
+
+/**
+ * El texto de una búsqueda YA filtrada por género, sin lo que solo repite el filtro («dijes para hombre» → «dijes»). Si no queda nada que describa una pieza
+ * («qué tienen para hombre», «joyas para él», «un regalo para mi novio»), queda vacío: la búsqueda muestra TODO lo de ese lado en vez de no encontrar nada. Las palabras vacías
+ * («para», «mi», «que») se quitan: la búsqueda las descarta igual. Sin filtro de género no se usa: el texto del cliente se busca tal cual.
+ */
+export function textoSinGenero(texto: string): string {
+  const palabras = normalizarParaBusqueda(texto)
+    .split(/[^a-z0-9ñ]+/)
+    .filter((w) => w.length > 1 && !PALABRAS_VACIAS.has(w) && !PALABRAS_DE_GENERO.has(w) && !PALABRAS_DE_RELLENO.has(w));
+  return palabras.every((w) => PALABRAS_GENERICAS.has(w)) ? "" : palabras.join(" ");
 }
 
 /** Dirección del INICIO de cada lado de la tienda: el de mujer es la tienda de siempre (`/catalogo/delacour`); el de hombre, su propio inicio (`?genero=hombre`: su portada, sus categorías y sus destacados). */

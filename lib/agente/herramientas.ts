@@ -29,7 +29,8 @@ import { z } from "zod";
 import type { AIToolDeclaration } from "@/lib/ia-proveedores/contrato";
 import { formatCop } from "@/lib/business-agent-quote";
 import { ORDER_MAX_QUANTITY } from "@/lib/catalogo/pedido";
-import { CATALOG_LIMITS, REFERENCE_PATTERN } from "@/lib/catalogo/domain";
+import { CATALOG_LIMITS, GENEROS, REFERENCE_PATTERN, type Genero } from "@/lib/catalogo/domain";
+import { generoDe, hrefDeGenero } from "@/lib/catalogo/genero";
 import { productPathIn, retailPath, wholesalePath, whatsappImagePath } from "@/lib/catalogo/publicacion";
 import { createResolucionCatalogo } from "@/lib/catalogo/resolucion";
 import { siteUrl } from "@/lib/site-url";
@@ -126,6 +127,12 @@ export interface AgentTurnToolContext {
    * backend (instante del turno, en ms). El negocio y el canal son los del contexto de arriba.
    */
   comercial?: { valores: ValoresVariables; nowMs: number };
+  /**
+   * Solo en negocios cuya tienda separa Hombre y Mujer (y la base ya lo permite): las referencias de las piezas de hombre, que el runtime lee UNA vez por turno (lib/catalogo/genero-negocio.ts).
+   * Es lo que activa el «para quién» del agente: el filtro `genero` de la búsqueda, los parecidos del MISMO lado, el campo `para` de cada pieza y el enlace de la colección de hombre.
+   * Ausente o null = sin separación: todo es como siempre (y el modelo ni siquiera ve el parámetro `genero`).
+   */
+  hombres?: ReadonlySet<string> | null;
 }
 
 /** Lo PUBLICADO de un negocio (lector del CMS). null = el negocio no usa el CMS (módulo apagado o sin migración). Lanza si no se pudo leer. */
@@ -166,6 +173,13 @@ const reference = z
   .transform((s) => s.toUpperCase())
   .refine((s) => REFERENCE_PATTERN.test(s), { message: "Referencia inválida (ej. DL-000184)." });
 const orderId = z.string().regex(/^DL-ORD-[0-9A-HJKMNP-TV-Z]{6}$/);
+
+/**
+ * `genero` de la búsqueda y del enlace del catálogo. SOLO se le declara al modelo en los negocios cuya tienda separa Hombre y Mujer (ver `agentToolDeclarations`): a los demás ni lo ve.
+ * Aquí se acepta siempre para que una llamada con ese campo nunca rompa la validación estricta; si el negocio no separa, el backend lo ignora.
+ */
+const GENERO_BUSQUEDA = z.enum(GENEROS).optional().describe("Para quién es la pieza, SOLO si el cliente lo dijo (hombre = línea masculina). Si no lo dijo, no envíes este campo.");
+const GENERO_ENLACE = z.enum(GENEROS).optional().describe("hombre = enlace de la colección de hombre, SOLO si el cliente la pide. Sin este campo, el catálogo general.");
 
 interface ToolSpec<I extends z.ZodType> {
   description: string;
@@ -215,6 +229,8 @@ type ProductView = {
   currency: string;
   availability: string;
   max_quantity: number | null;
+  /** Solo en negocios que separan Hombre y Mujer: para quién es la pieza (lo agrega el backend; el modelo no lo inventa). */
+  para?: Genero;
 };
 
 /**
@@ -223,6 +239,9 @@ type ProductView = {
  * en 7 de 8 productos la garantía quedaba fuera). Con descripciones cortas (Delacour: máximo 100 caracteres) la salida es idéntica a la de siempre.
  */
 const compact = (p: ProductView) => ({ ...p, description: p.description ? p.description.slice(0, CATALOG_LIMITS.description) : null });
+
+/** `compact` + para quién es la pieza, SOLO con la separación Hombre/Mujer activa en el turno (sin ella la salida no cambia ni un campo). */
+const vista = (ctx: AgentTurnToolContext, p: ProductView): ProductView => ({ ...compact(p), ...(ctx.hombres ? { para: generoDe(p.reference, ctx.hombres) } : {}) });
 
 /**
  * Registra lo que el cliente va a ver. Solo una LISTA de opciones reemplaza
@@ -306,7 +325,19 @@ async function searchPage(ctx: AgentTurnToolContext, deps: AgentToolsDeps, curso
   if (!(await deps.catalog.isModuleEnabled(ctx.tenantId))) return fail("FORBIDDEN", "El catálogo no está habilitado para este negocio.");
   if (!(await deps.ownsPhoneNumber(ctx.tenantId, ctx.phoneNumberId))) return fail("FORBIDDEN", "Esta conversación no pertenece a este negocio.");
   const resolucion = createResolucionCatalogo({ repo: deps.catalog });
-  const input = { query: cursor.query, channel: ctx.channel, offset, limit: SEARCH_PAGE, category: cursor.category, color: cursor.color, material: cursor.material, maxPrice: cursor.maxPrice };
+  // Para quién (solo con la separación Hombre/Mujer activa en el turno): el cursor lo recuerda para que «muéstrame más» siga en el MISMO lado.
+  const gender = ctx.hombres ? (cursor.gender ?? null) : null;
+  const input = {
+    query: cursor.query,
+    channel: ctx.channel,
+    offset,
+    limit: SEARCH_PAGE,
+    category: cursor.category,
+    color: cursor.color,
+    material: cursor.material,
+    maxPrice: cursor.maxPrice,
+    ...(gender ? { gender, hombres: ctx.hombres } : {}),
+  };
   let r;
   if (cursor.similarTo) {
     const base = await deps.catalog.getProductByReference(ctx.tenantId, cursor.similarTo);
@@ -316,7 +347,7 @@ async function searchPage(ctx: AgentTurnToolContext, deps: AgentToolsDeps, curso
   } else {
     r = await resolucion.buscarCatalogo(ctx.tenantId, input);
   }
-  const candidates = r.candidates.map((p) => compact(productView(p, ctx.channel) as ProductView));
+  const candidates = r.candidates.map((p) => vista(ctx, productView(p, ctx.channel) as ProductView));
   show(ctx, candidates, true);
   ctx.state = { ...ctx.state, lastSearch: { ...cursor, offset, total: r.total, relaxed: r.relaxed } };
   const hasMore = offset + candidates.length < r.total;
@@ -366,11 +397,13 @@ export const AGENT_TOOLS = {
         color: z.string().trim().max(60).optional(),
         material: z.string().trim().max(60).optional(),
         max_price: z.number().int().min(1).max(100_000_000).optional(),
+        genero: GENERO_BUSQUEDA,
       })
       .strict(),
     kind: "read",
     async run(ctx, input, deps) {
-      const cursor = { query: input.query, category: input.category ?? null, color: input.color ?? null, material: input.material ?? null, maxPrice: input.max_price ?? null, similarTo: null };
+      // `genero` solo cuenta con la separación Hombre/Mujer activa (el modelo solo lo ve en esos negocios); en los demás se ignora.
+      const cursor = { query: input.query, category: input.category ?? null, color: input.color ?? null, material: input.material ?? null, maxPrice: input.max_price ?? null, similarTo: null, ...(ctx.hombres && input.genero ? { gender: input.genero } : {}) };
       return searchPage(ctx, deps, cursor, 0);
     },
   }),
@@ -401,7 +434,9 @@ export const AGENT_TOOLS = {
       if (blocked) return blocked;
       const base = await deps.catalog.getProductByReference(ctx.tenantId, input.reference);
       if (!base) return fail("REFERENCE_NOT_FOUND", `No encontramos la referencia ${input.reference}.`);
-      return searchPage(ctx, deps, { query: similarQuery(base), category: null, color: null, material: null, maxPrice: null, similarTo: input.reference }, 0);
+      // Con la separación Hombre/Mujer, lo parecido es del MISMO lado que la pieza base (un anillo de mujer nunca sugiere uno de hombre, ni al revés).
+      const gender = ctx.hombres ? generoDe(base.reference, ctx.hombres) : null;
+      return searchPage(ctx, deps, { query: similarQuery(base), category: null, color: null, material: null, maxPrice: null, similarTo: input.reference, ...(gender ? { gender } : {}) }, 0);
     },
   }),
 
@@ -412,7 +447,7 @@ export const AGENT_TOOLS = {
     async run(ctx, input, deps) {
       const r = await catalog("get_product_by_reference", { reference: input.reference }, ctx, deps);
       if (!r.ok) return r;
-      const product = compact(r.data.product as ProductView);
+      const product = vista(ctx, r.data.product as ProductView);
       show(ctx, [product], false);
       return { ok: true, data: { status: "found", product } };
     },
@@ -437,7 +472,7 @@ export const AGENT_TOOLS = {
         if (r.error.code === "AMBIGUOUS" && candidates.length > 0) show(ctx, candidates, true);
         return r;
       }
-      const product = compact(r.data.product as ProductView);
+      const product = vista(ctx, r.data.product as ProductView);
       show(ctx, [product], false);
       return { ok: true, data: { status: "found", product } };
     },
@@ -452,7 +487,7 @@ export const AGENT_TOOLS = {
       if (!p.ok) return p;
       const a = await catalog("get_product_availability", { reference: input.reference, ...(input.quantity ? { quantity: input.quantity } : {}) }, ctx, deps);
       if (!a.ok) return a;
-      const product = compact(p.data.product as ProductView);
+      const product = vista(ctx, p.data.product as ProductView);
       show(ctx, [product], false);
       return { ok: true, data: { status: "found", product, availability: a.data } };
     },
@@ -715,7 +750,7 @@ export const AGENT_TOOLS = {
   get_catalog_link: spec({
     description:
       "Devuelve el enlace OFICIAL del catálogo del negocio para el canal de esta conversación (y, si indicas una referencia ya mostrada, el de la ficha de ese producto). Úsalo cuando el cliente quiera ver todo el catálogo o elegir varios productos. Copia el enlace exacto; nunca armes uno.",
-    input: z.object({ reference: reference.optional() }).strict(),
+    input: z.object({ reference: reference.optional(), genero: GENERO_ENLACE }).strict(),
     kind: "read",
     async run(ctx, input, deps) {
       const pub = await publication(ctx, deps);
@@ -727,7 +762,9 @@ export const AGENT_TOOLS = {
         if (!product || product.status !== "ACTIVE") return fail("PRODUCT_UNAVAILABLE", `El producto ${input.reference} no está disponible.`);
         return { ok: true, data: { url: `${pub.origin}${productPathIn(pub.base, input.reference)}`, kind: "product", reference: input.reference } };
       }
-      return { ok: true, data: { url: `${pub.origin}${pub.base}`, kind: "catalog", channel: ctx.channel === "wholesale" ? "mayorista" : "detal" } };
+      // La colección de hombre existe solo en la tienda al DETAL de un negocio que separa Hombre y Mujer (la tienda mayorista no separa): en cualquier otro caso, el catálogo general.
+      const lado = ctx.hombres && ctx.channel === "retail" && input.genero === "hombre" ? "hombre" : null;
+      return { ok: true, data: { url: `${pub.origin}${lado ? hrefDeGenero(pub.base, lado) : pub.base}`, kind: "catalog", channel: ctx.channel === "wholesale" ? "mayorista" : "detal", ...(lado ? { genero: lado } : {}) } };
     },
   }),
 
@@ -856,13 +893,23 @@ export const AGENT_TOOLS = {
   }),
 } as const satisfies Record<AgentToolName, ToolSpec<z.ZodType>>;
 
-/** Declaraciones para el modelo, SOLO de las herramientas permitidas (allowlist del agente). */
-export function agentToolDeclarations(allowed: readonly AgentToolName[]): AIToolDeclaration[] {
-  return AGENT_TOOL_NAMES.filter((n) => allowed.includes(n)).map((name) => ({
-    name,
-    description: AGENT_TOOLS[name].description,
-    parameters: z.toJSONSchema(AGENT_TOOLS[name].input, { io: "input" }) as Record<string, unknown>,
-  }));
+/** Herramientas con un parámetro `genero`: solo se le declara al modelo si el negocio separa Hombre y Mujer. */
+const HERRAMIENTAS_CON_GENERO: readonly AgentToolName[] = ["search_products", "get_catalog_link"];
+
+/**
+ * Declaraciones para el modelo, SOLO de las herramientas permitidas (allowlist del agente). `genero` (el negocio separa Hombre y Mujer en su tienda y ya hay piezas de hombre):
+ * sin él el parámetro `genero` no se declara y las declaraciones son EXACTAMENTE las de siempre (otros negocios no ven ningún cambio en su instrucción al modelo).
+ */
+export function agentToolDeclarations(allowed: readonly AgentToolName[], opciones: { genero?: boolean } = {}): AIToolDeclaration[] {
+  return AGENT_TOOL_NAMES.filter((n) => allowed.includes(n)).map((name) => {
+    const parameters = z.toJSONSchema(AGENT_TOOLS[name].input, { io: "input" }) as Record<string, unknown>;
+    if (!opciones.genero && HERRAMIENTAS_CON_GENERO.includes(name)) {
+      const { genero: _omitido, ...propiedades } = (parameters.properties ?? {}) as Record<string, unknown>;
+      void _omitido;
+      return { name, description: AGENT_TOOLS[name].description, parameters: { ...parameters, properties: propiedades } };
+    }
+    return { name, description: AGENT_TOOLS[name].description, parameters };
+  });
 }
 
 export function toolKind(name: AgentToolName): "read" | "state" | "write" {

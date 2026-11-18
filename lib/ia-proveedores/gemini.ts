@@ -186,13 +186,43 @@ export function parseGeminiResponse(raw: unknown, requestedModel: string, latenc
   };
 }
 
+/**
+ * Frases con que Google dice que el crédito/cupo se AGOTÓ (no un pico de peticiones): crédito prepagado agotado ("Your prepayment credits are
+ * depleted"), tope de gasto, o un cupo con límite 0 (el proyecto no tiene cupo para ese modelo). NO se usa "quota" ni "billing" a secas: la frase
+ * genérica "You exceeded your current quota, please check your plan and billing details" también la dice un simple pico por minuto.
+ */
+const QUOTA_EXHAUSTED_MESSAGES: readonly RegExp[] = [/prepay\w*\s+credits?\b[^.]{0,40}\b(?:depleted|exhausted)/i, /\binsufficient\s+(?:credits?|funds)\b/i, /\bspending\s+cap\b/i, /\blimit:\s*0\b/i];
+
+/**
+ * ¿Este 429 es crédito/cupo AGOTADO (persistente) y no un pico momentáneo? Mira solo señales (nunca guarda el texto del proveedor):
+ * una frase de las anteriores, un cupo DIARIO (`quotaId` …PerDay…) o un cupo de valor 0.
+ */
+function isQuotaExhausted(body: unknown): boolean {
+  const error = (body as { error?: { message?: unknown; details?: unknown } } | null)?.error;
+  if (!error || typeof error !== "object") return false;
+  if (typeof error.message === "string" && QUOTA_EXHAUSTED_MESSAGES.some((re) => re.test(error.message as string))) return true;
+  if (!Array.isArray(error.details)) return false;
+  for (const d of error.details) {
+    const violations = (d as { violations?: unknown } | null)?.violations;
+    if (!Array.isArray(violations)) continue;
+    for (const v of violations) {
+      const { quotaId, quotaValue } = (v ?? {}) as { quotaId?: unknown; quotaValue?: unknown };
+      if (typeof quotaId === "string" && /PerDay/i.test(quotaId)) return true;
+      if (quotaValue === "0" || quotaValue === 0) return true;
+    }
+  }
+  return false;
+}
+
 /** Error HTTP -> error normalizado. Solo el estado y el código corto de Google; nunca el mensaje (puede repetir contenido). */
 export function geminiHttpError(status: number, body: unknown): AIProviderError {
   const code = (body as { error?: { status?: unknown } } | null)?.error?.status;
   const providerCode = typeof code === "string" && /^[A-Z_]{2,40}$/.test(code) ? code : undefined;
   const detail = { httpStatus: status, providerCode };
   if (status === 401 || status === 403) return new AIProviderError("auth", "gemini", detail);
-  if (status === 429) return new AIProviderError("rate_limit", "gemini", detail);
+  // 402 (pago requerido) y el 429 de crédito/cupo agotado: persistentes, NO se reintentan (un 429 de pico por minuto sí).
+  if (status === 402) return new AIProviderError("quota", "gemini", detail);
+  if (status === 429) return new AIProviderError(isQuotaExhausted(body) ? "quota" : "rate_limit", "gemini", detail);
   if (status === 408 || status === 504) return new AIProviderError("timeout", "gemini", detail);
   if (status >= 500) return new AIProviderError("server", "gemini", detail);
   if (status >= 400) return new AIProviderError("invalid_request", "gemini", detail);

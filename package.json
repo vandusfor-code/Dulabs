@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:flow": "node scripts/run-test-flow.mjs",
+    "validar:agente": "node scripts/agente/validar-agente.mjs",
     "test:amore-gemini": "tsx --test --test-concurrency=1 lib/amore-conversacion-gemini-real.e2e.ts"
   },
   "dependencies": {

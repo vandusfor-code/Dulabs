@@ -32,6 +32,7 @@ import { resolveSelection } from "@/lib/agente/seleccion";
 import { conversationStage, stageGuidance, type ConversationStage } from "@/lib/agente/etapa";
 import { decideLimits, type UsageReader } from "@/lib/agente/limites";
 import { asksForHuman, detectIntent, type HandoffMotive, type SystemHandoffMotive, type TurnIntent } from "@/lib/agente/intencion";
+import { hombresDelNegocio } from "@/lib/catalogo/genero-negocio";
 import { agentToolDeclarations, catalogPublication, executeAgentTool, toolKind, type AgentToolsDeps, type AgentTurnToolContext, type QueuedImage } from "@/lib/agente/herramientas";
 import { esHerramientaComercial, type AgentToolName } from "@/lib/agente/nombres-herramientas";
 import { coberturaDeCiudad, type EnviosConfig, type ShippingDecision } from "@/lib/agente/envios";
@@ -1006,6 +1007,11 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
   // políticas debe estar respaldado por esas herramientas en el mismo turno (comercial-anclaje.ts). Sin ellas (Delacour hoy, ASLC, otros): sin cambios.
   const commercialGuard = deps.config.tools.some(esHerramientaComercial);
   const commercialToolContext = { valores: variablesDeNegocio(deps.config.business).variables, nowMs: now() };
+  // Negocios cuya tienda separa Hombre y Mujer: las referencias de hombre (null = sin separación: el agente es el de siempre). Se lee a lo sumo UNA vez por turno y solo si el número tiene
+  // alguna herramienta que lo use; nunca lanza (ver lib/catalogo/genero-negocio.ts).
+  const usaGenero = allowed.some((t) => t === "search_products" || t === "similar_products" || t === "get_catalog_link");
+  let hombresLeidos: Promise<ReadonlySet<string> | null> | undefined;
+  const hombresDelTurno = (): Promise<ReadonlySet<string> | null> => (usaGenero ? (hombresLeidos ??= hombresDelNegocio(deps.tools.catalog, input.tenantId)) : Promise.resolve(null));
   const checkoutIO: CheckoutIO | null = checkoutOptions
     ? {
         engine: deps.tools.engine,
@@ -1077,6 +1083,7 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
     const readOnly = allowed.filter((t) => SIDE_QUESTION_TOOLS.includes(t));
     const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 }).catch(() => []);
     const qTurns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids, redactWamids: state.documentoWamids }), { role: "user", text }];
+    const qHombres = await hombresDelTurno();
     const qFacts: TurnFacts = {
       channel,
       channelSource: source,
@@ -1105,6 +1112,7 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
       newProposal: null,
       shipping: { rules: enviosRules, nowMs: now() },
       comercial: commercialToolContext,
+      ...(qHombres ? { hombres: qHombres } : {}),
     };
     const ev = emptyEvidence();
     if (shippingGuard) ev.shipping = emptyShippingEvidence();
@@ -1119,7 +1127,7 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
         trace.rounds++;
         const r = await generateWithRetry(
           deps.provider,
-          { model: deps.model, system, turns: qTurns, tools: agentToolDeclarations(readOnly), toolMode: round === 2 ? "none" : "auto", maxOutputTokens: limits.maxOutputTokens, ...(deps.config.thinking ? { thinking: deps.config.thinking } : {}), timeoutMs: limits.modelTimeoutMs },
+          { model: deps.model, system, turns: qTurns, tools: agentToolDeclarations(readOnly, { genero: qHombres !== null }), toolMode: round === 2 ? "none" : "auto", maxOutputTokens: limits.maxOutputTokens, ...(deps.config.thinking ? { thinking: deps.config.thinking } : {}), timeoutMs: limits.modelTimeoutMs },
           { deadlineAt, now, sleep: deps.retry?.sleep, random: deps.retry?.random, onRetry: () => trace.retries++ },
         );
         trace.model = r.model;
@@ -1279,10 +1287,12 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
   for (const k of state.known) evidence.refs.add(k.reference);
   for (const c of state.cart) evidence.numbers.add(c.quantity);
 
-  // 3) Contexto por capas.
+  // 3) Contexto por capas. La lectura de las piezas de hombre (solo tiendas que separan Hombre y Mujer) corre EN PARALELO con la del historial: no suma espera al turno.
+  const hombresListos = hombresDelTurno();
   const rows = await deps.history.recent({ phoneNumberId: input.phoneNumberId, waId: input.waId, sinceIso: new Date(now() - HISTORY_WINDOW_MS).toISOString(), limit: HISTORY_MAX_TURNS * 2 + 4 });
   const turns: AITurn[] = [...historyTurns(rows, { excludeWamids: wamids, redactWamids: state.documentoWamids }), { role: "user", text: input.text }];
-  const declarations = agentToolDeclarations(allowed);
+  const hombres = await hombresListos;
+  const declarations = agentToolDeclarations(allowed, { genero: hombres !== null });
 
   const ctx: AgentTurnToolContext = {
     tenantId: input.tenantId,
@@ -1315,12 +1325,15 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
     newProposal: null,
     shipping: { rules: enviosRules, nowMs: now() },
     comercial: commercialToolContext,
+    ...(hombres ? { hombres } : {}),
   };
 
   let writes = 0;
   let toolCalls = 0;
   let reply: string | null = null;
   let failure: "technical" | "safety" | "unverified" | "pending" | null = null;
+  /** La falla fue del PROVEEDOR de IA y es sistémica (crédito/cupo agotado, credencial o configuración): no depende del mensaje; ver AIProviderError.systemic. */
+  let systemicFailure = false;
   /** Bloque 28: último rechazo de update_cart en el turno (solo con el checkout conversacional). */
   let cartError: string | null = null;
   let corrected = false;
@@ -1483,6 +1496,7 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
   } catch (err) {
     failure = "technical";
     trace.error_kind = err instanceof AIProviderError ? err.kind : "runtime_error";
+    systemicFailure = err instanceof AIProviderError && err.systemic;
   }
 
   // Bloque 27: el modelo detectó la compra y el backend creó la propuesta => empieza el checkout.
@@ -1546,6 +1560,18 @@ export async function runAgentTurn(depsEntrada: AgentRuntimeDeps, input: AgentTu
         await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: "Afirmación comercial sin respaldo del sistema", actor: "system", requestId });
         trace.handoff = { source: "system", motive: "other" };
         reply = FALLBACK_MESSAGES.commercial;
+        outcome = "handoff";
+      } catch {
+        reply = FALLBACK_MESSAGES.technical;
+        outcome = "fallback";
+      }
+    } else if (systemicFailure && !ctx.handedOff) {
+      // Falla SISTÉMICA del proveedor de IA (crédito/cupo agotado, credencial o configuración): afecta a todos los chats y escribir de nuevo no la arregla.
+      // En vez de pedirle al cliente que reintente (y perder su mensaje), pasa YA a una asesora con el mensaje fijo; la causa exacta queda en trace.error_kind.
+      try {
+        await deps.tools.engine.requestHandoff({ tenantId: input.tenantId, contact, reason: "El asistente no está disponible por un problema del servicio de IA", actor: "system", requestId });
+        trace.handoff = { source: "system", motive: "repeated_failures" };
+        reply = FALLBACK_MESSAGES.handoff;
         outcome = "handoff";
       } catch {
         reply = FALLBACK_MESSAGES.technical;
